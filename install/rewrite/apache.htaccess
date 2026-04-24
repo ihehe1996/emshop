@@ -1,0 +1,9 @@
+# EMSHOP Apache 伪静态 · 放到网站根目录 .htaccess
+# 规则：不存在的文件/目录 → 转给 index.php，由 Dispatcher 识别 pretty URL
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [L,QSA]
+</IfModule>
