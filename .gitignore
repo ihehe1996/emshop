@@ -32,9 +32,10 @@
 !/content/tmp/.gitkeep
 !/content/uploads/.gitkeep
 
-# Swoole 进程 pid / 日志
+# Swoole 进程 pid / 日志 / 心跳
 /swoole/*.pid
 /swoole/*.log
+/swoole/*.heartbeat
 /swoole/logs/
 
 # 通用日志
