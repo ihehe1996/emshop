@@ -34,7 +34,6 @@ include __DIR__ . '/header.php';
             <a class="em-tabs__item is-active"><i class="fa fa-info-circle"></i>基础信息</a>
             <a class="em-tabs__item"><i class="fa fa-image"></i>店铺展示</a>
             <a class="em-tabs__item"><i class="fa fa-globe"></i>域名设置</a>
-            <a class="em-tabs__item"><i class="fa fa-credit-card"></i>收款状态</a>
         </div>
         <div class="layui-tab-content mch-edit-content">
 
@@ -136,33 +135,6 @@ include __DIR__ . '/header.php';
                             <input type="checkbox" name="domain_verified" lay-skin="switch" lay-text="已验证|未验证" value="1" <?= $chk('domain_verified') ?>>
                         </div>
                         <div class="layui-form-mid layui-word-aux">自定义域名必须此处勾选方能生效</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ========== Tab 4: 收款状态（只读） ========== -->
-            <div class="layui-tab-item">
-                <div class="popup-section">
-                    <div class="layui-form-item">
-                        <label class="layui-form-label">等级允许</label>
-                        <div class="layui-input-block">
-                            <?php if ((int) ($editRow['level_allow_own_pay'] ?? 0) === 1): ?>
-                            <span class="em-tag em-tag--on">允许</span>
-                            <?php else: ?>
-                            <span class="em-tag em-tag--muted">不允许</span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <div class="layui-form-item">
-                        <label class="layui-form-label">当前状态</label>
-                        <div class="layui-input-block">
-                            <?php if ((int) ($editRow['own_pay_enabled'] ?? 0) === 1): ?>
-                            <span class="em-tag em-tag--blue">已启用</span>
-                            <?php else: ?>
-                            <span class="em-tag em-tag--muted">未启用</span>
-                            <?php endif; ?>
-                        </div>
-                        <div class="layui-form-mid layui-word-aux">在列表中直接拨动"独立收款"开关审核</div>
                     </div>
                 </div>
             </div>

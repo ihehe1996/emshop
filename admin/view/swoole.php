@@ -5,7 +5,15 @@ if (!defined('EM_ROOT')) {
 $csrfToken = Csrf::token();
 ?>
 <div class="admin-page">
-    <h1 class="admin-page__title">Swoole 监控</h1>
+    <div class="swoole-page-head">
+        <h1 class="admin-page__title">Swoole 监控</h1>
+        <!-- 服务控制：启动 / 重启 / 停止；按当前运行状态启用/禁用按钮 -->
+        <div class="swoole-controls">
+            <button type="button" class="sw-ctrl sw-ctrl--start"   id="swStartBtn"  disabled><i class="fa fa-play"></i> 启动</button>
+            <button type="button" class="sw-ctrl sw-ctrl--reload"  id="swReloadBtn" disabled><i class="fa fa-refresh"></i> 重启</button>
+            <button type="button" class="sw-ctrl sw-ctrl--stop"    id="swStopBtn"   disabled><i class="fa fa-stop"></i> 停止</button>
+        </div>
+    </div>
 
     <!-- 服务状态卡片 -->
     <div class="swoole-status-cards" id="swooleStatusCards">
@@ -69,9 +77,9 @@ $csrfToken = Csrf::token();
 
     <!-- 启动说明 -->
     <div class="swoole-section">
-        <h2 class="swoole-section__title">使用说明</h2>
+        <h2 class="swoole-section__title">命令行操作（备用）</h2>
         <div class="swoole-help">
-            <p>在终端下进入项目根目录执行以下命令：</p>
+            <p>页面顶部的"启动 / 重启 / 停止"按钮已能控制大部分场景。如果网页操作受 php.ini <code>disable_functions</code> 限制不可用，可以在服务器终端进入项目根目录直接执行：</p>
             <pre class="swoole-code">
 # 启动服务
 php swoole/server.php start
@@ -81,6 +89,9 @@ php swoole/server.php start &
 
 # 停止服务
 php swoole/server.php stop
+
+# 平滑重启（reload，加载新插件代码且不丢请求）
+php swoole/server.php reload
 
 # 查看状态
 php swoole/server.php status</pre>
@@ -98,6 +109,37 @@ php swoole/server.php status</pre>
  *   - 队列统计：5 张独立卡片（替代原来一条横贯布局）
  *   - 任务表格：现代圆角 + 行 hover
  * ================================================================= */
+
+/* 顶部 head：标题 + 控制按钮组同行 */
+.swoole-page-head {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+    margin-bottom: 18px;
+}
+.swoole-controls { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.sw-ctrl {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 16px;
+    font-size: 13px; font-weight: 500;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    background: #fff; color: #475569;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.sw-ctrl i { font-size: 12px; }
+.sw-ctrl:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+}
+.sw-ctrl:disabled { opacity: 0.4; cursor: not-allowed; }
+/* 启动 = 绿；重启 = 紫；停止 = 红 */
+.sw-ctrl--start:not(:disabled)  { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+.sw-ctrl--start:not(:disabled):hover  { background: #10b981; color: #fff; border-color: #10b981; }
+.sw-ctrl--reload:not(:disabled) { color: #4338ca; border-color: #c7d2fe; background: #eef2ff; }
+.sw-ctrl--reload:not(:disabled):hover { background: #6366f1; color: #fff; border-color: #6366f1; }
+.sw-ctrl--stop:not(:disabled)   { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+.sw-ctrl--stop:not(:disabled):hover   { background: #ef4444; color: #fff; border-color: #ef4444; }
 
 /* 4 张状态卡（服务状态 / PID / 运行时长 / Worker 数） */
 .swoole-status-cards {
@@ -340,6 +382,10 @@ php swoole/server.php status</pre>
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admSwoole handler，避免事件成倍触发
+    $(document).off('.admSwoole');
+    $(window).off('.admSwoole');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -366,6 +412,13 @@ $(function () {
         retry: '<span class="status-badge status-retry">重试</span>'
     };
 
+    // 控制按钮启用/禁用：未运行时只能"启动"；运行中时"重启 / 停止"可点
+    function setControls(running) {
+        $('#swStartBtn').prop('disabled', !!running);
+        $('#swReloadBtn').prop('disabled', !running);
+        $('#swStopBtn').prop('disabled', !running);
+    }
+
     // 加载状态
     function loadStatus() {
         $.post('/admin/swoole.php', { _action: 'status', csrf_token: csrfToken }, function (res) {
@@ -383,19 +436,62 @@ $(function () {
                         $('#qSuccess').text(d.queue.success || 0);
                         $('#qFailed').text(d.queue.failed || 0);
                     }
+                    setControls(true);
                 } else {
                     $('#srvStatus').html('<span class="swoole-badge swoole-badge--red">未运行</span>');
                     $('#srvPid, #srvUptime, #srvWorkers').text('-');
+                    setControls(false);
                 }
                 if (res.data.csrf_token) csrfToken = res.data.csrf_token;
             } else {
                 $('#srvStatus').html('<span class="swoole-badge swoole-badge--red">未运行</span>');
                 $('#srvPid, #srvUptime, #srvWorkers').text('-');
+                setControls(false);
             }
         }, 'json').fail(function () {
             $('#srvStatus').html('<span class="swoole-badge swoole-badge--red">未运行</span>');
+            setControls(false);
         });
     }
+
+    // 通用控制按钮逻辑：发请求 + loading 反馈 + 完成后重新拉状态
+    function doControl(action, $btn, confirmMsg) {
+        var fire = function () {
+            var origHtml = $btn.html();
+            $btn.prop('disabled', true).html('<i class="fa fa-refresh fa-spin"></i> 处理中');
+            $.post('/admin/swoole.php', { _action: action, csrf_token: csrfToken }, function (res) {
+                if (res.code === 200) {
+                    if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
+                    layui.layer.msg(res.msg || '操作成功');
+                } else {
+                    layui.layer.msg(res.msg || '操作失败');
+                }
+            }, 'json').fail(function () {
+                layui.layer.msg('网络错误');
+            }).always(function () {
+                $btn.html(origHtml);
+                // 给 swoole 1 秒缓冲再拉状态（启动/停止生效需要时间）
+                setTimeout(function () { loadStatus(); loadQueue(); }, 1000);
+            });
+        };
+        if (confirmMsg) {
+            layui.layer.confirm(confirmMsg, { icon: 3, title: '确认' }, function (idx) {
+                layui.layer.close(idx); fire();
+            });
+        } else {
+            fire();
+        }
+    }
+
+    $(document).on('click.admSwoole', '#swStartBtn',  function () {
+        doControl('start',  $(this));
+    });
+    $(document).on('click.admSwoole', '#swReloadBtn', function () {
+        doControl('reload', $(this), '确认重启 swoole worker？将平滑替换 worker 进程，加载新代码（不丢请求）');
+    });
+    $(document).on('click.admSwoole', '#swStopBtn',   function () {
+        doControl('stop',   $(this), '确认停止 swoole 服务？停止后队列消费 / 定时任务都会暂停，需要手动启动恢复');
+    });
 
     // 加载队列任务
     function loadQueue() {
@@ -442,7 +538,7 @@ $(function () {
     };
 
     // 刷新按钮
-    $(document).on('click', '#swooleRefreshBtn', function () {
+    $(document).on('click.admSwoole', '#swooleRefreshBtn', function () {
         loadStatus();
         loadQueue();
         layui.layer.msg('已刷新');

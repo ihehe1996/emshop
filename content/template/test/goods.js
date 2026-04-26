@@ -67,6 +67,67 @@ var GoodsDetail = (function () {
         return ids;
     }
 
+    // 多维度规格：刷新每个 dim-btn 上方的 tags 容器
+    //
+    // 算法：每个按钮代表"该维度下选这个值"。把当前已选维度路径里"该按钮所属维度"
+    // 这一项替换为按钮自身的 value_id，得到一个完整组合，去 specs[] 里找匹配的 spec，
+    // 然后把 spec.tags 渲染到按钮上方。如果当前路径不全（用户取消了某个维度），
+    // 没法精确确定 spec → 全部隐藏。
+    function refreshDimBtnTags() {
+        var $allBtns = $('.spec-dim-btn');
+        if (!$allBtns.length) return;
+
+        // 收集当前已选维度路径：dimId → valueId
+        var currentPath = {};
+        $('.spec-group').each(function () {
+            var $a = $(this).find('.spec-dim-btn.active').first();
+            if (!$a.length) return;
+            var did = parseInt($a.data('dim-id'));
+            var vid = parseInt($a.data('value-id'));
+            if (did && vid) currentPath[did] = vid;
+        });
+        var totalDims = $('.spec-group').length;
+        var pathDimCount = 0;
+        for (var k in currentPath) if (currentPath.hasOwnProperty(k)) pathDimCount++;
+
+        $allBtns.each(function () {
+            var $btn = $(this);
+            var $tags = $btn.parent('.spec-item').children('.spec-item-tags').first();
+            if (!$tags.length) return;
+
+            var did = parseInt($btn.data('dim-id'));
+            var vid = parseInt($btn.data('value-id'));
+            if (!did || !vid) { $tags.empty().hide(); return; }
+
+            // 必须每个维度都有当前选中值（含按钮自身的维度），否则不显示
+            // 先复制当前路径，把按钮所在维度替换为按钮的 value
+            var hypo = {};
+            for (var dk in currentPath) if (currentPath.hasOwnProperty(dk)) hypo[dk] = currentPath[dk];
+            hypo[did] = vid;
+            var hypoCount = 0;
+            for (var hk in hypo) if (hypo.hasOwnProperty(hk)) hypoCount++;
+            if (hypoCount < totalDims) { $tags.empty().hide(); return; }
+
+            var hypoIds = [];
+            for (var k2 in hypo) if (hypo.hasOwnProperty(k2)) hypoIds.push(hypo[k2]);
+            var sp = findSpecByValueIds(hypoIds);
+            var tagList = (sp && sp.tags && sp.tags.length) ? sp.tags : [];
+            if (!tagList.length) { $tags.empty().hide(); return; }
+
+            var html = '';
+            for (var i = 0; i < tagList.length; i++) {
+                var name = String(tagList[i] || '');
+                if (!name) continue;
+                html += '<span class="spec-tag">' + $('<span>').text(name).html() + '</span>';
+            }
+            if (html) {
+                $tags.html(html).show();
+            } else {
+                $tags.empty().hide();
+            }
+        });
+    }
+
     // 更新价格 / 库存 / 数量限制
     // 价格由末尾的 renderCurrentPrice() 统一渲染（要等 qtyInput 按新规格的 min_buy 重置后再算才对）
     function updateSpecDisplay(spec) {
@@ -74,6 +135,9 @@ var GoodsDetail = (function () {
         currentSpec = spec;
         var cs = opts.currencySymbol;
         var unit = opts.goodsUnit;
+
+        // 多维度规格：所有按钮上方的 tags 重新计算（"假设选我会形成的 spec 的标签"）
+        refreshDimBtnTags();
 
         // 数量选择器右侧只展示"限购" 或 "缺货"，库存数字放在上方 stats 区
         var stockHtml = '';
@@ -108,14 +172,20 @@ var GoodsDetail = (function () {
     // 商品级满减：从 opts.discountRules 里找"threshold ≤ 当前商品总额"里 discount 最大的一条
     // 满减规则假定已按门槛升序（PHP 解析时未排序则这里多一层保障），取最后一条匹配即为最优
     function pickDiscountAmount(goodsAmount) {
+        var hit = pickDiscountRule(goodsAmount);
+        return hit ? (parseFloat(hit.discount) || 0) : 0;
+    }
+    // 同样的匹配逻辑，但返回完整规则对象（threshold + discount），用于价格框右侧的"满 X 减 Y"提示文案
+    function pickDiscountRule(goodsAmount) {
         var rules = opts.discountRules || [];
+        var bestRule = null;
         var best = 0;
         for (var i = 0; i < rules.length; i++) {
             var t = parseFloat(rules[i].threshold) || 0;
             var d = parseFloat(rules[i].discount)  || 0;
-            if (goodsAmount >= t && d > best) best = d;
+            if (goodsAmount >= t && d > best) { best = d; bestRule = rules[i]; }
         }
-        return best;
+        return bestRule;
     }
 
     // 按"单价 × 数量 - 满减"渲染 .detail-price-box
@@ -134,6 +204,19 @@ var GoodsDetail = (function () {
         var discount = pickDiscountAmount(subtotal);
         var finalPrice = Math.max(0, subtotal - discount);
         $('#specPrice').text(cs + (finalPrice * CUR.rate).toFixed(2));
+
+        // 满减命中：在价格右侧展示"原小计（删除线） · 满 X 元减 Y 元"
+        if (discount > 0) {
+            var hitRule = pickDiscountRule(subtotal);
+            $('#specSubtotalStrike').text(cs + (subtotal * CUR.rate).toFixed(2));
+            $('#specDiscountLabel').text(
+                '满 ' + cs + (parseFloat(hitRule.threshold) * CUR.rate).toFixed(2)
+                + ' 减 ' + cs + (parseFloat(hitRule.discount) * CUR.rate).toFixed(2)
+            );
+            $('#specDiscountHint').show();
+        } else {
+            $('#specDiscountHint').hide();
+        }
 
         // 划线原价：按"市场价 × 数量"展示，不扣满减（满减是针对实价的让利，原价展示本身就是对比参照）
         if (currentSpec.market_price && currentSpec.market_price > currentSpec.price) {
@@ -282,7 +365,11 @@ var GoodsDetail = (function () {
             if (selectedIds.length === totalDims) {
                 var matched = findSpecByValueIds(selectedIds);
                 if (matched) updateSpecDisplay(matched);
+                // updateSpecDisplay 内部会调 refreshDimBtnTags
             } else if (selectedIds.length > 0) {
+                // 部分选中：不会进 updateSpecDisplay，主动刷新所有按钮 tags
+                // （此时 hypo 路径不全，所有按钮上方 tags 会被隐藏，符合预期）
+                refreshDimBtnTags();
                 // 部分选中：展示可选组合的销量与首个有货规格的库存文字
                 resetPriceRange();
                 var partialSold = 0, partialStockLabel = null;
@@ -303,6 +390,8 @@ var GoodsDetail = (function () {
                 $('#stockCount').text(partialStockLabel || '0');
             } else {
                 resetPriceRange();
+                // 全部取消时也刷新（按钮上方 tags 会全部隐藏）
+                refreshDimBtnTags();
             }
 
             updateDimDisabledState();

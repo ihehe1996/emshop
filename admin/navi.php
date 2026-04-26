@@ -28,10 +28,10 @@ if (Request::isPost()) {
         }
 
         switch ($action) {
-            // 列表
+            // 列表 —— 主站后台只看 merchant_id=0 的记录（系统导航 + 主站自定义）
             case 'list':
                 $keyword = trim((string) Input::post('keyword', ''));
-                $allItems = $model->getAll();
+                $allItems = $model->getAll(0);
 
                 $data = [];
                 foreach ($allItems as $item) {
@@ -88,23 +88,24 @@ if (Request::isPost()) {
                         Response::error('请选择要链接的页面');
                     }
                     $pageRow = PageModel::getById($pageId);
-                    if ($pageRow === null || (int) $pageRow['status'] !== 1) {
-                        Response::error('所选页面不存在或未发布');
+                    if ($pageRow === null || (int) $pageRow['status'] !== 1 || (int) $pageRow['merchant_id'] !== 0) {
+                        Response::error('所选页面不存在或不属于主站');
                     }
                     $typeRefId = $pageId;
                     $link = '/p/' . $pageRow['slug'];
                 }
 
                 $model->create([
-                    'parent_id'  => $parentId,
-                    'name'       => $name,
-                    'type'       => $type,
+                    'parent_id'   => $parentId,
+                    'merchant_id' => 0, // 主站后台创建的自定义导航固定归属主站
+                    'name'        => $name,
+                    'type'        => $type,
                     'type_ref_id' => $typeRefId,
-                    'link'       => $link,
-                    'icon'       => (string) Input::post('icon', ''),
-                    'target'     => (string) Input::post('target', '_self'),
-                    'sort'       => (int) Input::post('sort', 100),
-                    'status'     => Input::post('status', '1') === '1' ? 1 : 0,
+                    'link'        => $link,
+                    'icon'        => (string) Input::post('icon', ''),
+                    'target'      => (string) Input::post('target', '_self'),
+                    'sort'        => (int) Input::post('sort', 100),
+                    'status'      => Input::post('status', '1') === '1' ? 1 : 0,
                 ]);
 
                 Response::success('导航创建成功', ['csrf_token' => Csrf::refresh()]);
@@ -121,6 +122,10 @@ if (Request::isPost()) {
                 $existing = $model->findById($id);
                 if ($existing === null) {
                     Response::error('导航不存在');
+                }
+                // ACL：主站后台只能改 is_system=1 或 merchant_id=0 的记录
+                if ((int) $existing['is_system'] !== 1 && (int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权操作商户自定义导航');
                 }
 
                 $name = trim((string) Input::post('name', ''));
@@ -170,8 +175,8 @@ if (Request::isPost()) {
                         Response::error('请选择要链接的页面');
                     }
                     $pageRow = PageModel::getById($pageId);
-                    if ($pageRow === null || (int) $pageRow['status'] !== 1) {
-                        Response::error('所选页面不存在或未发布');
+                    if ($pageRow === null || (int) $pageRow['status'] !== 1 || (int) $pageRow['merchant_id'] !== 0) {
+                        Response::error('所选页面不存在或不属于主站');
                     }
                     $typeRefId = $pageId;
                     $link = '/p/' . $pageRow['slug'];
@@ -207,6 +212,9 @@ if (Request::isPost()) {
                 if ((int) $existing['is_system'] === 1) {
                     Response::error('系统导航不可删除');
                 }
+                if ((int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权删除商户自定义导航');
+                }
                 if ($model->hasChildren($id)) {
                     Response::error('请先删除子导航');
                 }
@@ -226,6 +234,9 @@ if (Request::isPost()) {
                 if ($existing === null) {
                     Response::error('导航不存在');
                 }
+                if ((int) $existing['is_system'] !== 1 && (int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权操作商户自定义导航');
+                }
 
                 $newStatus = ((int) $existing['status'] === 1) ? 0 : 1;
                 $model->update($id, ['status' => (string) $newStatus]);
@@ -240,6 +251,9 @@ if (Request::isPost()) {
                 $existing = $model->findById($id);
                 if ($existing === null) {
                     Response::error('导航不存在');
+                }
+                if ((int) $existing['is_system'] !== 1 && (int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权操作商户自定义导航');
                 }
                 $target = (string) Input::post('target', '_self');
                 if (!in_array($target, ['_self', '_blank'], true)) {
@@ -284,13 +298,17 @@ if ($isPopup) {
     $editItem = null;
     if ($editId > 0) {
         $editItem = $model->findById($editId);
+        // ACL：弹窗只允许编辑主站归属或系统导航
+        if ($editItem !== null && (int) $editItem['is_system'] !== 1 && (int) $editItem['merchant_id'] !== 0) {
+            $editItem = null;
+        }
     }
-    $topLevelItems = $model->getTopLevel();
+    $topLevelItems = $model->getTopLevel(0);
 
-    // 加载商品分类 / 博客分类 / 已发布页面 供选择
+    // 加载商品分类 / 博客分类 / 已发布页面 供选择（主站作用域）
     $goodsCategories = (new GoodsCategoryModel())->getAll();
-    $blogCategories = (new BlogCategoryModel())->getAll();
-    $publishedPages = PageModel::getPublishedSimple();
+    $blogCategories = (new BlogCategoryModel())->getAll(0);
+    $publishedPages = PageModel::getPublishedSimple(0);
 
     $csrfToken = Csrf::token();
     include __DIR__ . '/view/popup/navi.php';

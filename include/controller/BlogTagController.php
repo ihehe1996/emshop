@@ -19,10 +19,15 @@ class BlogTagController extends BaseController
     public function _detail(): void
     {
         $tagId = (int) $this->getArg('id', 0);
+        $merchantId = MerchantContext::currentId();
 
         $tag = null;
         if ($tagId > 0) {
             $tag = BlogTagModel::getById($tagId);
+            // 不属于当前 scope 的标签视为不存在
+            if ($tag && (int) $tag['merchant_id'] !== $merchantId) {
+                $tag = null;
+            }
         }
 
         // 标签不存在时展示空状态
@@ -32,7 +37,7 @@ class BlogTagController extends BaseController
                 'tag'          => null,
                 'article_list' => [],
                 'pagination'   => null,
-                'all_tags'     => BlogTagModel::getPopularTags(30),
+                'all_tags'     => BlogTagModel::getPopularTags(30, $merchantId),
             ]);
             $this->view->render('blog_tag');
             return;
@@ -43,7 +48,7 @@ class BlogTagController extends BaseController
         $result = $this->queryArticleListPaginated(['tag_id' => $tagId], $page, 20);
 
         // 所有标签（侧边用）
-        $allTags = BlogTagModel::getPopularTags(30);
+        $allTags = BlogTagModel::getPopularTags(30, $merchantId);
 
         // 侧边栏数据
         $sidebarData = $this->getBlogSidebarData();

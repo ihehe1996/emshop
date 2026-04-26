@@ -128,6 +128,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admBlogComment handler，避免事件成倍触发
+    $(document).off('.admBlogComment');
+    $(window).off('.admBlogComment');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -251,7 +255,7 @@ $(function(){
         // ============================================================
         // 搜索 / 重置 / 刷新
         // ============================================================
-        $(document).on('click', '#commentSearchBtn', function () {
+        $(document).on('click.admBlogComment', '#commentSearchBtn', function () {
             table.reload('commentTableId', {
                 where: {
                     keyword: $('#commentSearchKeyword').val() || '',
@@ -261,7 +265,7 @@ $(function(){
             });
         });
 
-        $(document).on('click', '#commentResetBtn', function () {
+        $(document).on('click.admBlogComment', '#commentResetBtn', function () {
             $('#commentSearchKeyword').val('');
             table.reload('commentTableId', {
                 where: { keyword: '', status: currentStatusTab === '' ? '' : String(currentStatusTab) },
@@ -269,7 +273,7 @@ $(function(){
             });
         });
 
-        $(document).on('click', '#commentRefreshBtn', function () {
+        $(document).on('click.admBlogComment', '#commentRefreshBtn', function () {
             table.reload('commentTableId');
         });
 

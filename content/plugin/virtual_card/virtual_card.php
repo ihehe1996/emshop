@@ -6,7 +6,7 @@ Plugin URL:
 Description: 虚拟商品插件，支持卡密 / 账号 / 邮箱等。既可一键发货（从卡密库自动提取），也可切换为人工发货（管理员手动填写）。
 Author: EMSHOP
 Author URL:
-Category: 商品插件
+Category: 商品类型
 */
 
 defined('EM_ROOT') || exit('Access Denied');

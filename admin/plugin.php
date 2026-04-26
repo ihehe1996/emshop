@@ -102,6 +102,11 @@ if (Request::isPost()) {
 
                 $id = $model->install($name, $info, $scope);
 
+                // 标记 Swoole:true 的插件入库后，推进版本号让 swoole worker 自我 reload
+                if (!empty($info['swoole'])) {
+                    PluginModel::bumpSwooleCodeVersion();
+                }
+
                 $csrfToken = Csrf::refresh();
                 Response::success('插件安装成功', ['csrf_token' => $csrfToken, 'id' => $id]);
                 break;
@@ -127,7 +132,15 @@ if (Request::isPost()) {
                     }
                 }
 
+                // 卸载前先记录是否 swoole 插件（卸载后扫文件可能 false negative，故提前判定）
+                $wasSwoolePlugin = $model->isSwoolePlugin($name, $scope);
+
                 $model->uninstall($name, $scope);
+
+                if ($wasSwoolePlugin) {
+                    PluginModel::bumpSwooleCodeVersion();
+                }
+
                 Response::success('插件卸载成功', ['csrf_token' => $csrfToken]);
                 break;
             }
@@ -182,6 +195,11 @@ if (Request::isPost()) {
 
                 $model->enable($name, $scope);
 
+                // 启用 Swoole:true 的插件 → swoole worker 必须 reload 才能挂上新钩子
+                if ($model->isSwoolePlugin($name, $scope)) {
+                    PluginModel::bumpSwooleCodeVersion();
+                }
+
                 $csrfToken = Csrf::refresh();
                 Response::success('插件已启用', ['csrf_token' => $csrfToken]);
                 break;
@@ -203,6 +221,11 @@ if (Request::isPost()) {
                 }
 
                 $model->disable($name, $scope);
+
+                // 禁用 Swoole:true 的插件 → swoole worker 也要 reload 把旧钩子摘掉
+                if ($model->isSwoolePlugin($name, $scope)) {
+                    PluginModel::bumpSwooleCodeVersion();
+                }
 
                 $csrfToken = Csrf::refresh();
                 Response::success('插件已禁用', ['csrf_token' => $csrfToken]);
@@ -265,10 +288,10 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
     header('Content-Type: application/json; charset=utf-8');
 
     $scannedPlugins = $model->scanPlugins(); // 磁盘上的插件
-    // 授权过滤：中心服务已购 + Custom 自建 + 系统内置插件会保留
+    // 授权过滤：服务端注册过 ∩ 已购买 ∩ 通过 scope 边界 → 才保留；系统内置直通
     // 中心服务挂了：仍保留直通项，错误通过 $licenseError 出参透给前端
     $licenseError = null;
-    $scannedPlugins = AppLicenseGuard::filter($scannedPlugins, '', 1, $licenseError);
+    $scannedPlugins = AppLicenseGuard::filter($scannedPlugins, '', 1, 'plugin', $licenseError);
     $licenseError = (string) ($licenseError ?? '');
     $installedPlugins = $model->getAllInstalled($scope); // 已安装的插件
     $installedMap = [];

@@ -141,8 +141,10 @@ class OrderModel
                     throw new RuntimeException($submitError);
                 }
 
-                // 价格（BIGINT 格式）
+                // 价格（BIGINT 格式）：price_raw 是已经应用了 factor（markup × 买家折扣）的成交单价
                 $priceBigint = (int) $spec['price_raw'];
+                // 主站原价（未应用任何 factor），下面算商户分账 cost 时要用
+                $basePriceBigint = (int) ($spec['_base_price_raw'] ?? $spec['price_raw']);
                 $itemTotal = $priceBigint * $quantity;
                 $goodsAmount += $itemTotal;
 
@@ -161,6 +163,7 @@ class OrderModel
                     // 商户分账所需的原始字段（下面统一生成快照）
                     'goods_owner_id'=> (int) ($goods['owner_id'] ?? 0),
                     'markup_rate'   => (int) ($spec['_shop_markup_rate'] ?? 0),
+                    '_base_price'   => $basePriceBigint, // 内部字段：主站原价，cost_amount 计算用
                     // 本商品原始配置，下面算满减时用（configs.discount_rules 是商品级的阶梯折扣）
                     '_goods_configs' => (string) ($goods['configs'] ?? ''),
                     '_item_total'    => $itemTotal,
@@ -210,16 +213,6 @@ class OrderModel
             // owner_id 一致性：商户订单的 owner_id 必须等于商户主 user_id（而非商户 id）
             $merchantId = (int) ($orderData['merchant_id'] ?? 0);
             $ownerId = (int) ($orderData['owner_id'] ?? 0);
-            $payChannel = (string) ($orderData['pay_channel'] ?? 'main');
-            // 订单含引用商品时，强制走主站通道（方案 §6.7）
-            if ($payChannel === 'merchant' && $merchantId > 0) {
-                foreach ($orderGoodsRows as $r) {
-                    if ((int) $r['goods_owner_id'] !== $ownerId) {
-                        $payChannel = 'main';
-                        break;
-                    }
-                }
-            }
 
             // 展示货币快照：下单瞬间锁定访客选择的展示货币 + 当时汇率，
             // 后续订单详情都按这个快照渲染，不受汇率变动影响（访客币=主货币时返回 ['', 0]）
@@ -279,7 +272,6 @@ class OrderModel
                 'guest_token'         => $orderData['guest_token'] ?? null,
                 'owner_id'            => $ownerId,
                 'merchant_id'         => $merchantId,
-                'pay_channel'         => $payChannel,
                 'goods_amount'        => $goodsAmount,
                 'discount_amount'     => $discountAmount,
                 'pay_amount'          => $payAmount,
@@ -322,14 +314,12 @@ class OrderModel
                 if ($merchantId > 0) {
                     $goodsOwnerId = (int) $row['goods_owner_id'];
                     if ($goodsOwnerId === 0) {
-                        // 引用商品：店内价 = base × d_user × (1+u)，反推拿货价 = 店内价 / (1+u)
-                        $costAmount = MerchantLedgerService::computeRefCost(
-                            (int) $row['price'],
-                            (int) $row['quantity'],
-                            (int) ($row['markup_rate'] ?? 0)
-                        );
+                        // 引用商品：商户拿货成本 = 主站原价 × 数量（不打折，主站对商户始终全价）。
+                        // 优惠券 / 买家折扣由主站承担，不影响 cost_amount。
+                        $costAmount = (int) $row['_base_price'] * (int) $row['quantity'];
                     } elseif ($goodsOwnerId === $ownerId) {
                         // 自建商品：fee = price × qty × self_goods_fee_rate / 10000
+                        // 注意：price 是已乘买家折扣后的成交价，主站收的手续费按"实付"算
                         $feeAmount = MerchantLedgerService::computeSelfFee(
                             $merchantId,
                             (int) $row['price'],

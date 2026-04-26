@@ -6,7 +6,7 @@ Plugin URL:
 Description: 实物商品插件，需要人工发货或对接物流系统。支持配置发货方式、预计发货时间、运费模板等。
 Author: EMSHOP
 Author URL:
-Category: 商品插件
+Category: 商品类型
 */
 
 defined('EM_ROOT') || exit('Access Denied');

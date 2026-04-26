@@ -44,7 +44,7 @@ if (!in_array($search_type, ['all', 'goods', 'article'])) {
     <?php endif; ?>
     <div class="goods-grid" style="margin-bottom:32px;">
         <?php foreach ($results as $item): ?>
-        <a href="<?= url_goods((int) $item['id']) ?>" class="card goods-card">
+        <a <?= goods_card_href_attrs($item) ?> class="card goods-card">
             <div class="card-img">
                 <img src="<?= htmlspecialchars($item['image'] ?? '') ?>" alt="<?= htmlspecialchars($item['name']) ?>">
                 <?php if (($item['delivery_type'] ?? '') === 'auto'): ?>

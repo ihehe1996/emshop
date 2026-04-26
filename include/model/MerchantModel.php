@@ -43,7 +43,6 @@ final class MerchantModel
                        u.nickname AS user_nickname,
                        u.shop_balance AS user_shop_balance,
                        l.name AS level_name,
-                       l.allow_own_pay AS level_allow_own_pay,
                        p.name AS parent_name
                   FROM `' . $this->table . '` m
              LEFT JOIN `' . $userTable . '` u ON u.id = m.user_id
@@ -73,9 +72,7 @@ final class MerchantModel
                        u.nickname AS user_nickname,
                        u.email AS user_email,
                        l.name AS level_name,
-                       l.allow_own_pay AS level_allow_own_pay,
-                       p.name AS parent_name,
-                       p.slug AS parent_slug
+                       p.name AS parent_name
                   FROM `' . $this->table . '` m
              LEFT JOIN `' . $userTable . '` u ON u.id = m.user_id
              LEFT JOIN `' . $levelTable . '` l ON l.id = m.level_id
@@ -98,14 +95,6 @@ final class MerchantModel
         $sql = 'SELECT * FROM `' . $this->table . '`
                  WHERE `user_id` = ? AND `deleted_at` IS NULL LIMIT 1';
         return Database::fetchOne($sql, [$userId]);
-    }
-
-    /**
-     * slug 唯一性校验。
-     */
-    public function existsSlug(string $slug, int $excludeId = 0): bool
-    {
-        return $this->fieldExists('slug', $slug, $excludeId);
     }
 
     /**
@@ -160,7 +149,7 @@ final class MerchantModel
     }
 
     /**
-     * 编辑商户（slug 一旦开通不可改，此处忽略传入的 slug）。
+     * 编辑商户（user_id 不可改）。
      *
      * @param array<string, mixed> $data
      */
@@ -170,7 +159,7 @@ final class MerchantModel
             return false;
         }
         $update = $this->pickFields($data);
-        unset($update['slug'], $update['user_id']); // 不允许改 slug / 换商户主
+        unset($update['user_id']); // 不允许换商户主
         if ($update === []) {
             return false;
         }
@@ -186,23 +175,6 @@ final class MerchantModel
             return false;
         }
         return Database::update('merchant', ['status' => $status === 1 ? 1 : 0], $id) > 0;
-    }
-
-    /**
-     * 审核独立收款开关：
-     *   - 开启前必须商户等级 allow_own_pay = 1
-     *   - 关闭时直接置 0
-     */
-    public function setOwnPayEnabled(int $id, int $enabled): bool
-    {
-        $m = $this->findById($id);
-        if ($m === null) {
-            return false;
-        }
-        if ($enabled === 1 && (int) ($m['level_allow_own_pay'] ?? 0) !== 1) {
-            throw new RuntimeException('当前等级不允许独立收款');
-        }
-        return Database::update('merchant', ['own_pay_enabled' => $enabled === 1 ? 1 : 0], $id) > 0;
     }
 
     /**
@@ -230,17 +202,6 @@ final class MerchantModel
             Database::rollBack();
             throw $e;
         }
-    }
-
-    /**
-     * slug 规则校验：3-32 字符，字母 / 数字 / 短横线，不允许以 - 开头或结尾。
-     */
-    public static function validateSlug(string $slug): bool
-    {
-        if (!preg_match('/^[a-z0-9]([a-z0-9\-]{1,30})[a-z0-9]$/i', $slug)) {
-            return strlen($slug) >= 3 && strlen($slug) <= 32 && preg_match('/^[a-z0-9]+$/i', $slug) === 1;
-        }
-        return true;
     }
 
     /**
@@ -276,8 +237,7 @@ final class MerchantModel
 
         $keyword = trim((string) ($filter['keyword'] ?? ''));
         if ($keyword !== '') {
-            $conds[] = '(m.name LIKE ? OR m.slug LIKE ?)';
-            $params[] = '%' . $keyword . '%';
+            $conds[] = 'm.name LIKE ?';
             $params[] = '%' . $keyword . '%';
         }
         if (isset($filter['status']) && $filter['status'] !== '') {
@@ -300,10 +260,9 @@ final class MerchantModel
     private function pickFields(array $data): array
     {
         $allowed = [
-            'user_id', 'parent_id', 'level_id', 'slug', 'name', 'logo', 'slogan',
+            'user_id', 'parent_id', 'level_id', 'name', 'logo', 'slogan',
             'description', 'icp',
             'subdomain', 'custom_domain', 'domain_verified',
-            'own_pay_enabled', 'pay_channel_config',
             'theme', 'status', 'opened_at', 'opened_via',
         ];
         $out = [];

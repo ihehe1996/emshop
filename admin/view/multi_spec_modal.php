@@ -217,6 +217,9 @@ var renderedComboCount = 0;
 // 初始化：渲染已有组合到表格
 // ================================================================
 $(function() {
+    // PJAX 防重复绑定：清掉本页历史 .admMultiSpec handler，避免事件成倍触发
+    $(document).off('.admMultiSpec');
+
     layui.use('layer', function() { window.layer = layui.layer; });
 
     // 如果已有组合，加载到表格
@@ -350,13 +353,13 @@ $('#addDimensionBtn').click(function() {
 });
 
 // 删除维度
-$(document).on('click', '.remove-dim-btn', function() {
+$(document).on('click.admMultiSpec', '.remove-dim-btn', function() {
     $(this).closest('.dim-card').remove();
     clearTable();
 });
 
 // 添加维度值（按钮点击）
-$(document).on('click', '.add-dim-val-btn', function() {
+$(document).on('click.admMultiSpec', '.add-dim-val-btn', function() {
     var $card = $(this).closest('.dim-card');
     var $valuesDiv = $card.find('.dim-values');
     var $form = $card.find('.add-val-form');
@@ -374,7 +377,7 @@ $(document).on('click', '.add-dim-val-btn', function() {
 });
 
 // 确认添加维度值
-$(document).on('click', '.add-val-confirm-btn', function() {
+$(document).on('click.admMultiSpec', '.add-val-confirm-btn', function() {
     var $form = $(this).closest('.add-val-form');
     var $valuesDiv = $(this).closest('.dim-card').find('.dim-values');
     var valName = $form.find('.val-name-input').val().trim();
@@ -385,7 +388,7 @@ $(document).on('click', '.add-val-confirm-btn', function() {
 });
 
 // 回车添加维度值
-$(document).on('keypress', '.val-name-input', function(e) {
+$(document).on('keypress.admMultiSpec', '.val-name-input', function(e) {
     if (e.which == 13) {
         e.preventDefault();
         $(this).closest('.add-val-form').find('.add-val-confirm-btn').click();

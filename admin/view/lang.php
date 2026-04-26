@@ -85,6 +85,10 @@ $languagesJson = json_encode($languages);
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admLang handler，避免事件成倍触发
+    $(document).off('.admLang');
+    $(window).off('.admLang');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -169,15 +173,15 @@ $(function(){
                 langId: $('#langTransSearchLangType').val() || ''
             };
         }
-        $(document).on('click', '#langTransSearchBtn', function () {
+        $(document).on('click.admLang', '#langTransSearchBtn', function () {
             table.reload('langTransTableId', { where: buildWhere(), page: {curr: 1} });
         });
-        $(document).on('click', '#langTransResetBtn', function () {
+        $(document).on('click.admLang', '#langTransResetBtn', function () {
             $('#langTransSearchKeyword').val('');
             $('#langTransSearchLangType').val('');
             table.reload('langTransTableId', { where: {_action: 'list'}, page: {curr: 1} });
         });
-        $(document).on('click', '#langTransRefreshBtn', function () {
+        $(document).on('click.admLang', '#langTransRefreshBtn', function () {
             table.reload('langTransTableId', { where: {_action: 'list'} });
         });
 

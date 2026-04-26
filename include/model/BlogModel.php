@@ -7,6 +7,8 @@ if (!defined('EM_ROOT')) {
 /**
  * 文章模型
  *
+ * 多租户：merchant_id=0 主站；>0 商户。所有读写都按 merchant_id 隔离。
+ *
  * @package EM\Core\Model
  */
 class BlogModel
@@ -14,7 +16,7 @@ class BlogModel
     /**
      * 获取文章列表（前台：仅已发布、未删除）
      *
-     * @param array  $where   筛选条件：category_id / keyword / status
+     * @param array  $where   筛选条件：category_id / keyword / status / tag_id / merchant_id
      * @param int    $page    页码
      * @param int    $limit   每页条数
      * @param string $orderBy 排序
@@ -25,6 +27,12 @@ class BlogModel
         $prefix = Database::prefix();
         $conditions = ['a.deleted_at IS NULL'];
         $params = [];
+
+        // merchant_id 总是要传（即使是 0），调用方明确指定 scope
+        if (array_key_exists('merchant_id', $where)) {
+            $conditions[] = 'a.merchant_id = ?';
+            $params[] = (int) $where['merchant_id'];
+        }
 
         if (isset($where['status']) && $where['status'] !== '') {
             $conditions[] = 'a.status = ?';
@@ -79,9 +87,7 @@ class BlogModel
     }
 
     /**
-     * 获取文章详情（含分类名）
-     *
-     * @return array|null
+     * 获取文章详情（含分类名）—— 不带 merchant_id ACL，调用方负责
      */
     public static function getById(int $id): ?array
     {
@@ -99,42 +105,60 @@ class BlogModel
     }
 
     /**
+     * 获取文章详情（带 merchant_id ACL，前台用）
+     */
+    public static function getByIdForScope(int $id, int $merchantId): ?array
+    {
+        $prefix = Database::prefix();
+        $result = Database::query(
+            "SELECT a.*, c.name as category_name,
+                    COALESCE(u.nickname, u.username, '管理员') as author
+             FROM {$prefix}blog a
+             LEFT JOIN {$prefix}blog_category c ON a.category_id = c.id
+             LEFT JOIN {$prefix}user u ON a.user_id = u.id
+             WHERE a.id = ? AND a.merchant_id = ? AND a.deleted_at IS NULL LIMIT 1",
+            [$id, $merchantId]
+        );
+        return $result[0] ?? null;
+    }
+
+    /**
      * 获取热门文章（按浏览量排序）
      *
      * @return array<array{id:int, title:string}>
      */
-    public static function getPopular(int $limit = 5): array
+    public static function getPopular(int $limit = 5, int $merchantId = 0): array
     {
         $prefix = Database::prefix();
         return Database::query(
             "SELECT id, title, views_count FROM {$prefix}blog
-             WHERE status = 1 AND deleted_at IS NULL
+             WHERE status = 1 AND deleted_at IS NULL AND merchant_id = ?
              ORDER BY views_count DESC, id DESC
              LIMIT ?",
-            [$limit]
+            [$merchantId, $limit]
         );
     }
 
     /**
-     * 获取上一篇/下一篇文章 ID
+     * 获取上一篇/下一篇文章 ID（在同一 merchant_id 范围内查找）
      *
      * @return array{prev_id:int|null, next_id:int|null}
      */
-    public static function getPrevNextId(int $id): array
+    public static function getPrevNextId(int $id, int $merchantId = 0): array
     {
         $prefix = Database::prefix();
 
         $prev = Database::fetchOne(
             "SELECT id, title FROM {$prefix}blog
-             WHERE id < ? AND status = 1 AND deleted_at IS NULL
+             WHERE id < ? AND status = 1 AND deleted_at IS NULL AND merchant_id = ?
              ORDER BY id DESC LIMIT 1",
-            [$id]
+            [$id, $merchantId]
         );
         $next = Database::fetchOne(
             "SELECT id, title FROM {$prefix}blog
-             WHERE id > ? AND status = 1 AND deleted_at IS NULL
+             WHERE id > ? AND status = 1 AND deleted_at IS NULL AND merchant_id = ?
              ORDER BY id ASC LIMIT 1",
-            [$id]
+            [$id, $merchantId]
         );
 
         return [
@@ -158,7 +182,7 @@ class BlogModel
     }
 
     /**
-     * 创建文章
+     * 创建文章。$data 必须包含 merchant_id（调用方决定 0 还是商户 ID）。
      *
      * @return int 新文章 ID
      */
@@ -170,10 +194,11 @@ class BlogModel
     }
 
     /**
-     * 更新文章
+     * 更新文章。merchant_id 不应通过 update 修改（调用方禁止传入）。
      */
     public static function update(int $id, array $data): bool
     {
+        unset($data['merchant_id']); // 防越权改归属
         $data['updated_at'] = date('Y-m-d H:i:s');
         return Database::update('blog', $data, $id) !== false;
     }

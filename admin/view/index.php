@@ -124,20 +124,6 @@ $csrfToken = Csrf::token();
                     </div>
                 </div>
 
-                <!-- 推广返佣 -->
-                <div class="admin-menu-group">
-                    <div class="admin-menu-group__header" data-group="rebate">
-                        <i class="fa fa-share-alt"></i>
-                        <span><?= t('推广返佣'); ?></span>
-                        <i class="fa fa-angle-right"></i>
-                    </div>
-                    <div class="admin-menu-group__body">
-                        <a href="/admin/commission.php?tab=log" data-pjax="#adminContent" class="admin-menu-item"><?= t('佣金流水'); ?></a>
-                        <a href="/admin/commission.php?tab=withdraw" data-pjax="#adminContent" class="admin-menu-item"><?= t('提现记录'); ?></a>
-                        <a href="/admin/settings.php?action=rebate" data-pjax="#adminContent" class="admin-menu-item"><?= t('返佣配置'); ?></a>
-                    </div>
-                </div>
-
                 <!-- 3. 订单管理 -->
                 <div class="admin-menu-group">
                     <div class="admin-menu-group__header" data-group="order">
@@ -149,7 +135,7 @@ $csrfToken = Csrf::token();
                         <a href="/admin/order.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('商品订单'); ?></a>
                         <a href="/admin/recharge.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('充值订单'); ?></a>
                         <a href="/admin/withdraw.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('提现申请'); ?></a>
-                        <a href="javascript:void(0);" class="admin-menu-item"><?= t('分站订单'); ?></a>
+                        <a href="/admin/merchant_order.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('分站订单'); ?></a>
                     </div>
                 </div>
 
@@ -164,6 +150,7 @@ $csrfToken = Csrf::token();
                         <a href="/admin/user_list.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('用户列表'); ?></a>
                         <a href="/admin/user_level.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('用户等级'); ?></a>
                         <a href="/admin/merchant_level.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('商户等级'); ?></a>
+                        <a href="/admin/commission.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('推广返佣'); ?></a>
                     </div>
                 </div>
 

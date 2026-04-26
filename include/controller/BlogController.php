@@ -49,11 +49,11 @@ class BlogController extends BaseController
         $where = [];
         $title = '全部文章';
 
-        // 标签筛选
+        // 标签筛选 —— 标签 ID 必须属于当前 scope
         if ($tagId > 0) {
-            $where['tag_id'] = $tagId;
             $tag = BlogTagModel::getById($tagId);
-            if ($tag) {
+            if ($tag && (int) $tag['merchant_id'] === MerchantContext::currentId()) {
+                $where['tag_id'] = $tagId;
                 $title = '标签：' . $tag['name'];
             }
         }
@@ -106,8 +106,10 @@ class BlogController extends BaseController
         $nextTitle = null;
 
         if ($id > 0) {
-            $row = BlogModel::getById($id);
-            if ($row && (int) $row['status'] === 1 && $row['deleted_at'] === null) {
+            // 详情读取限定到当前 scope（主站只看主站文章，商户只看自己文章）
+            $merchantId = MerchantContext::currentId();
+            $row = BlogModel::getByIdForScope($id, $merchantId);
+            if ($row && (int) $row['status'] === 1) {
                 // 递增浏览量
                 BlogModel::incrementViews($id);
 
@@ -122,8 +124,8 @@ class BlogController extends BaseController
                     'tags'     => BlogTagModel::getTagsByBlogId($id),
                 ];
 
-                // 上下篇
-                $nav = BlogModel::getPrevNextId($id);
+                // 上下篇（限定 scope 内）
+                $nav = BlogModel::getPrevNextId($id, $merchantId);
                 $prevId = $nav['prev_id'];
                 $prevTitle = $nav['prev_title'];
                 $nextId = $nav['next_id'];

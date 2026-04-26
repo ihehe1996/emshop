@@ -5,6 +5,8 @@ if (!defined('EM_ROOT')) {
 $esc = function (?string $s): string {
     return htmlspecialchars($s ?? '', ENT_QUOTES, 'UTF-8');
 };
+// 提交 URL 由调用方决定：admin 走 /admin/order.php；商户走 /user/merchant/order.php
+$shipSubmitUrl = isset($shipSubmitUrl) && $shipSubmitUrl !== '' ? $shipSubmitUrl : '/admin/order.php';
 include __DIR__ . '/header.php';
 ?>
 
@@ -122,7 +124,7 @@ $(function () {
         $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> 发货中...');
 
         $.ajax({
-            url: '/admin/order.php',
+            url: <?= json_encode($shipSubmitUrl) ?>,
             type: 'POST',
             dataType: 'json',
             data: $form.serialize(),

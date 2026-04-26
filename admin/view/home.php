@@ -36,7 +36,7 @@ try {
     $stats['goods_total']    = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'goods` WHERE `deleted_at` IS NULL')['c'] ?? 0);
     $stats['order_total']    = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'order`')['c'] ?? 0);
     $stats['user_total']     = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'user` WHERE `role` = ?', ['user'])['c'] ?? 0);
-    $stats['blog_total']     = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'blog` WHERE `deleted_at` IS NULL')['c'] ?? 0);
+    $stats['blog_total']     = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'blog` WHERE `deleted_at` IS NULL AND `merchant_id` = 0')['c'] ?? 0);
     $stats['today_revenue']  = (int) (Database::fetchOne('SELECT COALESCE(SUM(`pay_amount`), 0) AS s FROM `' . $__prefix . 'order` WHERE `status` = ? AND DATE(`complete_time`) = ?', ['completed', $__today])['s'] ?? 0);
     $stats['today_orders']   = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'order` WHERE DATE(`created_at`) = ?', [$__today])['c'] ?? 0);
     $stats['pending_orders'] = (int) (Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'order` WHERE `status` = ?', ['paid'])['c'] ?? 0);
@@ -1290,8 +1290,14 @@ $calcRatio = static function (float $today, float $yesterday): array {
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：后台首页经常被 PJAX 切回，脚本每次执行都会给 document / window
+    // 追加一次监听，点击会成倍触发。这里先 off 掉同命名空间的旧监听，再按 `.dashHome`
+    // 统一绑定 —— 下方所有 $(document).on / $(window).on 都带这个命名空间。
+    $(document).off('.dashHome');
+    $(window).off('.dashHome');
+
     // 官方公告第一条：客服QQ / QQ群 点击复制
-    $(document).on('click', '.dash-contact-chip[data-copy]', function () {
+    $(document).on('click.dashHome', '.dash-contact-chip[data-copy]', function () {
         var text = $(this).data('copy');
         if (!text) return;
         var $tmp = $('<textarea>').val(text).css({ position: 'fixed', top: '-1000px' }).appendTo('body');
@@ -1416,7 +1422,7 @@ $(function () {
     loadDashIndex();
 
     // 系统版本卡片：有新版本 → 弹窗展示所有高于当前版本的更新日志；否则触发一次刷新
-    $(document).on('click', '#dashCheckUpdate:not(:disabled)', function () {
+    $(document).on('click.dashHome', '#dashCheckUpdate:not(:disabled)', function () {
         if (typeof layui === 'undefined' || !layui.layer) return;
         var updates = (__dashIndexData && __dashIndexData.updates) || [];
         if (updates.length > 0) {
@@ -1849,7 +1855,7 @@ $(function () {
     dashFetchSwooleStatus();
 
     // 点击刷新按钮：重新拉一次状态（不刷整页）
-    $(document).on('click', '#dashSwooleRefresh:not(.is-loading)', function () {
+    $(document).on('click.dashHome', '#dashSwooleRefresh:not(.is-loading)', function () {
         dashFetchSwooleStatus();
     });
 
@@ -1909,7 +1915,8 @@ $(function () {
             ]
         };
         chartTrend.setOption(baseOption);
-        window.addEventListener('resize', function () { chartTrend.resize(); });
+        // 用 jQuery + .dashHome 命名空间绑定，PJAX 切回时顶部的 off('.dashHome') 会清掉旧 resize
+        $(window).on('resize.dashHome', function () { chartTrend.resize(); });
 
         // 拉某个日期范围的数据并更新图表
         function loadTrend(range) {
@@ -1939,7 +1946,7 @@ $(function () {
         loadTrend('7d');
 
         // 日期筛选按钮：点击切换 range
-        $(document).on('click', '#dashTrendFilter .dash-trend-filter__item', function () {
+        $(document).on('click.dashHome', '#dashTrendFilter .dash-trend-filter__item', function () {
             var $it = $(this);
             if ($it.hasClass('is-active')) return;
             $it.siblings().removeClass('is-active');

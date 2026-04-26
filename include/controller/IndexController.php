@@ -43,6 +43,8 @@ class IndexController extends BaseController
             'hot_goods'       => $hotGoods,
             'recommended_goods' => $recommendedGoods,
             'recent_articles' => $recentArticles,
+            // 店铺公告：模板按 announcement.positions 决定是否渲染
+            'announcement'    => $this->getCurrentAnnouncement(),
         ], $sidebarData));
         // 商城首页统一用 goods_index.php 模板（page.php 留给 PageController 做 CMS 页面）
         $this->view->render('goods_index');

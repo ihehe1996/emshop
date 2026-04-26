@@ -14,7 +14,7 @@ require_once EM_ROOT . '/include/model/UserBalanceLogModel.php';
  *   - 必须登录（未登录重定向到登录页）
  *   - 如已开通 → 跳到商户后台首页
  *   - 未开通：展示允许自助开通的等级（price>0 且 is_enabled=1）
- *     · 用户选等级 + 填 slug + 店铺名，后端扣消费余额后创建商户
+ *     · 用户选等级 + 店铺名，后端扣消费余额后创建商户
  *   - 总开关 merchant_enable_self_open 关闭时，只允许"提示+联系管理员"
  */
 userRequireLogin();
@@ -74,21 +74,13 @@ if (Request::isPost()) {
             Response::error('该等级暂不支持自助开通');
         }
 
-        $slug = strtolower(trim((string) Input::post('slug', '')));
-        if (!MerchantModel::validateSlug($slug)) {
-            Response::error('slug 需 3-32 字符，只允许字母 / 数字 / 短横线');
-        }
-        if ($merchantModel->existsSlug($slug)) {
-            Response::error('slug 已被占用，请换一个');
-        }
-
         $name = trim((string) Input::post('name', ''));
         if ($name === '' || mb_strlen($name) > 100) {
             Response::error('分站名称长度需在 1~100 字符');
         }
+        $userId = (int) $frontUser['id'];
 
         // 余额校验 + 扣款（走事务）
-        $userId = (int) $frontUser['id'];
         $balanceLogModel = new UserBalanceLogModel();
 
         Database::begin();
@@ -132,7 +124,6 @@ if (Request::isPost()) {
                 'user_id' => $userId,
                 'parent_id' => 0,
                 'level_id' => $levelId,
-                'slug' => $slug,
                 'name' => $name,
                 'opened_via' => 'self',
                 'status' => 1,
@@ -173,6 +164,10 @@ $csrfToken = Csrf::token();
 // 账户余额 / 等级价按访客当前展示币种换算（view 里 $currencySymbol . $priceYuan 形式拼接）
 $displayMoney = Currency::displayAmount((int) ($frontUser['money'] ?? 0), null, false);
 $currencySymbol = Currency::visitorSymbol();
+
+// 站点 logo（页头按 site_logo_type=image/text 二选一渲染）
+$siteLogoType = (string) (Config::get('site_logo_type') ?? 'text');
+$siteLogo     = (string) (Config::get('site_logo') ?? '');
 
 // 上级商户归因已移除（分站不支持层级关系）
 $inviterMerchant = null;

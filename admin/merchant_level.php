@@ -115,7 +115,6 @@ if (Request::isPost()) {
                     'allow_subdomain' => (int) Input::post('allow_subdomain', 0) === 1 ? 1 : 0,
                     'allow_custom_domain' => (int) Input::post('allow_custom_domain', 0) === 1 ? 1 : 0,
                     'allow_self_goods' => (int) Input::post('allow_self_goods', 0) === 1 ? 1 : 0,
-                    'allow_own_pay' => (int) Input::post('allow_own_pay', 0) === 1 ? 1 : 0,
                     'sort' => (int) Input::post('sort', 100),
                     'is_enabled' => (int) Input::post('is_enabled', 1) === 1 ? 1 : 0,
                 ];
@@ -161,7 +160,7 @@ if (Request::isPost()) {
             case 'toggle_perm':
                 $id = (int) Input::post('id', 0);
                 $field = (string) Input::post('field', '');
-                $allowedFields = ['allow_subdomain', 'allow_custom_domain', 'allow_self_goods', 'allow_own_pay'];
+                $allowedFields = ['allow_subdomain', 'allow_custom_domain', 'allow_self_goods'];
                 if (!in_array($field, $allowedFields, true)) {
                     Response::error('不支持的权限字段');
                 }

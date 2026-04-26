@@ -99,6 +99,15 @@ $csrfToken = Csrf::token();
     {{# } }}
 </script>
 
+<!-- 用户等级：未设等级显示灰标签；已设显示蓝色等级名 -->
+<script type="text/html" id="userLevelTpl">
+    {{# if(d.user_level_name){ }}
+    <span class="em-tag em-tag--blue">{{ d.user_level_name }}</span>
+    {{# } else { }}
+    <span class="em-tag em-tag--muted">无</span>
+    {{# } }}
+</script>
+
 <!-- 注册时间：日期粗体 + 时间浅色 -->
 <script type="text/html" id="userCreatedAtTpl">
     {{# if(d.created_at){ }}
@@ -203,6 +212,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admUserList handler，避免事件成倍触发
+    $(document).off('.admUserList');
+    $(window).off('.admUserList');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -254,6 +267,7 @@ $(function(){
                 {field: 'email', title: '邮箱', minWidth: 200, align: 'center', templet: '#userEmailTpl'},
                 {field: 'mobile', title: '手机', minWidth: 130, align: 'center', templet: '#userMobileTpl'},
                 {field: 'merchant_level_name', title: '商户', minWidth: 110, align: 'center', templet: '#userMerchantTpl'},
+                {field: 'user_level_name', title: '等级', width: 90, align: 'center', templet: '#userLevelTpl'},
                 {field: 'created_at', title: '注册时间', minWidth: 130, align: 'center', templet: '#userCreatedAtTpl', sort: true},
                 {field: 'status', title: '状态', width: 90, templet: '#userStatusTpl', align: 'center'},
                 {title: '操作', width: 200, templet: '#userRowActionTpl', align: 'center'}
@@ -272,13 +286,13 @@ $(function(){
         });
 
         // 快捷搜索：回车触发
-        $(document).on('keypress', '#userQuickSearch', function (e) {
+        $(document).on('keypress.admUserList', '#userQuickSearch', function (e) {
             if (e.which !== 13) return;
             e.preventDefault();
             doSearchReload();
         });
         // 清空按钮：清空输入 + 立即刷新
-        $(document).on('click', '#userQuickClear', function () {
+        $(document).on('click.admUserList', '#userQuickClear', function () {
             $('#userQuickSearch').val('').focus();
             doSearchReload();
         });
@@ -392,12 +406,12 @@ $(function(){
         });
 
         // 刷新按钮
-        $(document).on('click', '#userRefreshBtn', function () {
+        $(document).on('click.admUserList', '#userRefreshBtn', function () {
             table.reload('userTableId');
         });
 
         // 批量删除
-        $(document).on('click', '#userBatchDelBtn', function () {
+        $(document).on('click.admUserList', '#userBatchDelBtn', function () {
             if ($(this).hasClass('em-disabled-btn')) return;
             var checked = table.checkStatus('userTableId');
             if (checked.data.length === 0) {

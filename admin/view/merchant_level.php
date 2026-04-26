@@ -52,12 +52,10 @@ $csrfToken = Csrf::token();
           data-id="{{d.id}}" data-field="allow_custom_domain" data-on-class="em-tag--on" title="点击切换">自定义域名</span>
 </script>
 
-<!-- 功能权限：自建商品 / 自建收款（同上） -->
+<!-- 功能权限：自建商品（同上） -->
 <script type="text/html" id="mlPermsTpl">
     <span class="em-tag em-tag--clickable {{d.allow_self_goods == 1 ? 'em-tag--purple' : 'em-tag--off'}}"
           data-id="{{d.id}}" data-field="allow_self_goods" data-on-class="em-tag--purple" title="点击切换">自建商品</span>
-    <span class="em-tag em-tag--clickable {{d.allow_own_pay == 1 ? 'em-tag--purple' : 'em-tag--off'}}"
-          data-id="{{d.id}}" data-field="allow_own_pay" data-on-class="em-tag--purple" title="点击切换">自建收款</span>
 </script>
 
 <!-- 状态开关 -->
@@ -67,6 +65,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admMerchantLevel handler，避免事件成倍触发
+    $(document).off('.admMerchantLevel');
+    $(window).off('.admMerchantLevel');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -190,13 +192,13 @@ $(function(){
         });
 
         // 刷新按钮
-        $(document).on('click', '#mlRefreshBtn', function () {
+        $(document).on('click.admMerchantLevel', '#mlRefreshBtn', function () {
             table.reload('mlTableId');
         });
 
         // 权限标签点击切换：命中表格内 em-tag--clickable，向 toggle_perm 提交 field + id
         // 成功：按返回值重排 on/off class；失败：不动
-        $(document).on('click', '#mlTable + .layui-table-view .em-tag--clickable[data-field]', function () {
+        $(document).on('click.admMerchantLevel', '#mlTable + .layui-table-view .em-tag--clickable[data-field]', function () {
             var $tag = $(this);
             if ($tag.hasClass('is-loading')) return;
             var id = $tag.data('id');

@@ -5,16 +5,34 @@
 ?>
 </div><!-- #main -->
 
-<!-- 底部 -->
+<!-- 底部：极简版权 + ICP 备案 + 第三方统计代码注入 -->
 <footer class="site-footer">
 <div class="wrapper">
-    <div class="footer-brand"><?= htmlspecialchars($site_name ?? 'EMSHOP') ?></div>
-    <div class="footer-links">
-        <?= $nav_footer_html ?>
+    <div class="site-footer__copy">
+        <span>&copy; <?= date('Y') ?> <?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
+        <span>Powered by <?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
     </div>
-    <div>Powered by EMSHOP &copy; <?= date('Y') ?></div>
+    <?php if (!empty($site_icp)): ?>
+    <div class="site-footer__icp">
+        <?php
+        // 中国大陆备案号惯例：跳工信部公示页（不强制，让用户能自助核验）
+        $_icpHref = 'https://beian.miit.gov.cn/';
+        ?>
+        <a href="<?= htmlspecialchars($_icpHref) ?>" target="_blank" rel="nofollow noopener">
+            <?= htmlspecialchars($site_icp) ?>
+        </a>
+    </div>
+    <?php endif; ?>
 </div>
 </footer>
+
+<?php
+// 第三方统计代码（百度统计 / Google Analytics / 自定义脚本）
+// 直接 raw 输出（管理员粘贴的 <script> 片段不做转义）；商户站不注入主站统计，避免混淆数据归属
+if (!empty($site_statistical_code) && MerchantContext::isMaster()) {
+    echo $site_statistical_code;
+}
+?>
 
 <script>
 /**

@@ -74,11 +74,24 @@ if (Request::isPost()) {
                         LIMIT {$limit} OFFSET {$offset}";
                 $rows = Database::query($sql, $params);
 
+                // 支付方式 code → image 映射（PaymentService::getMethods 拿当前可用的支付方式
+                // 元数据，含 image 字段；订单表本身只存 payment_code/payment_name，没存 image）
+                $paymentImageMap = [];
+                try {
+                    foreach (PaymentService::getMethods() as $m) {
+                        $code = (string) ($m['code'] ?? '');
+                        if ($code !== '') $paymentImageMap[$code] = (string) ($m['image'] ?? '');
+                    }
+                } catch (Throwable $e) {
+                    // 拿不到支付方式列表也不影响列表展示，image 默认为空即可
+                }
+
                 // 金额转换 + 预置 goods 字段（金额用千分位展示，小数保留 2 位）
                 foreach ($rows as &$row) {
                     $row['goods_amount_fmt'] = number_format((float) bcdiv((string) ($row['goods_amount'] ?? 0), '1000000', 2), 2, '.', ',');
                     $row['pay_amount_fmt']   = number_format((float) bcdiv((string) ($row['pay_amount']   ?? 0), '1000000', 2), 2, '.', ',');
                     $row['status_name'] = OrderModel::statusName($row['status']);
+                    $row['payment_image'] = $paymentImageMap[(string) ($row['payment_code'] ?? '')] ?? '';
                     $row['goods'] = [];
                     $row['goods_count'] = 0;
                 }

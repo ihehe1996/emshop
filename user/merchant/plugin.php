@@ -10,7 +10,7 @@ require_once __DIR__ . '/global.php';
  * 与主站 admin/plugin.php 结构对齐，关键差异：
  *   - 身份：merchantRequireLogin + 当前商户上下文
  *   - scope：'merchant_{id}'，独立于主站 'main'
- *   - AppLicenseGuard::filter(scope=2) 先按购买 + 角色裁剪磁盘扫描结果
+ *   - AppLicenseGuard::filter(scope=2, type=plugin) 先按"服务端注册 + 已购"裁剪磁盘扫描结果
  *   - 物理文件全站共享一份；install 只在本 scope 写一条 DB 记录
  */
 merchantRequireLogin();
@@ -48,6 +48,12 @@ if (Request::isPost()) {
 
                 $info = $model->parseHeader($mainFile);
                 if ($info === null) Response::error('无法解析插件信息，请检查插件头部注释');
+
+                // 这几个分类（支付 / 商品 / 商品增强）由主站统一管理，商户无权安装；
+                // init.php 已经按"主站启用"自动给商户站加载好这些插件
+                if (in_array((string) ($info['category'] ?? ''), PluginModel::MAIN_ONLY_CATEGORIES, true)) {
+                    Response::error('该分类的插件由主站统一管理，商户站无需安装');
+                }
 
                 $info['name']      = $name;
                 $info['main_file'] = $name . '.php';
@@ -175,8 +181,14 @@ if (Input::get('_popup', '') === '1') {
 // ============================================================
 $scanned = $model->scanPlugins();
 $licenseError = null;
-$availablePlugins = AppLicenseGuard::filter($scanned, $memberCode, 2, $licenseError);
+$availablePlugins = AppLicenseGuard::filter($scanned, $memberCode, 2, 'plugin', $licenseError);
 $licenseError = (string) ($licenseError ?? '');
+
+// 过滤掉"主站统一管理"的分类（支付 / 商品 / 商品增强）—— 商户站完全看不到这些插件，
+// 也无从安装；它们由 init.php 按主站启用名单自动加载
+$availablePlugins = array_filter($availablePlugins, static function (array $info) {
+    return !in_array((string) ($info['category'] ?? ''), PluginModel::MAIN_ONLY_CATEGORIES, true);
+});
 
 // 取本 scope 下的 DB 记录，合并到可用列表
 $installedMap = [];

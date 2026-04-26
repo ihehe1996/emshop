@@ -295,6 +295,10 @@ if (Request::isPost()) {
                     // 再用 displayMain 换算到访客当前展示币种并拼符号
                     $row['min_price_view'] = Currency::displayMain((float) $row['min_price']);
                     $row['max_price_view'] = Currency::displayMain((float) $row['max_price']);
+                    // 类型中文标签：走 goods_type_label filter（physical / virtual_card 都注册了）
+                    // 没匹配 filter 则回落到原始 goods_type 字符串，避免空显示
+                    $label = (string) applyFilter('goods_type_label', '', $row);
+                    $row['type_label'] = $label !== '' ? $label : (string) ($row['goods_type'] ?? '');
                 }
                 unset($row);
 
@@ -758,13 +762,13 @@ if (Request::isPost()) {
                 break;
             }
 
-            // 规格 JSON（编辑时 AJAX 刷新规格表用）
+            // 规格 JSON（编辑时 AJAX 刷新规格表用）—— 用 raw 价
             case 'get_specs_json': {
                 $gid = (int) Input::post('id', (int) Input::get('id', 0));
                 if ($gid <= 0) Response::error('商品ID不能为空');
-                $g = GoodsModel::getById($gid);
+                $g = GoodsModel::getById($gid, false);
                 if ($g === null || (int) $g['owner_id'] !== $ownerUserId) Response::error('商品不存在或无权限');
-                Response::success('', ['specs' => GoodsModel::getSpecsByGoodsId($gid)]);
+                Response::success('', ['specs' => GoodsModel::getSpecsByGoodsId($gid, false)]);
                 break;
             }
 
@@ -878,11 +882,12 @@ if ((string) Input::get('_popup', '') === 'ref_edit') {
 if ((string) Input::get('_popup', '') === 'stock_manager') {
     $gid = (int) Input::get('id', 0);
     if ($gid <= 0) exit('商品ID不能为空');
-    $goods = GoodsModel::getById($gid);
+    // 库存管理弹窗：用 raw 价，避免库存面板里展示的价被当前登录商户的买家折扣污染
+    $goods = GoodsModel::getById($gid, false);
     if ($goods === null || (int) $goods['owner_id'] !== $ownerUserId) {
         exit('商品不存在或无权限');
     }
-    $specs = GoodsModel::getSpecsByGoodsId($gid);
+    $specs = GoodsModel::getSpecsByGoodsId($gid, false);
 
     $csrfToken = Csrf::token();
     $pageTitle = '库存管理';
@@ -908,12 +913,14 @@ if ((string) Input::get('_popup', '') === 'self_edit') {
     $specs = [];
     $specDimNames = [];
     if ($editId > 0) {
-        $g = GoodsModel::getById($editId);
+        // 编辑表单：用 raw 价，把"成交价配置"原值显示给商户，
+        // 不能被当前登录商户账号的买家折扣污染（曾经报过 10 元变 9.9 元的 bug）
+        $g = GoodsModel::getById($editId, false);
         if ($g === null || (int) $g['owner_id'] !== $ownerUserId) {
             exit('商品不存在或无权限');
         }
         $goods = $g;
-        $specs = GoodsModel::getSpecsByGoodsId($editId);
+        $specs = GoodsModel::getSpecsByGoodsId($editId, false);
         $specDimNames = Database::query(
             'SELECT `name` FROM `' . Database::prefix() . 'goods_spec_dim` WHERE `goods_id` = ? ORDER BY `sort` ASC',
             [$editId]

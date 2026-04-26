@@ -8,7 +8,9 @@ if (!defined('EM_ROOT')) {
  * 博客标签模型
  *
  * 管理标签 CRUD 和文章-标签关联关系。
- * article_count 为冗余字段，通过 refreshCount() 刷新。
+ * article_count 为冗余字段，通过 refreshAllCounts() 刷新。
+ *
+ * 多租户：标签按 merchant_id 分池，主站和商户可以同名（uk_merchant_name）。
  */
 class BlogTagModel
 {
@@ -17,13 +19,14 @@ class BlogTagModel
     // ============================================================
 
     /**
-     * 获取所有标签（按 sort ASC, id ASC 排序）
+     * 获取指定 scope 下的所有标签（按 sort ASC, id ASC 排序）
      */
-    public static function getAll(): array
+    public static function getAll(int $merchantId = 0): array
     {
         $prefix = Database::prefix();
         return Database::query(
-            "SELECT * FROM {$prefix}blog_tag ORDER BY sort ASC, id ASC"
+            "SELECT * FROM {$prefix}blog_tag WHERE merchant_id = ? ORDER BY sort ASC, id ASC",
+            [$merchantId]
         );
     }
 
@@ -35,6 +38,11 @@ class BlogTagModel
         $prefix = Database::prefix();
         $conditions = [];
         $params = [];
+
+        if (array_key_exists('merchant_id', $where)) {
+            $conditions[] = 'merchant_id = ?';
+            $params[] = (int) $where['merchant_id'];
+        }
 
         if (!empty($where['keyword'])) {
             $conditions[] = 'name LIKE ?';
@@ -64,7 +72,7 @@ class BlogTagModel
     }
 
     /**
-     * 根据 ID 获取标签
+     * 根据 ID 获取标签（不带 ACL，调用方负责）
      */
     public static function getById(int $id): ?array
     {
@@ -74,31 +82,38 @@ class BlogTagModel
     }
 
     /**
-     * 根据名称获取标签
+     * 在指定 scope 下按名称查找标签
      */
-    public static function getByName(string $name): ?array
+    public static function getByName(string $name, int $merchantId = 0): ?array
     {
         $prefix = Database::prefix();
-        $row = Database::fetchOne("SELECT * FROM {$prefix}blog_tag WHERE name = ?", [$name]);
+        $row = Database::fetchOne(
+            "SELECT * FROM {$prefix}blog_tag WHERE name = ? AND merchant_id = ?",
+            [$name, $merchantId]
+        );
         return $row ?: null;
     }
 
     /**
-     * 创建标签
+     * 创建标签。$data 必须包含 merchant_id（调用方决定 0 还是商户 ID）。
      *
      * @return int 新标签 ID
      */
     public static function create(array $data): int
     {
+        if (!array_key_exists('merchant_id', $data)) {
+            $data['merchant_id'] = 0;
+        }
         $data['created_at'] = date('Y-m-d H:i:s');
         return Database::insert('blog_tag', $data);
     }
 
     /**
-     * 更新标签
+     * 更新标签。merchant_id 不允许通过 update 修改。
      */
     public static function update(int $id, array $data): bool
     {
+        unset($data['merchant_id']);
         return Database::update('blog_tag', $data, $id) !== false;
     }
 
@@ -113,13 +128,13 @@ class BlogTagModel
     }
 
     /**
-     * 检查标签名是否已存在
+     * 在指定 scope 下检查标签名是否已存在
      */
-    public static function nameExists(string $name, int $excludeId = 0): bool
+    public static function nameExists(string $name, int $excludeId = 0, int $merchantId = 0): bool
     {
         $prefix = Database::prefix();
-        $sql = "SELECT id FROM {$prefix}blog_tag WHERE name = ?";
-        $params = [$name];
+        $sql = "SELECT id FROM {$prefix}blog_tag WHERE name = ? AND merchant_id = ?";
+        $params = [$name, $merchantId];
         if ($excludeId > 0) {
             $sql .= ' AND id != ?';
             $params[] = $excludeId;
@@ -128,16 +143,16 @@ class BlogTagModel
     }
 
     /**
-     * 按名称查找或创建标签，返回标签 ID
+     * 在指定 scope 下按名称查找或创建标签，返回标签 ID
      */
-    public static function findOrCreate(string $name): int
+    public static function findOrCreate(string $name, int $merchantId = 0): int
     {
         $name = trim($name);
-        $existing = self::getByName($name);
+        $existing = self::getByName($name, $merchantId);
         if ($existing) {
             return (int) $existing['id'];
         }
-        return self::create(['name' => $name]);
+        return self::create(['name' => $name, 'merchant_id' => $merchantId]);
     }
 
     // ============================================================
@@ -218,16 +233,17 @@ class BlogTagModel
     }
 
     /**
-     * 获取热门标签（按文章数量排序）
+     * 获取指定 scope 下的热门标签（按文章数量排序）
      */
-    public static function getPopularTags(int $limit = 20): array
+    public static function getPopularTags(int $limit = 20, int $merchantId = 0): array
     {
         $prefix = Database::prefix();
         return Database::query(
-            "SELECT * FROM {$prefix}blog_tag WHERE article_count > 0
+            "SELECT * FROM {$prefix}blog_tag
+             WHERE article_count > 0 AND merchant_id = ?
              ORDER BY article_count DESC, sort ASC, id ASC
              LIMIT ?",
-            [$limit]
+            [$merchantId, $limit]
         );
     }
 

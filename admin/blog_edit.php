@@ -43,11 +43,20 @@ if ($action === 'save') {
 
     try {
         if ($id) {
+            // 更新前 ACL 校验
+            $existing = BlogModel::getById($id);
+            if (!$existing) {
+                Response::error('文章不存在');
+            }
+            if ((int) $existing['merchant_id'] !== 0) {
+                Response::error('无权操作商户文章');
+            }
             BlogModel::update($id, $data);
             $articleId = $id;
         } else {
             $data['user_id'] = $_SESSION['em_admin_auth']['id'] ?? 0;
             $data['created_by'] = $data['user_id'];
+            $data['merchant_id'] = 0; // 主站后台创建的文章固定归主站
             $articleId = BlogModel::create($data);
         }
 
@@ -55,13 +64,13 @@ if ($action === 'save') {
             Response::error('保存失败');
         }
 
-        // 保存标签关联
+        // 保存标签关联（主站标签池）
         $tagsStr = trim($_POST['tags'] ?? '');
         $tagNames = array_filter(array_map('trim', explode(',', $tagsStr)));
         $tagIds = [];
         foreach ($tagNames as $tagName) {
             if ($tagName !== '') {
-                $tagIds[] = BlogTagModel::findOrCreate($tagName);
+                $tagIds[] = BlogTagModel::findOrCreate($tagName, 0);
             }
         }
         BlogTagModel::syncBlogTags($articleId, $tagIds);
@@ -79,10 +88,13 @@ $id = (int)($_GET['id'] ?? 0);
 $article = null;
 if ($id) {
     $article = BlogModel::getById($id);
+    if ($article && (int) $article['merchant_id'] !== 0) {
+        $article = null; // 主站后台不展示商户文章
+    }
 }
 
 $categories = Database::query(
-    "SELECT * FROM " . Database::prefix() . "blog_category WHERE status = 1 ORDER BY parent_id ASC, sort ASC"
+    "SELECT * FROM " . Database::prefix() . "blog_category WHERE status = 1 AND merchant_id = 0 ORDER BY parent_id ASC, sort ASC"
 );
 
 // 弹窗模式

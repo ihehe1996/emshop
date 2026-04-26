@@ -7,25 +7,50 @@
      * @param {string} url - 当前页面 URL
      */
     function setActiveMenu(url) {
-        // 只按 pathname 匹配：设置页这种带 ?action=xxx 的 PJAX 切换也能命中同一菜单项
+        // 命中策略（避免"多项同 path 全亮"问题）：
+        //   1. 先按 path + query 精确匹配（解决 /admin/commission.php?tab=log 与 ?tab=withdraw 互不干扰）
+        //   2. 没命中再退到只按 path 匹配（解决 /admin/settings.php?action=xxx 共用一项菜单）
+        //   3. path 匹配也只取第一项命中，杜绝同 path 不同 query 的多项被同时高亮
         var a = document.createElement('a');
         a.href = url;
         var targetPath = a.pathname.split('#')[0];
+        var targetSearch = a.search || '';
         $('.admin-menu-item').removeClass('is-active');
 
-        var $matchedBody = null;
+        var $matched = null;
 
+        // 第一遍：path + query 严格匹配
         $('.admin-menu-item').each(function () {
             var href = $(this).attr('href');
-            if (href && href !== 'javascript:void(0);' && href !== 'javascript:void(0)') {
+            if (!href || href.indexOf('javascript:') === 0) return;
+            a.href = href;
+            var matchPath = a.pathname.split('#')[0];
+            var matchSearch = a.search || '';
+            if (matchPath === targetPath && matchSearch === targetSearch) {
+                $matched = $(this);
+                return false;
+            }
+        });
+
+        // 第二遍：path 匹配（仅当严格匹配没命中），命中即停
+        if (!$matched) {
+            $('.admin-menu-item').each(function () {
+                var href = $(this).attr('href');
+                if (!href || href.indexOf('javascript:') === 0) return;
                 a.href = href;
                 var matchPath = a.pathname.split('#')[0];
                 if (matchPath === targetPath) {
-                    $(this).addClass('is-active');
-                    $matchedBody = $(this).closest('.admin-menu-group__body');
+                    $matched = $(this);
+                    return false;
                 }
-            }
-        });
+            });
+        }
+
+        var $matchedBody = null;
+        if ($matched) {
+            $matched.addClass('is-active');
+            $matchedBody = $matched.closest('.admin-menu-group__body');
+        }
 
         // 清除所有父级菜单高亮
         $('.admin-menu-group__header').removeClass('is-active');

@@ -35,6 +35,7 @@ class GoodsController extends BaseController
             'hot_goods'         => $hotGoods,
             'recommended_goods' => $recommendedGoods,
             'recent_articles'   => $recentArticles,
+            'announcement'      => $this->getCurrentAnnouncement(),
         ], $sidebarData));
         $this->view->render('goods_index');
     }
@@ -45,10 +46,12 @@ class GoodsController extends BaseController
     public function _list(): void
     {
         $categoryId = (int) $this->getArg('category_id', 0);
+        $categorySource = (string) $this->getArg('category_source', 'main');
+        if (!in_array($categorySource, ['main', 'merchant'], true)) $categorySource = 'main';
         $tagId = (int) $this->getArg('tag_id', 0);
 
         // 兼容 slug 路由：?c=goods_list&slug=xxx 或 pathinfo /goods_list/slug/xxx
-        // slug 未命中或为空时回落到 category_id 逻辑
+        // 仅主站分类支持 slug；商户自建分类没有 slug 字段
         if ($categoryId <= 0) {
             $slug = trim((string) $this->getArg('slug', ''));
             if ($slug !== '' && preg_match('/^[a-zA-Z0-9_\-\p{Han}]+$/u', $slug)) {
@@ -56,7 +59,10 @@ class GoodsController extends BaseController
                     'SELECT `id` FROM `' . Database::prefix() . 'goods_category` WHERE `slug` = ? AND `status` = 1 LIMIT 1',
                     [$slug]
                 );
-                if ($row) $categoryId = (int) $row['id'];
+                if ($row) {
+                    $categoryId = (int) $row['id'];
+                    $categorySource = 'main';
+                }
             }
         }
 
@@ -78,8 +84,9 @@ class GoodsController extends BaseController
         }
         if ($categoryId > 0) {
             $categoryIds = [$categoryId];
+            // 在 sidebar 数据里找匹配的分类节点 —— 必须 id + source 都对（两套分类 id 可能撞号）
             foreach ($categories as $cat) {
-                if ((int) $cat['id'] === $categoryId) {
+                if ((int) $cat['id'] === $categoryId && (string) ($cat['source'] ?? 'main') === $categorySource) {
                     $title = $cat['name'];
                     foreach ($cat['children'] ?? [] as $child) {
                         $categoryIds[] = (int) $child['id'];
@@ -87,13 +94,14 @@ class GoodsController extends BaseController
                     break;
                 }
                 foreach ($cat['children'] ?? [] as $child) {
-                    if ((int) $child['id'] === $categoryId) {
+                    if ((int) $child['id'] === $categoryId && (string) ($child['source'] ?? 'main') === $categorySource) {
                         $title = $child['name'];
                         break 2;
                     }
                 }
             }
             $where['category_ids'] = $categoryIds;
+            $where['category_source'] = $categorySource;
         }
         $page = max(1, (int) $this->getArg('page', 1));
         $result = $this->queryGoodsListPaginated($where, $page, 20, 'g.sort ASC, g.id DESC');
@@ -106,6 +114,7 @@ class GoodsController extends BaseController
             'current_category' => $categoryId,
             'current_tag'      => $tagId,
             'pagination'       => $result,
+            'announcement'     => $this->getCurrentAnnouncement(),
         ]);
         $this->view->render('goods_list');
     }
@@ -127,6 +136,18 @@ class GoodsController extends BaseController
             // 作用域过滤：主站前台只看 owner_id=0；商户前台只看本店自建或主站引用
             if ($row && !MerchantContext::isGoodsVisibleToCurrentScope($row)) {
                 $row = null;
+            }
+            // 跳转链接：非空时直接 302 跳出（"类似广告"语义，详情页本身不展示）。
+            // 加 _preview=1 query 可绕过，方便后台预览编辑效果。
+            if ($row
+                && (int) $row['status'] === 1
+                && $row['deleted_at'] === null
+                && (int) $row['is_on_sale'] === 1
+                && !empty($row['jump_url'])
+                && (int) $this->getArg('_preview', 0) !== 1
+            ) {
+                Response::redirect((string) $row['jump_url']);
+                return;
             }
             // 仅展示已上架、未删除的商品
             if ($row && (int) $row['status'] === 1 && $row['deleted_at'] === null && (int) $row['is_on_sale'] === 1) {
@@ -157,6 +178,15 @@ class GoodsController extends BaseController
                 // stock 是原始整数（供 JS 业务判断），stock_text 是展示文字（默认千分位，可被插件替换）
                 foreach ($rawSpecs as $s) {
                     $stockInt = (int) $s['stock'];
+                    // tags：DB 存 JSON 数组（如 ["热卖","新品"]），后台保存时已 json_encode；
+                    // 前端切换规格后在规格区上方展示这些徽章
+                    $tagList = [];
+                    if (!empty($s['tags'])) {
+                        $decoded = is_string($s['tags']) ? json_decode($s['tags'], true) : $s['tags'];
+                        if (is_array($decoded)) {
+                            $tagList = array_values(array_filter(array_map('strval', $decoded), 'strlen'));
+                        }
+                    }
                     $specs[] = [
                         'id'           => (int) $s['id'],
                         'name'         => $s['name'],
@@ -169,10 +199,14 @@ class GoodsController extends BaseController
                         'max_buy'      => (int) ($s['max_buy'] ?? 0),
                         'is_default'   => (int) $s['is_default'],
                         'value_ids'    => $comboMap[(int) $s['id']] ?? [],
+                        'tags'         => $tagList,
                     ];
                 }
 
                 // 获取多维规格数据（维度 + 维度值）
+                // 注意：tags 不会被注入到 dim.value 上 —— 因为 tags 是"规格组合行"级别（如"红+S"），
+                // 把它并集到维度值（如"红"）会让按钮挂上其它组合的标签，语义不准。
+                // 多维度场景下 tags 由 JS 在用户选完规格组合后，按当前 spec.tags 渲染到 #specTags 容器。
                 $specDims = $this->getSpecDims($id);
 
                 // 规格 JSON（供 JS 切换价格/库存）

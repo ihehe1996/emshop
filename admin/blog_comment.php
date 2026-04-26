@@ -23,12 +23,13 @@ if ($action === 'list') {
     $keyword = trim($_POST['keyword'] ?? '');
     $status  = isset($_POST['status']) && $_POST['status'] !== '' ? (int)$_POST['status'] : null;
 
-    $where = [];
+    // 主站后台只看主站文章下的评论
+    $where = ['merchant_id' => 0];
     if ($keyword !== '')   $where['keyword'] = $keyword;
     if ($status !== null)  $where['status'] = $status;
 
     $result = BlogCommentModel::getAdminList($where, $page, $limit);
-    $counts = BlogCommentModel::getStatusCounts();
+    $counts = BlogCommentModel::getStatusCounts(0);
 
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
@@ -42,13 +43,28 @@ if ($action === 'list') {
     exit;
 }
 
+// 主站只能操作 merchant_id=0 文章下的评论：通过 JOIN blog 表过滤
+$assertCommentBelongsToMain = function (int $commentId): array {
+    $prefix = Database::prefix();
+    $row = Database::fetchOne(
+        "SELECT c.id, b.merchant_id FROM {$prefix}blog_comment c
+         LEFT JOIN {$prefix}blog b ON c.blog_id = b.id
+         WHERE c.id = ? LIMIT 1",
+        [$commentId]
+    );
+    if (!$row) {
+        Response::error('评论不存在');
+    }
+    if ((int) $row['merchant_id'] !== 0) {
+        Response::error('无权操作商户文章下的评论');
+    }
+    return $row;
+};
+
 // 审核通过
 if ($action === 'approve') {
     $id = (int)($_POST['id'] ?? 0);
-    $comment = BlogCommentModel::getById($id);
-    if (!$comment) {
-        Response::error('评论不存在');
-    }
+    $assertCommentBelongsToMain($id);
     BlogCommentModel::updateStatus($id, 1);
     Response::success('已通过', ['csrf_token' => Csrf::token()]);
 }
@@ -56,10 +72,7 @@ if ($action === 'approve') {
 // 拒绝
 if ($action === 'reject') {
     $id = (int)($_POST['id'] ?? 0);
-    $comment = BlogCommentModel::getById($id);
-    if (!$comment) {
-        Response::error('评论不存在');
-    }
+    $assertCommentBelongsToMain($id);
     BlogCommentModel::updateStatus($id, 2);
     Response::success('已拒绝', ['csrf_token' => Csrf::token()]);
 }
@@ -67,6 +80,7 @@ if ($action === 'reject') {
 // 删除评论（逻辑删除）
 if ($action === 'delete') {
     $id = (int)($_POST['id'] ?? 0);
+    $assertCommentBelongsToMain($id);
     if (BlogCommentModel::delete($id)) {
         Response::success('删除成功', ['csrf_token' => Csrf::token()]);
     } else {
@@ -84,12 +98,24 @@ if ($action === 'batch') {
         Response::error('请选择评论');
     }
 
+    // 限定主站文章下的评论
+    $prefix = Database::prefix();
+    $allowedRows = Database::query(
+        "SELECT c.id FROM {$prefix}blog_comment c
+         LEFT JOIN {$prefix}blog b ON c.blog_id = b.id
+         WHERE b.merchant_id = 0 AND c.id IN (" . implode(',', array_map('intval', $ids)) . ")"
+    );
+    $allowedIds = array_map(fn($r) => (int) $r['id'], $allowedRows);
+    if (empty($allowedIds)) {
+        Response::error('所选评论均无权操作');
+    }
+
     if ($batchAction === 'approve') {
-        BlogCommentModel::batchUpdateStatus($ids, 1);
+        BlogCommentModel::batchUpdateStatus($allowedIds, 1);
     } elseif ($batchAction === 'reject') {
-        BlogCommentModel::batchUpdateStatus($ids, 2);
+        BlogCommentModel::batchUpdateStatus($allowedIds, 2);
     } elseif ($batchAction === 'delete') {
-        BlogCommentModel::batchDelete($ids);
+        BlogCommentModel::batchDelete($allowedIds);
     } else {
         Response::error('未知操作');
     }

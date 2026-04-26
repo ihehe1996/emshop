@@ -97,14 +97,6 @@ if (Request::isPost()) {
                     Response::error('请选择商户等级');
                 }
 
-                $slug = strtolower(trim((string) Input::post('slug', '')));
-                if ($slug === '' || !MerchantModel::validateSlug($slug)) {
-                    Response::error('slug 需 3-32 字符，只允许字母 / 数字 / 短横线');
-                }
-                if ($model->existsSlug($slug)) {
-                    Response::error('slug 已被占用');
-                }
-
                 $name = trim((string) Input::post('name', ''));
                 if ($name === '' || mb_strlen($name) > 100) {
                     Response::error('店铺名长度需在 1~100 字符');
@@ -119,7 +111,6 @@ if (Request::isPost()) {
                     'user_id'    => $userId,
                     'parent_id'  => $parentId,
                     'level_id'   => $levelId,
-                    'slug'       => $slug,
                     'name'       => $name,
                     'opened_via' => 'admin',
                     'status'     => 1,
@@ -192,16 +183,6 @@ if (Request::isPost()) {
                 $model->setStatus($id, $newStatus);
                 Response::success('状态已更新', [
                     'status' => $newStatus,
-                    'csrf_token' => Csrf::refresh(),
-                ]);
-                break;
-
-            case 'own_pay':
-                $id = (int) Input::post('id', 0);
-                $enabled = (int) Input::post('enabled', 0) === 1 ? 1 : 0;
-                $model->setOwnPayEnabled($id, $enabled);
-                Response::success($enabled === 1 ? '已启用独立收款' : '已关闭独立收款', [
-                    'own_pay_enabled' => $enabled,
                     'csrf_token' => Csrf::refresh(),
                 ]);
                 break;

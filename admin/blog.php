@@ -24,7 +24,8 @@ if ($action === 'list') {
     $category_id = (int)($_POST['category_id'] ?? 0);
     $status = isset($_POST['status']) && $_POST['status'] !== '' ? (int)$_POST['status'] : null;
 
-    $where = [];
+    // 主站后台只看 merchant_id=0
+    $where = ['merchant_id' => 0];
     if ($keyword) $where['keyword'] = $keyword;
     if ($category_id) $where['category_id'] = $category_id;
     if ($status !== null) $where['status'] = $status;
@@ -32,7 +33,7 @@ if ($action === 'list') {
     $result = BlogModel::getList($where, $page, $limit, 'a.is_top DESC, a.sort ASC, a.id DESC');
 
     // 统计各状态的文章数量
-    $countWhere = [];
+    $countWhere = ['merchant_id' => 0];
     if ($keyword) $countWhere['keyword'] = $keyword;
     if ($category_id) $countWhere['category_id'] = $category_id;
 
@@ -63,6 +64,9 @@ if ($action === 'toggle_status') {
     if (!$article) {
         Response::error('文章不存在');
     }
+    if ((int) $article['merchant_id'] !== 0) {
+        Response::error('无权操作商户文章');
+    }
     $newStatus = (int)$article['status'] ? 0 : 1;
     BlogModel::update($id, ['status' => $newStatus]);
     // article_count 只统计已发布文章，状态切换后需刷新计数
@@ -77,6 +81,9 @@ if ($action === 'toggle_top') {
     if (!$article) {
         Response::error('文章不存在');
     }
+    if ((int) $article['merchant_id'] !== 0) {
+        Response::error('无权操作商户文章');
+    }
     $newTop = (int)$article['is_top'] ? 0 : 1;
     BlogModel::update($id, ['is_top' => $newTop]);
     Response::success('状态已更新', ['csrf_token' => Csrf::token()]);
@@ -85,6 +92,13 @@ if ($action === 'toggle_top') {
 // 删除文章（逻辑删除）
 if ($action === 'delete') {
     $id = (int)($_POST['id'] ?? 0);
+    $article = BlogModel::getById($id);
+    if (!$article) {
+        Response::error('文章不存在');
+    }
+    if ((int) $article['merchant_id'] !== 0) {
+        Response::error('无权删除商户文章');
+    }
     if (BlogModel::delete($id)) {
         // 删除文章后同步刷新标签的 article_count
         BlogTagModel::refreshAllCounts();
@@ -101,8 +115,17 @@ if ($action === 'batch') {
     if (empty($ids)) {
         Response::error('请选择文章');
     }
-    $failed = 0;
-    foreach ($ids as $id) {
+    // 主站批量操作只允许针对 merchant_id=0 的文章
+    $prefix = Database::prefix();
+    $allowedRows = Database::query(
+        "SELECT id FROM {$prefix}blog WHERE merchant_id = 0 AND id IN (" . implode(',', array_map('intval', $ids)) . ")"
+    );
+    $allowedIds = array_map(fn($r) => (int) $r['id'], $allowedRows);
+    if (empty($allowedIds)) {
+        Response::error('所选文章均无权操作');
+    }
+    $failed = count($ids) - count($allowedIds);
+    foreach ($allowedIds as $id) {
         try {
             if ($batchAction === 'publish') {
                 BlogModel::update($id, ['status' => 1]);
@@ -127,9 +150,9 @@ if ($action === 'batch') {
     }
 }
 
-// 默认：显示列表页面
+// 默认：显示列表页面（分类下拉只显示主站分类）
 $categories = Database::query(
-    "SELECT * FROM " . Database::prefix() . "blog_category WHERE status = 1 ORDER BY parent_id ASC, sort ASC"
+    "SELECT * FROM " . Database::prefix() . "blog_category WHERE status = 1 AND merchant_id = 0 ORDER BY parent_id ASC, sort ASC"
 );
 
 if (Request::isPjax()) {

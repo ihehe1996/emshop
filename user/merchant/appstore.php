@@ -305,6 +305,11 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
             if ($info === null) {
                 Response::error('无法解析插件头部注释');
             }
+            // 这几个分类（支付 / 商品 / 商品增强）由主站统一管理，商户无权安装；
+            // init.php 已经按"主站启用"自动给商户站加载好这些插件
+            if (in_array((string) ($info['category'] ?? ''), PluginModel::MAIN_ONLY_CATEGORIES, true)) {
+                Response::error('该分类的插件由主站统一管理，商户站无需安装');
+            }
             $info['name']       = $name;
             $info['main_file']  = $name . '.php';
             foreach ([

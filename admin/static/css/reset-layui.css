@@ -278,6 +278,7 @@
 /* 表单项 */
 .layui-form-mid{
     font-size: 12px;
+    float: unset;
 }
 
 .layui-form-checkbox[lay-skin=primary]:hover>i {

@@ -37,7 +37,6 @@
     border-radius: 4px;
     margin-left: 4px;
 }
-.mc-theme-tag--custom  { background: #fef3c7; color: #92400e; }
 .mc-theme-tag--pc      { background: #dbeafe; color: #1e40af; }
 .mc-theme-tag--mobile  { background: #ede9fe; color: #5b21b6; }
 .mc-theme-tag--uninstalled { background: #f3f4f6; color: #6b7280; }
@@ -109,9 +108,6 @@
                 <div style="padding:12px 14px;">
                     <div style="display:flex;align-items:center;gap:4px;font-weight:600;font-size:14px;flex-wrap:wrap;">
                         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;"><?= htmlspecialchars($info['title'] ?: $name) ?></span>
-                        <?php if (!empty($info['custom'])): ?>
-                        <span class="mc-theme-tag mc-theme-tag--custom">自建</span>
-                        <?php endif; ?>
                         <?php if (!$isInstalled): ?>
                         <span class="mc-theme-tag mc-theme-tag--uninstalled">未安装</span>
                         <?php else: ?>

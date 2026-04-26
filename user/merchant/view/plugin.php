@@ -88,9 +88,6 @@
                     <div style="flex:1;min-width:0;">
                         <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;">
                             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($info['title'] ?: $name) ?></span>
-                            <?php if (!empty($info['custom'])): ?>
-                            <span style="padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:10px;font-weight:normal;">自建</span>
-                            <?php endif; ?>
                             <span class="mc-plugin-status mc-plugin-status--<?= $statusClass ?>"><?= $statusText ?></span>
                         </div>
                         <div style="color:#9ca3af;font-size:11px;margin-top:2px;">

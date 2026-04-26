@@ -36,7 +36,8 @@ if ($action === 'search_users') {
 if ($action === 'get_plugin_form') {
     $goodsType = trim($_POST['goods_type'] ?? '');
     $goodsId = (int)($_POST['goods_id'] ?? 0);
-    $goods = $goodsId ? GoodsModel::getById($goodsId) : null;
+    // 编辑面板的"按类型加载表单"钩子读 raw 价
+    $goods = $goodsId ? GoodsModel::getById($goodsId, false) : null;
 
     ob_start();
     doAction("goods_type_{$goodsType}_create_form", $goods);
@@ -575,11 +576,12 @@ if ($action === 'stock_manager') {
     if (!$goodsId) {
         exit('商品ID不能为空');
     }
-    $goods = GoodsModel::getById($goodsId);
+    // 库存管理弹窗：用 raw 价，避免库存面板里展示的价被买家折扣污染
+    $goods = GoodsModel::getById($goodsId, false);
     if (!$goods) {
         exit('商品不存在');
     }
-    $specs = GoodsModel::getSpecsByGoodsId($goodsId);
+    $specs = GoodsModel::getSpecsByGoodsId($goodsId, false);
     $pageTitle = '库存管理';
     include __DIR__ . '/view/popup/header.php';
     include __DIR__ . '/view/popup/stock_manager.php';
@@ -597,7 +599,8 @@ if ($action === 'save_stock') {
     if (!$goodsId) {
         Response::error('商品ID不能为空');
     }
-    $goods = GoodsModel::getById($goodsId);
+    // 库存保存只是 ACL 校验，价格不参与，但保持和库存弹窗同口径用 raw
+    $goods = GoodsModel::getById($goodsId, false);
     if (!$goods) {
         Response::error('商品不存在');
     }
@@ -626,7 +629,8 @@ if ($action === 'get_specs_json') {
     if (!$goodsId) {
         Response::error('商品ID不能为空');
     }
-    $specs = GoodsModel::getSpecsByGoodsId($goodsId);
+    // 编辑表单"刷新规格"AJAX 端点：必须返回 raw 价
+    $specs = GoodsModel::getSpecsByGoodsId($goodsId, false);
     Response::success('', ['specs' => $specs]);
 }
 
@@ -636,8 +640,10 @@ $goods = null;
 $specs = [];
 $specDimNames = [];
 if ($id) {
-    $goods = GoodsModel::getById($id);
-    $specs = GoodsModel::getSpecsByGoodsId($id);
+    // 编辑表单初始加载：用 raw 价，把"成交价配置"原值显示给运营，
+    // 不能被当前登录管理员账号的买家折扣污染（曾经报过 9.9 元的 bug）
+    $goods = GoodsModel::getById($id, false);
+    $specs = GoodsModel::getSpecsByGoodsId($id, false);
     // 查询维度名称用于回显到规格类型输入框
     $specDimNames = Database::query(
         "SELECT name FROM " . Database::prefix() . "goods_spec_dim WHERE goods_id = ? ORDER BY sort ASC",

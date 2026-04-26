@@ -24,6 +24,13 @@ final class MerchantContext
     private static $resolved = false;
 
     /**
+     * 等级门控拦截原因：'' = 未拦截，'subdomain' / 'custom_domain' = 对应通道被等级禁用。
+     * 仅在"host 命中一个真实商户但商户等级不允许该入口方式"时被置位。
+     * Dispatcher 会据此渲染"店铺暂未开放"页，避免静默降级到主站内容给访客。
+     */
+    private static $blockedReason = '';
+
+    /**
      * 识别当前请求的商户上下文。
      * 幂等：重复调用只执行一次。
      */
@@ -47,23 +54,41 @@ final class MerchantContext
         $host = self::currentHost();
         if ($host === '') return;
 
-        // 1. 自定义顶级域名
+        // 1. 自定义顶级域名 —— 命中后再做等级门控，命中但被拦也要明确告知（blockedReason）
         $merchant = self::findByCustomDomain($host);
         if ($merchant !== null) {
+            if ((int) ($merchant['level_allow_custom_domain'] ?? 0) !== 1) {
+                self::$blockedReason = 'custom_domain';
+                return;
+            }
             self::$current = $merchant;
             self::rememberLastMerchant($merchant);
             return;
         }
 
-        // 2. 二级域名
+        // 2. 二级域名 —— 同上
         $merchant = self::findBySubdomain($host);
         if ($merchant !== null) {
+            if ((int) ($merchant['level_allow_subdomain'] ?? 0) !== 1) {
+                self::$blockedReason = 'subdomain';
+                return;
+            }
             self::$current = $merchant;
             self::rememberLastMerchant($merchant);
             return;
         }
 
         // 其它 host → 主站
+    }
+
+    /**
+     * 当前 host 命中了一个真实商户但商户等级不允许该入口方式时，返回拦截原因字符串。
+     * 未拦截 / 已成功识别 → 空串。
+     * 典型值：'subdomain' / 'custom_domain'
+     */
+    public static function blockedReason(): string
+    {
+        return self::$blockedReason;
     }
 
     /**
@@ -160,7 +185,7 @@ final class MerchantContext
 
     /**
      * 把"最近访问的店铺"写入 session，供个人中心顶部显示"返回 xxx 店铺"按钮。
-     * 仅最小字段（id/slug/name/url），避免敏感字段写进 session。
+     * 仅最小字段（id/name/url），避免敏感字段写进 session。
      *
      * @param array<string, mixed> $merchant
      */
@@ -170,7 +195,6 @@ final class MerchantContext
         if (session_status() === PHP_SESSION_NONE) @session_start();
         $_SESSION['em_last_merchant'] = [
             'id'   => (int) ($merchant['id'] ?? 0),
-            'slug' => (string) ($merchant['slug'] ?? ''),
             'name' => (string) ($merchant['name'] ?? ''),
             'url'  => self::storefrontUrl($merchant),
         ];
@@ -179,17 +203,16 @@ final class MerchantContext
     /**
      * 读取 session 里最近访问过的店铺。未曾访问 → null。
      *
-     * @return array{id:int, slug:string, name:string, url:string}|null
+     * @return array{id:int, name:string, url:string}|null
      */
     public static function lastMerchant(): ?array
     {
         if (php_sapi_name() === 'cli') return null;
         if (session_status() === PHP_SESSION_NONE) @session_start();
         $m = $_SESSION['em_last_merchant'] ?? null;
-        if (!is_array($m) || empty($m['slug'])) return null;
+        if (!is_array($m) || (int) ($m['id'] ?? 0) <= 0) return null;
         return [
-            'id'   => (int) ($m['id'] ?? 0),
-            'slug' => (string) $m['slug'],
+            'id'   => (int) $m['id'],
             'name' => (string) ($m['name'] ?? ''),
             'url'  => (string) ($m['url'] ?? ''),
         ];
@@ -218,13 +241,16 @@ final class MerchantContext
 
     /**
      * 按自定义顶级域名匹配。
+     *
+     * 只负责查找"是否有商户绑定了这个 host"，等级门控（level_allow_custom_domain）交给
+     * resolve() 处理 —— 这样能区分"根本没这个商户"（返回 null）和"有但等级禁用"（命中行但
+     * 上层拒收并设置 blockedReason）两种情况。
      */
     private static function findByCustomDomain(string $host): ?array
     {
         $sql = 'SELECT m.*, l.allow_custom_domain AS level_allow_custom_domain,
                        l.allow_subdomain AS level_allow_subdomain,
                        l.allow_self_goods AS level_allow_self_goods,
-                       l.allow_own_pay AS level_allow_own_pay,
                        l.self_goods_fee_rate AS level_self_goods_fee_rate,
                        l.withdraw_fee_rate AS level_withdraw_fee_rate,
                        l.name AS level_name
@@ -235,15 +261,7 @@ final class MerchantContext
                    AND m.status = 1
                    AND m.deleted_at IS NULL
                  LIMIT 1';
-        $row = self::safeFetch($sql, [$host]);
-        if ($row === null) {
-            return null;
-        }
-        // 等级门控
-        if ((int) ($row['level_allow_custom_domain'] ?? 0) !== 1) {
-            return null;
-        }
-        return $row;
+        return self::safeFetch($sql, [$host]);
     }
 
     /**
@@ -272,7 +290,6 @@ final class MerchantContext
         $sql = 'SELECT m.*, l.allow_custom_domain AS level_allow_custom_domain,
                        l.allow_subdomain AS level_allow_subdomain,
                        l.allow_self_goods AS level_allow_self_goods,
-                       l.allow_own_pay AS level_allow_own_pay,
                        l.self_goods_fee_rate AS level_self_goods_fee_rate,
                        l.withdraw_fee_rate AS level_withdraw_fee_rate,
                        l.name AS level_name
@@ -282,14 +299,9 @@ final class MerchantContext
                    AND m.status = 1
                    AND m.deleted_at IS NULL
                  LIMIT 1';
-        $row = self::safeFetch($sql, [$subdomain]);
-        if ($row === null) {
-            return null;
-        }
-        if ((int) ($row['level_allow_subdomain'] ?? 0) !== 1) {
-            return null;
-        }
-        return $row;
+        // 等级门控（level_allow_subdomain）交给 resolve() 处理，便于区分"没这个商户"和
+        // "有但等级禁用"两种状况 —— 后者要明确 403 提示访客，而不是静默降级到主站
+        return self::safeFetch($sql, [$subdomain]);
     }
 
     /**

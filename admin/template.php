@@ -246,10 +246,10 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
     header('Content-Type: application/json; charset=utf-8');
 
     $scannedTemplates = $model->scanTemplates();
-    // 授权过滤：中心服务已购 + Custom 自建 + 系统内置（default）都会保留
-    // 中心服务挂了：仍然保留直通项（Custom + SYSTEM_APPS），错误通过 $licenseError 出参透给前端
+    // 授权过滤：服务端注册过 ∩ 已购买 ∩ 通过 scope 边界 → 才保留；default 等系统内置直通
+    // 中心服务挂了：仍然保留直通项（SYSTEM_APPS），错误通过 $licenseError 出参透给前端
     $licenseError = null;
-    $scannedTemplates = AppLicenseGuard::filter($scannedTemplates, '', 1, $licenseError);
+    $scannedTemplates = AppLicenseGuard::filter($scannedTemplates, '', 1, 'template', $licenseError);
     $licenseError = (string) ($licenseError ?? '');
     $installedTemplates = $model->getAllInstalled($scope);
     $installedMap = [];

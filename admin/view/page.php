@@ -39,11 +39,22 @@ $csrfToken = Csrf::token();
     </div>
 </script>
 
+<!-- 标题：is_homepage=1 时附"首页"角标 -->
+<script type="text/html" id="pageTitleTpl">
+    {{# if (d.is_homepage == 1) { }}<span class="em-tag em-tag--home" style="background:#fef3c7;color:#a16207;border:1px solid #fde68a;padding:1px 7px;border-radius:9px;font-size:11px;margin-right:6px;"><i class="fa fa-home"></i> 站点首页</span>{{# } }}
+    <span style="font-weight:500;color:#1f2937;">{{d.title}}</span>
+</script>
+
 <!-- 行内操作按钮 -->
 <script type="text/html" id="pageRowActionTpl">
     <div class="layui-clear-space">
         <a class="em-btn em-sm-btn em-save-btn" lay-event="edit"><i class="fa fa-pencil"></i>编辑</a>
         <a class="em-btn em-sm-btn em-purple-btn" lay-event="preview" title="前台预览"><i class="fa fa-external-link"></i>预览</a>
+        {{# if (d.is_homepage == 1) { }}
+        <a class="em-btn em-sm-btn em-warm-btn" lay-event="clearHomepage" title="取消站点首页"><i class="fa fa-home"></i>取消首页</a>
+        {{# } else { }}
+        <a class="em-btn em-sm-btn" lay-event="setHomepage" title="设为站点首页"><i class="fa fa-home"></i>设为首页</a>
+        {{# } }}
         <a class="em-btn em-sm-btn em-red-btn" lay-event="delete"><i class="fa fa-trash"></i>删除</a>
     </div>
 </script>
@@ -90,6 +101,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admPage handler，避免事件成倍触发
+    $(document).off('.admPage');
+    $(window).off('.admPage');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -120,7 +135,7 @@ $(function(){
             cellMinWidth: 80,
             cols: [[
                 {type: 'checkbox', width: 50},
-                {field: 'title', title: '页面标题', minWidth: 220},
+                {field: 'title', title: '页面标题', minWidth: 240, templet: '#pageTitleTpl'},
                 {field: 'slug', title: 'URL 别名', minWidth: 180, templet: '#pageSlugTpl'},
                 {field: 'template_name', title: '模板', width: 140, templet: '#pageTemplateTpl', align: 'center'},
                 {field: 'views_count', title: '阅读', width: 80, align: 'center'},
@@ -190,14 +205,14 @@ $(function(){
                 page: {curr: 1}
             });
         }
-        $(document).on('keypress', '#pageSearchKeyword', function (e) {
+        $(document).on('keypress.admPage', '#pageSearchKeyword', function (e) {
             if (e.which === 13) { e.preventDefault(); doQuickSearch(); }
         });
-        $(document).on('click', '#pageQuickClear', function () {
+        $(document).on('click.admPage', '#pageQuickClear', function () {
             $('#pageSearchKeyword').val('').focus();
             doQuickSearch();
         });
-        $(document).on('click', '#pageRefreshBtn', function () {
+        $(document).on('click.admPage', '#pageRefreshBtn', function () {
             table.reload('pageTableId');
         });
 
@@ -244,6 +259,37 @@ $(function(){
                 });
             } else if (obj.event === 'toggleStatus') {
                 toggleTag($(this), d.id);
+            } else if (obj.event === 'setHomepage') {
+                layer.confirm('把「' + d.title + '」设为主站首页？同时会替换当前已设的页面首页。', function (idx) {
+                    $.ajax({
+                        url: '/admin/page.php?_action=set_homepage',
+                        type: 'POST', dataType: 'json',
+                        data: {csrf_token: csrfToken, id: d.id},
+                        success: function (res) {
+                            if (res.code === 200) {
+                                csrfToken = res.data && res.data.csrf_token ? res.data.csrf_token : csrfToken;
+                                layer.msg(res.msg || '已设为首页');
+                                table.reload('pageTableId');
+                            } else { layer.msg(res.msg || '设置失败'); }
+                        },
+                        error: function () { layer.msg('网络异常'); },
+                        complete: function () { layer.close(idx); }
+                    });
+                });
+            } else if (obj.event === 'clearHomepage') {
+                $.ajax({
+                    url: '/admin/page.php?_action=clear_homepage',
+                    type: 'POST', dataType: 'json',
+                    data: {csrf_token: csrfToken, id: d.id},
+                    success: function (res) {
+                        if (res.code === 200) {
+                            csrfToken = res.data && res.data.csrf_token ? res.data.csrf_token : csrfToken;
+                            layer.msg(res.msg || '已取消首页');
+                            table.reload('pageTableId');
+                        } else { layer.msg(res.msg || '取消失败'); }
+                    },
+                    error: function () { layer.msg('网络异常'); }
+                });
             }
         });
 

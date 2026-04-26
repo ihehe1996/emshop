@@ -12,9 +12,9 @@ $levels = $levels ?? [];
             <div class="layui-form layui-row layui-col-space12">
                 <div class="layui-col-md4">
                     <div class="layui-form-item">
-                        <label class="layui-form-label">店铺名/slug</label>
+                        <label class="layui-form-label">店铺名</label>
                         <div class="layui-input-block">
-                            <input type="text" id="mchSearchKeyword" placeholder="店铺名或 slug" class="layui-input" autocomplete="off">
+                            <input type="text" id="mchSearchKeyword" placeholder="按店铺名搜索" class="layui-input" autocomplete="off">
                         </div>
                     </div>
                 </div>
@@ -73,7 +73,7 @@ $levels = $levels ?? [];
 <script type="text/html" id="mchNameTpl">
     <div style="line-height:1.4;text-align:left;">
         <div style="font-weight:600;">{{ d.name }}</div>
-        <div style="color:#999;font-size:12px;">/s/{{ d.slug }}/</div>
+        <div style="color:#999;font-size:12px;">ID: {{ d.id }}</div>
     </div>
 </script>
 
@@ -100,14 +100,6 @@ $levels = $levels ?? [];
     {{# } }}
 </script>
 
-<script type="text/html" id="mchOwnPayTpl">
-    {{# if(d.level_allow_own_pay == 1){ }}
-    <input type="checkbox" name="own_pay" value="{{ d.id }}" lay-skin="switch" lay-text="启用|关闭" lay-filter="mchOwnPayFilter" {{ d.own_pay_enabled == 1 ? 'checked' : '' }}>
-    {{# } else { }}
-    <span class="layui-badge layui-bg-gray" title="等级不允许">不允许</span>
-    {{# } }}
-</script>
-
 <script type="text/html" id="mchBalanceTpl">
     ¥{{ d.shop_balance_view }}
 </script>
@@ -118,6 +110,10 @@ $levels = $levels ?? [];
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admMerchant handler，避免事件成倍触发
+    $(document).off('.admMerchant');
+    $(window).off('.admMerchant');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -171,7 +167,6 @@ $(function(){
                 {title: '等级', minWidth: 100, templet: '#mchLevelTpl', align: 'center'},
                 {title: '上级商户', minWidth: 120, templet: '#mchParentTpl', align: 'center'},
                 {title: '店铺余额', minWidth: 110, templet: '#mchBalanceTpl', align: 'right'},
-                {title: '独立收款', minWidth: 110, templet: '#mchOwnPayTpl', align: 'center'},
                 {title: '开通', width: 80, templet: '#mchOpenedViaTpl', align: 'center'},
                 {title: '状态', width: 90, templet: '#mchStatusTpl', align: 'center'},
                 {title: '操作', width: 170, templet: '#mchRowActionTpl', align: 'center'}
@@ -190,17 +185,17 @@ $(function(){
             }
         });
 
-        $(document).on('click', '#mchSearchBtn', function () {
+        $(document).on('click.admMerchant', '#mchSearchBtn', function () {
             table.reload('mchTableId', {page: {curr: 1}, where: buildWhere()});
         });
-        $(document).on('click', '#mchResetBtn', function () {
+        $(document).on('click.admMerchant', '#mchResetBtn', function () {
             $('#mchSearchKeyword').val('');
             $('#mchSearchStatus').val('');
             $('#mchSearchLevel').val('');
             form.render('select');
             table.reload('mchTableId', {page: {curr: 1}, where: buildWhere()});
         });
-        $(document).on('click', '#mchRefreshBtn', function () {
+        $(document).on('click.admMerchant', '#mchRefreshBtn', function () {
             table.reload('mchTableId');
         });
 
@@ -230,32 +225,6 @@ $(function(){
             });
         });
 
-        // 独立收款审核
-        form.on('switch(mchOwnPayFilter)', function (obj) {
-            var id = this.value;
-            var enabled = obj.elem.checked ? 1 : 0;
-            $.ajax({
-                url: '/admin/merchant.php',
-                type: 'POST',
-                dataType: 'json',
-                data: {csrf_token: csrfToken, _action: 'own_pay', id: id, enabled: enabled},
-                success: function (res) {
-                    if (res.code === 200) {
-                        csrfToken = res.data && res.data.csrf_token ? res.data.csrf_token : csrfToken;
-                        layer.msg(res.msg || '已更新');
-                    } else {
-                        obj.elem.checked = !obj.elem.checked;
-                        form.render('switch');
-                        layer.msg(res.msg || '更新失败');
-                    }
-                },
-                error: function () {
-                    obj.elem.checked = !obj.elem.checked;
-                    form.render('switch');
-                    layer.msg('网络异常');
-                }
-            });
-        });
 
         table.on('tool(mchTable)', function (obj) {
             var data = obj.data;

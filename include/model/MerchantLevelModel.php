@@ -162,7 +162,7 @@ final class MerchantLevelModel
             'name', 'price',
             'self_goods_fee_rate', 'withdraw_fee_rate',
             'allow_subdomain', 'allow_custom_domain',
-            'allow_self_goods', 'allow_own_pay',
+            'allow_self_goods',
             'sort', 'is_enabled',
         ];
         $out = [];

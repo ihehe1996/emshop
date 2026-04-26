@@ -34,13 +34,6 @@ $domainVerified = (int) ($currentMerchant['domain_verified'] ?? 0) === 1;
             </div>
 
             <div class="mc-field">
-                <label class="mc-field__label">slug</label>
-                <input type="text" class="mc-input mc-input--readonly" readonly
-                       value="<?= $esc((string) $currentMerchant['slug']) ?>">
-                <div class="mc-field__hint">开通后不可修改</div>
-            </div>
-
-            <div class="mc-field">
                 <label class="mc-field__label">Logo URL</label>
                 <input type="text" class="mc-input" name="logo" maxlength="500"
                        placeholder="店铺 Logo 图片地址"
@@ -62,8 +55,48 @@ $domainVerified = (int) ($currentMerchant['domain_verified'] ?? 0) === 1;
             <div class="mc-field">
                 <label class="mc-field__label">备案号</label>
                 <input type="text" class="mc-input" name="icp" maxlength="100"
-                       placeholder="选填"
+                       placeholder="如：京ICP备XXXXXXXX号-1"
                        value="<?= $esc((string) ($currentMerchant['icp'] ?? '')) ?>">
+                <div class="mc-field__hint">
+                    仅在你启用了<strong>自定义顶级域名</strong>访问时才需要填写本店自己的备案号；
+                    使用主站二级域名访问时会自动沿用主站备案，无需自填。
+                </div>
+            </div>
+
+            <!-- 店铺公告（富文本，按本店独立存）+ 显示位置多选 -->
+            <div class="mc-field">
+                <label class="mc-field__label">店铺公告</label>
+                <textarea name="announcement" id="mcAnnouncementTextarea" style="display:none;"><?= htmlspecialchars((string) ($currentMerchant['announcement'] ?? ''), ENT_QUOTES, 'UTF-8') ?></textarea>
+                <div class="mc-announce-editor">
+                    <div id="mcAnnouncementToolbar" class="mc-announce-editor__toolbar"></div>
+                    <div id="mcAnnouncementEditor"  class="mc-announce-editor__body"></div>
+                </div>
+                <div class="mc-field__hint">本店公告（富文本，独立于主站）；下方勾选要展示的位置即可生效</div>
+            </div>
+
+            <div class="mc-field">
+                <label class="mc-field__label">显示位置</label>
+                <?php
+                    // 首次未配置时默认勾选"商城首页"（DB 字段 DEFAULT 'home'）；
+                    // 老数据如果还有 null 兜底也按 home 处理
+                    $posRaw = $currentMerchant['announcement_positions'] ?? null;
+                    if ($posRaw === null) {
+                        $posList = ['home'];
+                    } else {
+                        $posList = array_filter(array_map('trim', explode(',', (string) $posRaw)));
+                    }
+                ?>
+                <div class="mc-checkbox-group">
+                    <label class="mc-checkbox">
+                        <input type="checkbox" name="announcement_positions[]" value="home" <?= in_array('home', $posList, true) ? 'checked' : '' ?>>
+                        <span><i class="fa fa-home"></i> 商城首页</span>
+                    </label>
+                    <label class="mc-checkbox">
+                        <input type="checkbox" name="announcement_positions[]" value="goods_list" <?= in_array('goods_list', $posList, true) ? 'checked' : '' ?>>
+                        <span><i class="fa fa-th"></i> 商品列表页</span>
+                    </label>
+                </div>
+                <div class="mc-field__hint">不勾选则不在前台展示公告</div>
             </div>
 
             <?php
@@ -232,7 +265,37 @@ $domainVerified = (int) ($currentMerchant['domain_verified'] ?? 0) === 1;
 }
 .mc-badge--success { background:#ecfdf5; color:#059669; }
 .mc-badge--pending { background:#f3f4f6; color:#6b7280; }
+
+/* 公告富文本 */
+.mc-announce-editor {
+    border:1px solid #d4d7dc; border-radius:6px;
+    background:#fff; overflow:hidden;
+}
+.mc-announce-editor:focus-within { border-color:#5b8def; }
+.mc-announce-editor__toolbar { border-bottom:1px solid #e5e7eb; background:#fafbfc; }
+.mc-announce-editor__body { min-height:200px; }
+.mc-announce-editor__body [data-slate-editor] { min-height:200px; }
+.mc-announce-editor__body .w-e-text-container { min-height:200px !important; background:#fff; }
+
+/* 显示位置 checkbox group —— 卡片式胶囊按钮 */
+.mc-checkbox-group { display:flex; gap:10px; flex-wrap:wrap; }
+.mc-checkbox {
+    display:inline-flex; align-items:center; gap:8px;
+    padding:8px 14px; border:1px solid #e5e7eb; border-radius:8px;
+    background:#fff; cursor:pointer; user-select:none;
+    transition: all .15s; font-size:13px; color:#4b5563;
+}
+.mc-checkbox:hover { border-color:#c7d2fe; color:#4338ca; }
+.mc-checkbox input[type="checkbox"] { width:14px; height:14px; cursor:pointer; accent-color:#4e6ef2; }
+.mc-checkbox input[type="checkbox"]:checked + span { color:#4338ca; font-weight:500; }
+.mc-checkbox:has(input:checked) { background:#eef2ff; border-color:#c7d2fe; color:#4338ca; font-weight:500; }
+.mc-checkbox span i { margin-right:4px; color:#9ca3af; }
+.mc-checkbox:has(input:checked) span i { color:#4338ca; }
 </style>
+
+<!-- WangEditor 资源（PJAX 切回时浏览器复用缓存）-->
+<link rel="stylesheet" href="/content/static/lib/wangeditor/style.min.css">
+<script src="/content/static/lib/wangeditor/index.min.js"></script>
 
 <script>
 $(function(){
@@ -265,6 +328,52 @@ $(function(){
                 complete: function () { $b.prop('disabled', false).html(originalHtml); }
             });
         }
+
+        // 公告富文本初始化（PJAX 多次进入时清掉旧实例后重建）
+        if (window._mcAnnouncementEditor) {
+            try { window._mcAnnouncementEditor.destroy(); } catch (e) {}
+            window._mcAnnouncementEditor = null;
+        }
+        (function initAnnounceEditor() {
+            var $ta = $('#mcAnnouncementTextarea');
+            if (!$ta.length) return;
+            if (typeof window.wangEditor === 'undefined') { setTimeout(initAnnounceEditor, 50); return; }
+            try {
+                var E = window.wangEditor;
+                var editor = E.createEditor({
+                    selector: '#mcAnnouncementEditor',
+                    html: $ta.val() || '<p><br></p>',
+                    mode: 'default',
+                    config: {
+                        placeholder: '在这里输入店铺公告，支持图文混排…',
+                        onChange: function (ed) { $ta.val(ed.getHtml()); },
+                        MENU_CONF: {
+                            uploadImage: {
+                                fieldName: 'file',
+                                server: '/user/merchant/upload.php',
+                                data: { csrf_token: csrfToken, context: 'announce_image' },
+                                onSuccess: function (file, res) {
+                                    if (res && res.data && res.data.csrf_token) {
+                                        csrfToken = res.data.csrf_token;
+                                        $('input[name="csrf_token"]').val(csrfToken);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                E.createToolbar({ editor: editor, selector: '#mcAnnouncementToolbar', mode: 'simple', config: {} });
+                window._mcAnnouncementEditor = editor;
+                $('#mcAnnouncementEditor').on('click', function (e) {
+                    if (e.target === this || $(e.target).hasClass('w-e-text-container') || $(e.target).hasClass('w-e-scroll')) {
+                        editor.focus(true);
+                    }
+                });
+            } catch (e) {
+                console.error('店铺公告富文本初始化失败:', e);
+                $('.mc-announce-editor').replaceWith('<div style="color:#ef4444;padding:10px;border:1px solid #fecaca;border-radius:6px;">富文本编辑器加载失败，请刷新页面重试</div>');
+            }
+        })();
 
         $('#mcProfileSubmit').on('click', function () {
             submitForm('#mcProfileForm', $(this), '<i class="fa fa-check"></i> 保存基本信息');

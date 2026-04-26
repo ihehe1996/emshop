@@ -42,6 +42,23 @@ function formInput(string $name, string $value, string $placeholder = '', int $m
     return '<input type="text" class="layui-input" name="' . $name . '" value="' . $val . '" placeholder="' . $ph . '"' . $max . '>';
 }
 
+/**
+ * 带单位后缀的紧凑输入控件（替代 layui-input-suffix 在某些布局下错位的问题）。
+ *   左侧数字输入，右侧灰色"分钟 / 元 / %"等单位胶囊紧贴边框。
+ *
+ * 用法：formInputWithSuffix('shop_order_expire_minutes', '30', '分钟', '60');
+ */
+function formInputWithSuffix(string $name, string $value, string $suffix, string $placeholder = '', string $type = 'text'): string {
+    $val = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    $ph  = htmlspecialchars($placeholder, ENT_QUOTES, 'UTF-8');
+    $sfx = htmlspecialchars($suffix, ENT_QUOTES, 'UTF-8');
+    $t   = htmlspecialchars($type, ENT_QUOTES, 'UTF-8');
+    return '<div class="em-suffix-input">'
+         .   '<input type="' . $t . '" class="em-suffix-input__field" name="' . $name . '" value="' . $val . '" placeholder="' . $ph . '">'
+         .   '<span class="em-suffix-input__suffix">' . $sfx . '</span>'
+         . '</div>';
+}
+
 function formTextarea(string $name, string $value, string $placeholder = '', int $rows = 4): string {
     $val = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
     $ph  = htmlspecialchars($placeholder, ENT_QUOTES, 'UTF-8');
@@ -152,6 +169,73 @@ function formRadio(string $name, array $options, string $selected = ''): string 
     display: inline-flex; align-items: center; gap: 5px;
 }
 .admin-mail-help__title i { color: #6366f1; }
+
+/* 带单位后缀的紧凑输入：替代 layui-input-suffix（在某些布局下错位）。
+   左侧数字 input + 右侧灰色单位胶囊紧贴边框，悬停/聚焦时整体变蓝。 */
+.em-suffix-input {
+    display: inline-flex; align-items: stretch;
+    height: 38px; max-width: 220px;
+    border: 1px solid #d4d7dc; border-radius: 6px;
+    background: #fff; overflow: hidden;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.em-suffix-input:hover { border-color: #b8bdc4; }
+.em-suffix-input:focus-within {
+    border-color: #5b8def;
+    box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.12);
+}
+.em-suffix-input__field {
+    flex: 1; min-width: 0;
+    padding: 0 12px;
+    border: 0; outline: none;
+    font-size: 13.5px; color: #1f2937;
+    background: transparent;
+    /* 隐藏 number 上下箭头，让宽度更紧凑 */
+    -moz-appearance: textfield;
+}
+.em-suffix-input__field::-webkit-outer-spin-button,
+.em-suffix-input__field::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+}
+.em-suffix-input__suffix {
+    display: inline-flex; align-items: center; padding: 0 14px;
+    background: #f3f4f6; color: #6b7280;
+    font-size: 13px; font-weight: 500;
+    border-left: 1px solid #e5e7eb;
+    user-select: none;
+}
+.em-suffix-input:focus-within .em-suffix-input__suffix {
+    background: #eef2ff; color: #4338ca; border-left-color: #c7d2fe;
+}
+
+/* checkbox group：卡片式胶囊按钮，勾选后蓝色高亮
+   配合 input[lay-ignore] 让 layui 跳过 form.render('checkbox') 包装，
+   这样我们的卡片样式才能落到原生 input 上，不被 layui 的 .layui-form-checkbox margin 干扰 */
+.em-checkbox-group { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+.em-checkbox {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border: 1px solid #e5e7eb; border-radius: 8px;
+    background: #fff; cursor: pointer; user-select: none;
+    transition: all .15s; font-size: 13px; color: #4b5563;
+}
+.em-checkbox:hover { border-color: #c7d2fe; color: #4338ca; }
+.em-checkbox input[type="checkbox"] { width: 14px; height: 14px; cursor: pointer; accent-color: #4e6ef2; }
+.em-checkbox:has(input:checked) { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; font-weight: 500; }
+.em-checkbox span i { margin-right: 4px; color: #9ca3af; }
+.em-checkbox:has(input:checked) span i { color: #4338ca; }
+
+/* 店铺公告富文本编辑器外框 */
+.shop-announce-editor {
+    border: 1px solid #d4d7dc; border-radius: 6px;
+    background: #fff; overflow: hidden; max-width: 920px;
+}
+.shop-announce-editor__toolbar {
+    border-bottom: 1px solid #e5e7eb;
+    background: #fafbfc;
+}
+.shop-announce-editor__body { min-height: 240px; }
+.shop-announce-editor__body [data-slate-editor] { min-height: 240px; }
+.shop-announce-editor__body .w-e-text-container { min-height: 240px !important; background: #fff; }
 </style>
 
 <div class="admin-page admin-settings">
@@ -229,12 +313,6 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                                 <?php echo formInput('site_icp', $cfg['site_icp'] ?? '', '如：京ICP备XXXXXXXX号-1'); ?>
                             </div>
                         </div>
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">版权信息</label>
-                            <div class="layui-input-block">
-                                <?php echo formInput('site_copyright', $cfg['site_copyright'] ?? '', '© 2026 EMSHOP'); ?>
-                            </div>
-                        </div>
                     </div>
 
                     <!-- 站点行为块：首页入口 / 时区 / 统计 -->
@@ -247,8 +325,9 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                                 <select class="layui-input" name="homepage_mode">
                                     <?php
                                     $hmodes = [
-                                        'mall' => '商城',
-                                        'blog' => '博客',
+                                        'mall'       => '商城首页',
+                                        'goods_list' => '商品列表页',
+                                        'blog'       => '博客首页',
                                     ];
                                     $currentHm = $cfg['homepage_mode'] ?? 'mall';
                                     foreach ($hmodes as $val => $label) {
@@ -332,7 +411,7 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                         var v = ($('input[name=admin_entry_key]').val() || '').trim();
                         $('#sec_preview').text(v || 'emshop');
                     }
-                    $(document).on('input', 'input[name=admin_entry_key]', refresh);
+                    $(document).on('input.admSettings', 'input[name=admin_entry_key]', refresh);
                     refresh();
                 })();
                 </script>
@@ -560,12 +639,9 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                         <div class="layui-form-item">
                             <label class="layui-form-label">订单超时时间</label>
                             <div class="layui-input-block">
-                                <div class="layui-input-wrap">
-                                    <?php echo formInput('shop_order_expire_minutes', $cfg['shop_order_expire_minutes'] ?? '30', ''); ?>
-                                    <div class="layui-input-suffix">分钟</div>
-                                </div>
+                                <?php echo formInputWithSuffix('shop_order_expire_minutes', $cfg['shop_order_expire_minutes'] ?? '30', '分钟', '30', 'number'); ?>
+                                <div class="layui-form-mid layui-word-aux">订单创建后未支付自动关闭的时间</div>
                             </div>
-                            <div class="layui-form-mid layui-word-aux">订单创建后未支付自动关闭的时间</div>
                         </div>
                         <div class="layui-form-item">
                             <label class="layui-form-label">启用优惠券</label>
@@ -575,11 +651,124 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                         </div>
                     </div>
 
+                    <!-- 店铺公告（WangEditor 富文本，会显示在前台） -->
+                    <div class="admin-settings__block">
+                        <div class="admin-settings__block-title"><i class="fa fa-bullhorn"></i>店铺公告</div>
+
+                        <div class="layui-form-item">
+                            <label class="layui-form-label">公告内容</label>
+                            <div class="layui-input-block">
+                                <textarea name="shop_announcement" id="shopAnnouncementTextarea" style="display:none;"><?= htmlspecialchars((string) ($cfg['shop_announcement'] ?? ''), ENT_QUOTES, 'UTF-8') ?></textarea>
+                                <div class="shop-announce-editor">
+                                    <div id="shopAnnouncementToolbar" class="shop-announce-editor__toolbar"></div>
+                                    <div id="shopAnnouncementEditor"  class="shop-announce-editor__body"></div>
+                                </div>
+                                <div class="layui-form-mid layui-word-aux">富文本 HTML，会按下方"显示位置"在前台展示</div>
+                            </div>
+                        </div>
+
+                        <div class="layui-form-item">
+                            <label class="layui-form-label">显示位置</label>
+                            <div class="layui-input-block">
+                                <?php
+                                    // 首次未配置时默认勾选"商城首页" —— 让用户写完公告就能直接看到效果
+                                    $posRaw = $cfg['shop_announcement_positions'] ?? null;
+                                    if ($posRaw === null) {
+                                        $posList = ['home'];
+                                    } else {
+                                        $posList = array_filter(array_map('trim', explode(',', (string) $posRaw)));
+                                    }
+                                ?>
+                                <div class="em-checkbox-group">
+                                    <!-- lay-ignore：禁止 layui form.render('checkbox') 把原生 input 包装成 .layui-form-checkbox，
+                                         否则 layui 会给伪 checkbox 加 margin-top:10px 造成胶囊跟 label 错位 -->
+                                    <label class="em-checkbox">
+                                        <input type="checkbox" name="shop_announcement_positions[]" value="home" lay-ignore <?= in_array('home', $posList, true) ? 'checked' : '' ?>>
+                                        <span><i class="fa fa-home"></i> 商城首页</span>
+                                    </label>
+                                    <label class="em-checkbox">
+                                        <input type="checkbox" name="shop_announcement_positions[]" value="goods_list" lay-ignore <?= in_array('goods_list', $posList, true) ? 'checked' : '' ?>>
+                                        <span><i class="fa fa-th"></i> 商品列表页</span>
+                                    </label>
+                                </div>
+                                <div class="layui-form-mid layui-word-aux">不勾选则不在前台展示公告</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="admin-settings__actions-block">
                         <button type="submit" class="em-btn em-save-btn"><i class="fa fa-check"></i>保存设置</button>
                     </div>
                 </form>
             </div>
+
+            <!-- WangEditor 资源 + 初始化（仅 shop tab 用到；PJAX 切换时浏览器会复用已缓存的资源） -->
+            <link rel="stylesheet" href="/content/static/lib/wangeditor/style.min.css">
+            <script src="/content/static/lib/wangeditor/index.min.js"></script>
+            <script>
+            (function () {
+                'use strict';
+                // 防止 PJAX 多次加载这块 view 时重复初始化（每次清掉旧实例后重建）
+                if (window._shopAnnouncementEditor) {
+                    try { window._shopAnnouncementEditor.destroy(); } catch (e) {}
+                    window._shopAnnouncementEditor = null;
+                }
+
+                function init() {
+                    var $ta = $('#shopAnnouncementTextarea');
+                    if (!$ta.length) return;
+                    if (typeof window.wangEditor === 'undefined') {
+                        // 资源还没加载完，下一帧重试
+                        setTimeout(init, 50);
+                        return;
+                    }
+                    var initial = $ta.val() || '';
+                    try {
+                        var E = window.wangEditor;
+                        var editor = E.createEditor({
+                            selector: '#shopAnnouncementEditor',
+                            html: initial || '<p><br></p>',
+                            mode: 'default',
+                            config: {
+                                placeholder: '在这里输入店铺公告，支持图文混排…',
+                                onChange: function (ed) {
+                                    $ta.val(ed.getHtml());
+                                },
+                                MENU_CONF: {
+                                    uploadImage: {
+                                        fieldName: 'file',
+                                        server: '/admin/upload.php',
+                                        data: { csrf_token: $('input[name="csrf_token"]').first().val() || '', context: 'announce_image' },
+                                        onSuccess: function (file, res) {
+                                            if (res && res.data && res.data.csrf_token) {
+                                                $('input[name="csrf_token"]').val(res.data.csrf_token);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        E.createToolbar({
+                            editor: editor,
+                            selector: '#shopAnnouncementToolbar',
+                            mode: 'simple',
+                            config: {}
+                        });
+                        window._shopAnnouncementEditor = editor;
+                        // 点击空白区聚焦输入区
+                        $('#shopAnnouncementEditor').on('click', function (e) {
+                            if (e.target === this || $(e.target).hasClass('w-e-text-container') || $(e.target).hasClass('w-e-scroll')) {
+                                editor.focus(true);
+                            }
+                        });
+                    } catch (e) {
+                        console.error('店铺公告富文本初始化失败:', e);
+                        $('.shop-announce-editor').replaceWith('<div style="color:#ef4444;padding:10px;border:1px solid #fecaca;border-radius:6px;">富文本编辑器加载失败，请刷新页面重试</div>');
+                    }
+                }
+                init();
+            })();
+            </script>
             <?php endif; ?>
 
             <?php /* ==================== 查单模式（独立选项卡：游客查单配置） ==================== */ ?>
@@ -897,6 +1086,10 @@ function formRadio(string $name, array $options, string $selected = ''): string 
             // 直接加载时 layui.js 在本文件更下方，top-level 引用 layui 会报 ReferenceError；
             // 挂到 $(ready) 里等所有 <script> 解析完再跑（PJAX 路径下也安全）
             $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admSettings handler，避免事件成倍触发
+    $(document).off('.admSettings');
+    $(window).off('.admSettings');
+
             if (typeof layui === 'undefined') return;
             layui.use(['layer', 'form'], function () {
                 var $ = layui.$, layer = layui.layer, form = layui.form;

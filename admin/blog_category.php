@@ -32,7 +32,8 @@ if (Request::isPost()) {
         switch ($action) {
             case 'list':
                 $keyword = trim((string) Input::post('keyword', ''));
-                $allCategories = $model->getAll();
+                // 主站后台只看 merchant_id=0
+                $allCategories = $model->getAll(0);
 
                 $data = [];
                 foreach ($allCategories as $item) {
@@ -69,7 +70,7 @@ if (Request::isPost()) {
                 $parentId = (int) Input::post('parent_id', 0);
 
                 $slug = trim((string) Input::post('slug', ''));
-                if ($slug !== '' && $model->existsSlug($slug)) {
+                if ($slug !== '' && $model->existsSlug($slug, 0, 0)) {
                     Response::error('别名已存在');
                 }
 
@@ -78,6 +79,7 @@ if (Request::isPost()) {
 
                 $model->create([
                     'parent_id' => $parentId,
+                    'merchant_id' => 0, // 主站后台创建的分类固定归主站
                     'name' => $name,
                     'slug' => $slug,
                     'description' => (string) Input::post('description', ''),
@@ -105,6 +107,9 @@ if (Request::isPost()) {
                 if ($existing === null) {
                     Response::error('分类不存在');
                 }
+                if ((int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权操作商户分类');
+                }
 
                 $name = trim((string) Input::post('name', ''));
                 if ($name === '') {
@@ -123,7 +128,7 @@ if (Request::isPost()) {
                 }
 
                 $slug = trim((string) Input::post('slug', ''));
-                if ($slug !== '' && $model->existsSlug($slug, $id)) {
+                if ($slug !== '' && $model->existsSlug($slug, $id, 0)) {
                     Response::error('别名已存在');
                 }
 
@@ -155,6 +160,14 @@ if (Request::isPost()) {
                     Response::error('无效的分类ID');
                 }
 
+                $existing = $model->findById($id);
+                if ($existing === null) {
+                    Response::error('分类不存在');
+                }
+                if ((int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权删除商户分类');
+                }
+
                 if ($model->hasChildren($id)) {
                     Response::error('该分类下存在子分类，请先删除子分类');
                 }
@@ -183,11 +196,16 @@ if (Request::isPost()) {
                 $selectedSet = array_flip($ids);
                 $deleted = 0; $skipped = 0; $skippedNames = [];
 
-                // 取所有分类信息便于反查父子关系和名称
+                // 取所有分类信息便于反查父子关系和名称（限定主站作用域）
                 $prefix = Database::prefix();
-                $all = Database::query("SELECT id, parent_id, name FROM {$prefix}blog_category WHERE id IN (" . implode(',', $ids) . ")");
+                $all = Database::query("SELECT id, parent_id, name, merchant_id FROM {$prefix}blog_category WHERE id IN (" . implode(',', $ids) . ")");
                 $byId = [];
                 foreach ($all as $r) $byId[(int) $r['id']] = $r;
+                // 过滤掉非主站归属的 ID，防越权
+                $ids = array_values(array_filter($ids, fn($id) => isset($byId[$id]) && (int) $byId[$id]['merchant_id'] === 0));
+                if (empty($ids)) {
+                    Response::error('所选分类均无权删除');
+                }
 
                 // 先按 parent_id 降序排：叶子先删，父后删
                 usort($ids, function ($a, $b) {
@@ -237,6 +255,9 @@ if (Request::isPost()) {
                 if ($existing === null) {
                     Response::error('分类不存在');
                 }
+                if ((int) $existing['merchant_id'] !== 0) {
+                    Response::error('无权操作商户分类');
+                }
 
                 $newStatus = ((int) $existing['status'] === 1) ? 0 : 1;
                 $model->update($id, ['status' => (string) $newStatus]);
@@ -277,9 +298,12 @@ if ($isPopup) {
 
     if ($editId > 0) {
         $editCat = $model->findById($editId);
+        if ($editCat !== null && (int) $editCat['merchant_id'] !== 0) {
+            $editCat = null; // 不展示商户分类
+        }
     }
 
-    $topLevelCats = $model->getTopLevel();
+    $topLevelCats = $model->getTopLevel(0);
 
     $csrfToken = Csrf::token();
     include __DIR__ . '/view/popup/blog_category.php';

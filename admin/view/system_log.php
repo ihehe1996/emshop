@@ -194,6 +194,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admSystemLog handler，避免事件成倍触发
+    $(document).off('.admSystemLog');
+    $(window).off('.admSystemLog');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -281,10 +285,10 @@ $(function () {
                 }
             });
         }
-        $(document).on('click', '#logSearchBtn', doSearch);
+        $(document).on('click.admSystemLog', '#logSearchBtn', doSearch);
 
         // 重置
-        $(document).on('click', '#logResetBtn', function () {
+        $(document).on('click.admSystemLog', '#logResetBtn', function () {
             $('#logLevelFilter').val('');
             $('#logTypeFilter').val('');
             $('#logKeyword').val('');
@@ -301,12 +305,12 @@ $(function () {
         });
 
         // 刷新
-        $(document).on('click', '#logRefreshBtn', function () {
+        $(document).on('click.admSystemLog', '#logRefreshBtn', function () {
             table.reload('logTableId');
         });
 
         // 清理旧日志
-        $(document).on('click', '#logCleanupBtn', function () {
+        $(document).on('click.admSystemLog', '#logCleanupBtn', function () {
             layer.prompt({
                 title: '清理多少天之前的日志？',
                 value: '30',

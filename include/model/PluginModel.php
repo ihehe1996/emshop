@@ -15,6 +15,19 @@ declare(strict_types=1);
  */
 final class PluginModel
 {
+    /**
+     * "全站统一走主站"分类清单。
+     *
+     * 这几个分类属于商城的底层能力：支付通道（钱归谁）/ 商品类型（卡密 / 实物 等核心行为）/
+     * 商品增强（库存模糊化等）。它们由主站统一管理、统一启停，**商户站不再独立装 / 启停**：
+     *
+     *   - init.php 加载插件时：商户 scope 跑这里命中的插件按主站启用名单加载
+     *   - 商户后台 appstore / plugin 页面：禁止装这些分类的插件
+     *
+     * 其它分类（系统扩展 / 系统插件 / 对接插件 等）保持按 scope 独立安装，给商户保留差异化扩展空间。
+     */
+    public const MAIN_ONLY_CATEGORIES = ['支付插件', '商品类型', '商品增强'];
+
     private string $table;
 
     public function __construct()
@@ -95,7 +108,9 @@ final class PluginModel
             'category' => '',
             'icon' => '',
             'preview' => '',
-            'custom' => false,
+            // Swoole: true/yes/1/on  → 标记本插件会注册 swoole 钩子（如 swoole_timer_tick），
+            // 启用/禁用/安装/卸载本插件后需要触发 swoole worker 重载，否则旧代码继续跑
+            'swoole' => false,
         ];
 
         $inComment = false;
@@ -151,10 +166,10 @@ final class PluginModel
                     $header['category'] = trim($m[1]);
                     continue;
                 }
-                // 自定义 / 本地开发插件标记：头部写 "Custom: true" 即跳过中心服务授权校验
-                if (preg_match('/^Custom:\s*(.+)$/i', $line, $m)) {
+                if (preg_match('/^Swoole:\s*(.+)$/i', $line, $m)) {
+                    // 兼容 true/yes/1/on/y 这几种"开"的写法，其它一律视为 false
                     $v = strtolower(trim($m[1]));
-                    $header['custom'] = in_array($v, ['1', 'y', 'yes', 'true', 'on'], true);
+                    $header['swoole'] = in_array($v, ['true', 'yes', '1', 'on', 'y'], true);
                     continue;
                 }
 
@@ -335,6 +350,34 @@ final class PluginModel
     }
 
     /**
+     * 该插件是否在主文件 header 注释里声明了 `Swoole: true`。
+     *
+     * 用途：插件启用/禁用/安装/卸载时，仅当此方法返回 true 才需要 bump swoole 代码版本号
+     * 触发 swoole worker reload —— 避免每次操作"前端 / UI 类"无关插件也白白 reload。
+     */
+    public function isSwoolePlugin(string $name, string $scope): bool
+    {
+        $mainFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php';
+        $header = $this->parseHeader($mainFile);
+        if ($header === null) return false;
+        return !empty($header['swoole']);
+    }
+
+    /**
+     * 推进 swoole 代码版本号。swoole worker 在 timer tick 前对比此值，
+     * 发现变了就 $server->reload() 自我重启，加载新插件代码。
+     *
+     * 调用时机：任何"会改变 swoole worker 内部代码"的动作完成之后 ——
+     * 启用/禁用/安装/卸载带 Swoole:true 的插件、覆盖式更新插件文件等。
+     */
+    public static function bumpSwooleCodeVersion(): void
+    {
+        // 用毫秒+随机后缀避免同一秒内连续两次操作版本号相同
+        $version = sprintf('%d.%04d', time(), random_int(0, 9999));
+        Config::set('swoole_code_version', $version);
+    }
+
+    /**
      * 更新插件信息（仅当前 scope）。
      *
      * @param array<string, mixed> $data
@@ -391,6 +434,74 @@ final class PluginModel
             $names[] = (string) $row['name'];
         }
         return $names;
+    }
+
+    /**
+     * 取插件运行时加载名单 —— init.php 用它决定 include 哪些主文件。
+     *
+     * 规则：
+     *   - 主站 scope：返回 main 启用的所有插件名（与 getEnabledNames 一致）
+     *   - 商户 scope：MAIN_ONLY_CATEGORIES 的强制从 main 取启用名；其它分类从商户自身 scope 取
+     *
+     * @return array<int, string>
+     */
+    public function getRuntimeNames(string $scope): array
+    {
+        if ($scope === 'main') {
+            return $this->getEnabledNames('main');
+        }
+
+        $cats = self::MAIN_ONLY_CATEGORIES;
+        $placeholders = implode(',', array_fill(0, count($cats), '?'));
+
+        // 主站强制类
+        $sqlMain = sprintf(
+            'SELECT `name` FROM `%s`
+              WHERE `scope` = ? AND `is_enabled` = 1 AND `category` IN (' . $placeholders . ')',
+            $this->table
+        );
+        $mainRows = Database::query($sqlMain, array_merge(['main'], $cats));
+
+        // 商户自身的非强制类
+        $sqlSelf = sprintf(
+            'SELECT `name` FROM `%s`
+              WHERE `scope` = ? AND `is_enabled` = 1 AND `category` NOT IN (' . $placeholders . ')',
+            $this->table
+        );
+        $selfRows = Database::query($sqlSelf, array_merge([$scope], $cats));
+
+        $names = array_unique(array_merge(
+            array_column($mainRows, 'name'),
+            array_column($selfRows, 'name')
+        ));
+        return array_values($names);
+    }
+
+    /**
+     * 取指定 scope 下、属于某个分类的已启用插件（含 main_file）。
+     *
+     * 用途：PaymentService 取"主站启用的支付插件"时不能依赖 init.php 已加载的钩子
+     * （init.php 只会按当前 scope 加载），需要按需读 DB + include 主文件再触发钩子。
+     *
+     * @return array<int, array{name:string, main_file:string}>
+     */
+    public function getEnabledByCategory(string $category, string $scope): array
+    {
+        $sql = sprintf(
+            'SELECT `name`, `main_file` FROM `%s`
+               WHERE `category` = ? AND `scope` = ? AND `is_enabled` = 1
+               ORDER BY `id` ASC',
+            $this->table
+        );
+        $rows = Database::query($sql, [$category, $scope]);
+        $out = [];
+        foreach ($rows as $row) {
+            $out[] = [
+                'name'      => (string) $row['name'],
+                'main_file' => (string) ($row['main_file'] ?: ($row['name'] . '.php')),
+            ];
+        }
+        return $out;
     }
 
     /**

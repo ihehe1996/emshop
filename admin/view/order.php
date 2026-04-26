@@ -82,8 +82,28 @@ $cs = $currencySymbol ?? '¥';
 </script>
 
 <script type="text/html" id="orderPaymentTpl">
-    {{d.payment_name || '<span style="color:#bbb;">-</span>'}}
+    {{# if (d.payment_name) { }}
+        <span class="ord-pay">
+            {{# if (d.payment_image) { }}
+                <img src="{{ d.payment_image }}" alt="" class="ord-pay__icon" onerror="this.style.display='none';">
+            {{# } else { }}
+                <i class="fa fa-credit-card"></i>
+            {{# } }}
+            {{ d.payment_name }}
+        </span>
+    {{# } else { }}
+        <span class="ord-pay ord-pay--empty">未支付</span>
+    {{# } }}
 </script>
+<style>
+.ord-pay {
+    display: inline-flex; align-items: center; gap: 5px; justify-content: center;
+    padding: 2px 9px; font-size: 12px; font-weight: 500;
+    background: #eef2ff; color: #4338ca; border-radius: 10px;
+}
+.ord-pay__icon { width: 16px; height: 16px; border-radius: 3px; object-fit: contain; background: #fff; }
+.ord-pay--empty { background: #f3f4f6; color: #9ca3af; font-weight: 400; }
+</style>
 
 <!-- 状态：用 em-tag 的语义颜色变体代替 layui-badge -->
 <script type="text/html" id="orderStatusTpl">
@@ -139,6 +159,10 @@ $cs = $currencySymbol ?? '¥';
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admOrder handler，避免事件成倍触发
+    $(document).off('.admOrder');
+    $(window).off('.admOrder');
+
     'use strict';
     var csrfToken = <?= json_encode($csrfToken) ?>;
 
@@ -210,7 +234,7 @@ $(function () {
         // ============================================================
         // 状态选项卡：点击切换 currentStatus 并刷新
         // ============================================================
-        $(document).on('click', '#orderStatusTabs .em-tabs__item', function (e) {
+        $(document).on('click.admOrder', '#orderStatusTabs .em-tabs__item', function (e) {
             e.preventDefault();
             $('#orderStatusTabs .em-tabs__item').removeClass('is-active');
             $(this).addClass('is-active');
@@ -221,18 +245,18 @@ $(function () {
         // ============================================================
         // 快捷搜索：回车触发；清空按钮立即刷新
         // ============================================================
-        $(document).on('keypress', '#orderQuickSearch', function (e) {
+        $(document).on('keypress.admOrder', '#orderQuickSearch', function (e) {
             if (e.which !== 13) return;
             e.preventDefault();
             doReload();
         });
-        $(document).on('click', '#orderQuickClear', function () {
+        $(document).on('click.admOrder', '#orderQuickClear', function () {
             $('#orderQuickSearch').val('').focus();
             doReload();
         });
 
         // 刷新
-        $(document).on('click', '#orderRefreshBtn', function () {
+        $(document).on('click.admOrder', '#orderRefreshBtn', function () {
             table.reload('orderTableId');
         });
 

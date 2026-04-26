@@ -173,6 +173,10 @@ $esc = static fn(string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8')
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .ucAddrPage handler，避免事件成倍触发
+    $(document).off('.ucAddrPage');
+    $(window).off('.ucAddrPage');
+
     'use strict';
     var csrfToken = <?= json_encode($csrfToken) ?>;
 
@@ -317,7 +321,7 @@ $(function () {
     $('#ucAddrAddBtn').on('click', function () { openEditor(null); });
 
     // 行内操作（编辑 / 设默认 / 删除）事件委托
-    $(document).on('click', '.uc-address-card__act', function () {
+    $(document).on('click.ucAddrPage', '.uc-address-card__act', function () {
         var $card = $(this).closest('.uc-address-card');
         var raw = $card.attr('data-raw');
         var addr = raw ? JSON.parse(raw) : null;

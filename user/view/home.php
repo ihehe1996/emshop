@@ -182,10 +182,13 @@ $fmtMoney = static fn(int $raw): string => Currency::displayAmount($raw);
                     <span class="uc-quick__icon" style="background:#fee2e2;color:#e11d48;"><i class="fa fa-ticket"></i></span>
                     <span class="uc-quick__text">优惠券</span>
                 </a>
+                <?php // 推广 / 返佣只在主站启用；商户子域名下隐藏入口 ?>
+                <?php if (MerchantContext::currentId() === 0): ?>
                 <a href="/user/rebate.php" data-pjax class="uc-quick__item">
                     <span class="uc-quick__icon" style="background:#ede9fe;color:#8b5cf6;"><i class="fa fa-share-alt"></i></span>
                     <span class="uc-quick__text">我的推广</span>
                 </a>
+                <?php endif; ?>
                 <a href="/user/api.php" data-pjax class="uc-quick__item">
                     <span class="uc-quick__icon" style="background:#e0f2fe;color:#0ea5e9;"><i class="fa fa-plug"></i></span>
                     <span class="uc-quick__text">API 对接</span>

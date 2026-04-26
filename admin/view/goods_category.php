@@ -44,6 +44,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admGoodsCat handler，避免事件成倍触发
+    $(document).off('.admGoodsCat');
+    $(window).off('.admGoodsCat');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -106,13 +110,13 @@ $(function(){
         });
 
         // 刷新按钮
-        $(document).on('click', '#catRefreshBtn', function () {
+        $(document).on('click.admGoodsCat', '#catRefreshBtn', function () {
             treeTable.reloadData('catTableId');
         });
 
         // 全部展开/折叠
         var treeExpanded = true;
-        $(document).on('click', '#catToggleBtn', function () {
+        $(document).on('click.admGoodsCat', '#catToggleBtn', function () {
             treeExpanded = !treeExpanded;
             treeTable.expandAll('catTableId', treeExpanded);
             var $btn = $('#catToggleBtn');
@@ -143,7 +147,7 @@ $(function(){
         });
 
         // 批量删除
-        $(document).on('click', '#catBatchDelBtn', function () {
+        $(document).on('click.admGoodsCat', '#catBatchDelBtn', function () {
             if ($(this).hasClass('em-disabled-btn')) return;
             var st = treeTable.checkStatus('catTableId');
             var rows = (st && st.data) ? st.data : [];

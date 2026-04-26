@@ -161,7 +161,7 @@ try {
 
 $scanned = $model->scanTemplates();
 $licenseError = null;
-$availableThemes = AppLicenseGuard::filter($scanned, $memberCode, 2, $licenseError);
+$availableThemes = AppLicenseGuard::filter($scanned, $memberCode, 2, 'template', $licenseError);
 $licenseError = (string) ($licenseError ?? '');
 
 // 叠加当前 scope 下的安装/启用状态

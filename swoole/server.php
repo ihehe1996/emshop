@@ -81,11 +81,26 @@ switch ($command) {
         }
         exit(0);
 
+    case 'reload':
+        // 平滑重启所有 Worker：Master 收到 SIGUSR1 后会逐个替换 Worker，
+        // 期间 HTTP 请求不丢、PID 不变；常用于"加新插件 / 改插件代码"后让代码生效。
+        // 注意：定时器任务会在 worker 重启那一刻短暂丢一拍（最多 SW_TIMER_INTERVAL 秒），可接受。
+        $pid = getPid(SW_PID_FILE);
+        if ($pid && posix_kill($pid, 0)) {
+            // SIGUSR1 = swoole 内置的"reload all workers"信号，无需我们写 handler
+            posix_kill($pid, SIGUSR1);
+            echo "Swoole server reload signal sent (PID: {$pid})\n";
+        } else {
+            echo "Swoole server is not running, cannot reload\n";
+            exit(1);
+        }
+        exit(0);
+
     case 'start':
         break;  // 继续往下执行启动逻辑
 
     default:
-        echo "Usage: php server.php {start|stop|status}\n";
+        echo "Usage: php server.php {start|stop|status|reload}\n";
         exit(1);
 }
 
@@ -176,6 +191,31 @@ $server->on('workerStart', function (Swoole\Http\Server $server, int $workerId) 
     // 前台 Dispatcher 用 filemtime(swoole.heartbeat) 判断本服务是否存活
     @touch(SW_HEARTBEAT_FILE);
 
+    // ----- 启动时记一次代码版本号快照 -----
+    // 后台启用/禁用/安装/卸载带 Swoole:true 标记的插件时，会调 PluginModel::bumpSwooleCodeVersion()
+    // 推进 swoole_code_version。timer 里会对比当前值 vs 此 boot 快照，
+    // 不一致就 $server->reload()，让 worker 重新 require init.php 加载新代码。
+    Config::reload();
+    $bootCodeVersion = (string) (Config::get('swoole_code_version') ?? '');
+
+    // ----- 暴露 swoole_worker_start 钩子（任意间隔定时器入口）-----
+    // 插件想要"每 10s / 5s / 任意间隔"跑代码时，挂这个钩子并在里面调 Swoole\Timer::tick()。
+    // 钩子参数：($server, $workerId)；仅 worker #0 触发，避免多 worker 重复注册同一个 timer。
+    //
+    // 用法示例（插件主文件里）：
+    //   addAction('swoole_worker_start', function ($server, $workerId) {
+    //       Swoole\Timer::tick(10000, function () {   // 每 10 秒
+    //           // 你的逻辑
+    //       });
+    //   });
+    //
+    // 注意：worker reload 时 Timer 会一起被销毁，新 worker 重跑本钩子重新注册，无需手动清理。
+    try {
+        doAction('swoole_worker_start', $server, $workerId);
+    } catch (Throwable $e) {
+        error_log('[Swoole Hook] swoole_worker_start: ' . $e->getMessage());
+    }
+
     // ----- 定时器 1：队列消费 -----
     // Swoole\Timer::tick(毫秒, 回调) 每隔指定时间执行一次回调函数。
     // 这里每 2 秒检查一次 em_delivery_queue 表，取出待处理的发货任务执行。
@@ -187,11 +227,20 @@ $server->on('workerStart', function (Swoole\Http\Server $server, int $workerId) 
         }
     });
 
-    // ----- 定时器 2：定时任务 -----
-    // 每 60 秒执行一次，目前用于：检查超时未支付的订单并自动关闭。
-    // 后续可以在 runTimerTasks() 中添加更多定时任务。
-    Swoole\Timer::tick(SW_TIMER_INTERVAL * 1000, function () use (&$stats) {
+    // ----- 定时器 2：定时任务 + 代码版本检测自动 reload -----
+    // 每 60 秒执行一次：先检查代码版本号有没有被后台 bump（插件改动），变了就 reload；
+    // 否则继续走 runTimerTasks()。runTimerTasks 内部还会再 Config::reload()，影响极小。
+    Swoole\Timer::tick(SW_TIMER_INTERVAL * 1000, function () use (&$stats, $server, $bootCodeVersion) {
         try {
+            // bootCodeVersion 是 use by-value 的快照，只在 worker 启动时采样一次；
+            // reload 后整个 worker 重启 → 新 worker 重跑 workerStart → 重新采样新值
+            Config::reload();
+            $current = (string) (Config::get('swoole_code_version') ?? '');
+            if ($current !== '' && $current !== $bootCodeVersion) {
+                error_log("[Swoole] code version changed ({$bootCodeVersion} -> {$current}), reloading workers");
+                $server->reload();
+                return; // 此 tick 不再继续，老 worker 会被替换
+            }
             runTimerTasks($stats);
         } catch (Throwable $e) {
             error_log("[Timer Error] " . $e->getMessage());

@@ -169,8 +169,13 @@ class GoodsModel
      *      同时把 _shop_markup_rate / _shop_price_factor 挂到返回行，供 getSpecsByGoodsId 沿用
      *
      * 主站上下文或 admin 调用路径（MerchantContext::currentId()=0）行为完全不变。
+     *
+     * @param int $id 商品 ID
+     * @param bool $applyFactor 是否应用价格 factor（买家折扣 / 商户加价率）。
+     *                          后台编辑表单读取场景应传 false，让价格按 DB 原值返回，
+     *                          避免编辑面板上的成交价配置被买家折扣污染。
      */
-    public static function getById($id)
+    public static function getById($id, bool $applyFactor = true)
     {
         $result = Database::query(
             "SELECT * FROM " . Database::prefix() . "goods WHERE id = ? LIMIT 1",
@@ -179,15 +184,28 @@ class GoodsModel
         $row = $result[0] ?? null;
         if (!$row) return $row;
 
+        // 价格 factor 计算：
+        //   - 主站作用域：factor = buyer_discount（仅买家会员价生效）
+        //   - 商户作用域 · 主站引用商品：factor = (1+markup) × buyer_discount（公开标价 = base × (1+markup)；登录买家再乘自己的折扣）
+        //   - 商户作用域 · 自建商品：factor = buyer_discount（无 markup，按规格原价 × 折扣）
+        //   - 商户作用域 · 跨商户的自建商品：不可见
+        //
+        // user_levels.discount 现在仅作"买家会员折扣"用 —— 商户拿货成本由主站按原价收，与折扣无关。
+        // applyFactor=false 时直接置 1，让 DB 原值穿透返回（后台编辑面板需要这个）。
+        $buyerDiscount = $applyFactor ? self::resolveBuyerDiscountRate() : 1.0;
+        $markup = 0;
+        $factor = $buyerDiscount;
+
         $merchantId = class_exists('MerchantContext') ? MerchantContext::currentId() : 0;
         if ($merchantId > 0) {
             $ownerUserId = MerchantContext::currentOwnerId();
             $goodsOwner = (int) ($row['owner_id'] ?? 0);
 
-            if ($goodsOwner === $ownerUserId) {
-                // 自建商品 → 正常显示
-                $row['_shop_markup_rate'] = 0;
-                $row['_shop_price_factor'] = 1.0;
+            if ($ownerUserId > 0 && $goodsOwner === $ownerUserId) {
+                // 自建商品 → markup=0，仅买家折扣
+                // 加 ownerUserId > 0 防御：避免商户 user_id=0 异常时，把 owner_id=0 的主站商品
+                // 当成"自建"漏出，绕过下方 ref.is_on_sale 的下架过滤
+                $factor = $buyerDiscount;
             } elseif ($goodsOwner === 0) {
                 // 主站货：默认全部可见；商户覆盖行存在时才按覆盖来
                 $ref = Database::fetchOne(
@@ -201,20 +219,22 @@ class GoodsModel
                 }
                 // 加价率：覆盖行 > 商户默认值（em_merchant.default_markup_rate）> 0
                 $markup = $ref ? (int) $ref['markup_rate'] : self::resolveMerchantDefaultMarkup($merchantId);
-                $discount = self::resolveMerchantDiscount($ownerUserId);
-                $factor = $discount * (1 + $markup / 10000);
-                $row['_shop_markup_rate'] = $markup;
-                $row['_shop_price_factor'] = $factor;
-                // 重写缓存价格
-                if (isset($row['min_price'])) {
-                    $row['min_price'] = (int) round(((int) $row['min_price']) * $factor);
-                }
-                if (isset($row['max_price'])) {
-                    $row['max_price'] = (int) round(((int) $row['max_price']) * $factor);
-                }
+                // applyFactor=false 时不参与加价 / 不打折，让后台 ref 编辑表单看到主站原值
+                $factor = $applyFactor ? (1 + $markup / 10000) * $buyerDiscount : 1.0;
             } else {
                 // 其他商户的自建商品 → 不可见
                 return null;
+            }
+        }
+
+        $row['_shop_markup_rate'] = $markup;
+        $row['_shop_price_factor'] = $factor;
+        if ($factor !== 1.0) {
+            if (isset($row['min_price'])) {
+                $row['min_price'] = (int) round(((int) $row['min_price']) * $factor);
+            }
+            if (isset($row['max_price'])) {
+                $row['max_price'] = (int) round(((int) $row['max_price']) * $factor);
             }
         }
 
@@ -238,25 +258,37 @@ class GoodsModel
     }
 
     /**
-     * 商户主用户等级折扣率（9.9 折 → 0.99）。
-     * 同一请求内缓存。
+     * 当前登录买家的等级折扣率（9.9 折 → 0.99）。
+     *
+     * 语义：user_levels.discount 是**买家会员价**折扣，仅在买家登录后看自己的价格时生效；
+     * 未登录访客 / 未配等级 / 等级被禁用一律返回 1.0（公开标价不打折）。
+     * 商户拿货成本与本折扣无关 —— 主站对商户始终按原价收。
+     *
+     * 整个请求级缓存：同一次请求里多次取价格只查一次 DB。
      */
-    private static function resolveMerchantDiscount(int $userId): float
+    public static function resolveBuyerDiscountRate(): float
     {
-        static $cache = [];
-        if (isset($cache[$userId])) return $cache[$userId];
+        static $cached = null;
+        if ($cached !== null) return $cached;
+
+        if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') {
+            @session_start();
+        }
+        $buyerId = (int) ($_SESSION['em_front_user']['id'] ?? 0);
+        if ($buyerId <= 0) return $cached = 1.0;
+
         $row = Database::fetchOne(
             'SELECT ul.`discount` AS d
                FROM `' . Database::prefix() . 'user` u
           LEFT JOIN `' . Database::prefix() . 'user_levels` ul ON ul.`id` = u.`level_id` AND ul.`enabled` = \'y\'
               WHERE u.`id` = ? LIMIT 1',
-            [$userId]
+            [$buyerId]
         );
         $raw = (int) ($row['d'] ?? 0);
-        if ($raw <= 0) return $cache[$userId] = 1.0;
-        $rate = ($raw / 1000000) / 10;
+        if ($raw <= 0) return $cached = 1.0;
+        $rate = ($raw / 1000000) / 10;        // 9.5 → 0.95
         if ($rate <= 0 || $rate > 1) $rate = 1.0;
-        return $cache[$userId] = $rate;
+        return $cached = $rate;
     }
 
     /**
@@ -492,14 +524,21 @@ class GoodsModel
     /**
      * 获取商品的所有规格（金额字段自动转换）。
      *
-     * 商户上下文下对引用商品的价格按店内售价重写：
-     *   price_raw       主站原价 × factor（下单时用，必须与详情页一致）
-     *   price/cost_price/market_price   视图小数价
-     * factor 来自 getById 返回的 _shop_price_factor；这里反查一次 goods 即可。
+     * 价格 factor 同 getById 的规则：
+     *   - 主站：factor = buyer_discount
+     *   - 商户站 主站引用商品：factor = (1+markup) × buyer_discount
+     *   - 商户站 自建商品：factor = buyer_discount
      *
-     * 每条 spec 还会挂 `_shop_markup_rate` 供 OrderModel 反推拿货价。
+     * 每条 spec 挂三个内部字段供 OrderModel 用：
+     *   _base_price_raw    —— 主站原始单价（BIGINT，未乘任何 factor），用于商户分账时算 cost_amount
+     *   price_raw          —— 应用 factor 后的单价（BIGINT），即买家最终成交价 × 1
+     *   _shop_markup_rate  —— 加价率（万分位），主要给前端展示用
+     *
+     * @param int $goodsId 商品 ID
+     * @param bool $applyFactor 是否应用价格 factor。后台编辑/库存场景应传 false，
+     *                          让 spec 价格按 DB 原值返回，避免编辑面板被买家折扣污染。
      */
-    public static function getSpecsByGoodsId($goodsId)
+    public static function getSpecsByGoodsId($goodsId, bool $applyFactor = true)
     {
         $specs = Database::query(
             "SELECT * FROM " . Database::prefix() . "goods_spec WHERE goods_id = ? AND status = 1 ORDER BY sort ASC, id ASC",
@@ -507,44 +546,51 @@ class GoodsModel
         );
         if ($specs === []) return $specs;
 
-        // 解析商户上下文的价格重写参数
-        $factor = 1.0;
+        // 解析价格 factor（详细规则同 getById）
+        // applyFactor=false 时直接置 1.0，让 DB 原值穿透返回（后台编辑面板需要这个）。
+        $buyerDiscount = $applyFactor ? self::resolveBuyerDiscountRate() : 1.0;
+        $factor = $buyerDiscount;
         $markup = 0;
+
         $merchantId = class_exists('MerchantContext') ? MerchantContext::currentId() : 0;
         if ($merchantId > 0) {
             $goods = Database::fetchOne(
                 'SELECT `owner_id` FROM `' . Database::prefix() . 'goods` WHERE `id` = ? LIMIT 1',
                 [(int) $goodsId]
             );
-            if ($goods !== null && (int) $goods['owner_id'] === 0) {
-                // 主站商品：折扣始终生效；加价率从覆盖行取，没覆盖行走商户默认值
+            $goodsOwner = $goods !== null ? (int) $goods['owner_id'] : 0;
+            $ownerUserId = MerchantContext::currentOwnerId();
+
+            if ($goodsOwner === 0) {
+                // 主站引用商品：先 markup 再买家折扣
                 $ref = Database::fetchOne(
                     'SELECT `markup_rate` FROM `' . Database::prefix() . 'goods_merchant_ref`
                       WHERE `merchant_id` = ? AND `goods_id` = ? LIMIT 1',
                     [$merchantId, (int) $goodsId]
                 );
                 $markup = $ref !== null ? (int) $ref['markup_rate'] : self::resolveMerchantDefaultMarkup($merchantId);
-                $ownerUserId = MerchantContext::currentOwnerId();
-                $discount = self::resolveMerchantDiscount($ownerUserId);
-                $factor = $discount * (1 + $markup / 10000);
+                $factor = $applyFactor ? (1 + $markup / 10000) * $buyerDiscount : 1.0;
+            } elseif ($ownerUserId > 0 && $goodsOwner === $ownerUserId) {
+                // 自建商品：仅买家折扣
+                $factor = $buyerDiscount;
             }
+            // 跨商户自建：getById 已返回 null，理论上 OrderModel 拿不到这里；做一次保护即可
         }
 
         foreach ($specs as &$spec) {
-            // 保留原始价格（BIGINT），供订单等内部使用
-            $spec['price_raw'] = (int) $spec['price'];
-            // 商户上下文下重写为店内价
+            // _base_price_raw 永远是主站原价（无任何调整），用于下单时算商户拿货 cost
+            $spec['_base_price_raw'] = (int) $spec['price'];
+            // price_raw 是应用 factor 后的成交价，下单时落 order_goods.price
+            $spec['price_raw'] = (int) round((int) $spec['price'] * $factor);
             if ($factor !== 1.0) {
-                $spec['price_raw'] = (int) round($spec['price_raw'] * $factor);
-                $spec['price'] = (int) round(((int) $spec['price']) * $factor);
+                $spec['price'] = (int) round((int) $spec['price'] * $factor);
                 if (isset($spec['cost_price'])) {
-                    $spec['cost_price'] = (int) round(((int) $spec['cost_price']) * $factor);
+                    $spec['cost_price'] = (int) round((int) $spec['cost_price'] * $factor);
                 }
                 if (isset($spec['market_price'])) {
-                    $spec['market_price'] = (int) round(((int) $spec['market_price']) * $factor);
+                    $spec['market_price'] = (int) round((int) $spec['market_price'] * $factor);
                 }
             }
-            // 快照信息留给 OrderModel 反推拿货价 / fee
             $spec['_shop_markup_rate'] = $markup;
             self::convertMoneyFields($spec, ['price', 'cost_price', 'market_price']);
         }

@@ -76,12 +76,9 @@ class RechargeController extends BaseController
             'trade_type'    => 'recharge',   // 标记这是充值单，插件可按需区分
         ];
 
-        $ctx = applyFilter('payment_create', [
-            'order'   => $pseudoOrder,
-            'payment' => $payment,
-            'pay_url' => '',
-        ]);
-        $payUrl = (string) ($ctx['pay_url'] ?? '');
+        // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
+        // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
+        $payUrl = PaymentService::createPayment($pseudoOrder, $payment);
         if ($payUrl === '') Response::error('支付方式未生成支付链接');
 
         Response::success('', [

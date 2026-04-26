@@ -125,6 +125,14 @@ var GuestFind = (function () {
 
     // 提交查单请求
     function submitFind(mode, data, $btn) {
+        // beforeSubmit：页面级钩子，可注入 captcha 等额外字段，
+        // 返回 false 表示前端校验未通过、终止提交（如未填验证码）
+        if (opts.beforeSubmit) {
+            var modified = opts.beforeSubmit(data, mode);
+            if (modified === false) return;
+            if (modified && typeof modified === 'object') data = modified;
+        }
+
         var origHtml = $btn.html();
         $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> 查询中...');
 
@@ -137,10 +145,13 @@ var GuestFind = (function () {
                     renderResults(res.data);
                 }
             } else {
+                // onError：让页面有机会在错误时刷新 captcha 等 UI 状态
+                if (opts.onError) opts.onError(res, mode);
                 layui.layer.msg(res.msg || '查询失败');
             }
         }, 'json').fail(function () {
             $btn.prop('disabled', false).html(origHtml);
+            if (opts.onError) opts.onError({code: 0, msg: '网络错误'}, mode);
             layui.layer.msg('网络错误');
         });
     }
@@ -153,7 +164,11 @@ var GuestFind = (function () {
             credentials: '#panelCredentials',
             orderno: '#panelOrderNo'
         };
+        // 单页 tab 切换（仅 button.find-order-tab 形式生效）。
+        // 查单独立页改成 a[data-pjax] 后由 PJAX 接管整个 #foContent 替换，
+        // 这里要主动跳过带 data-pjax 的链接，避免在 PJAX 加载途中错误地 hide 掉旧 panel。
         $doc.on('click.findGuestFind', '.find-order-tab', function () {
+            if ($(this).is('[data-pjax]')) return;
             var mode = $(this).data('mode');
             $('.find-order-tab').removeClass('active');
             $(this).addClass('active');

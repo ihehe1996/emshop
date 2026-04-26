@@ -84,7 +84,7 @@ $csrfToken = Csrf::token();
     {{# if (d.admin_remark) { }}
     <span style="color:#4b5563;">{{ d.admin_remark }}</span>
     {{# } else { }}
-    <span style="color:#d1d5db;">-</span>
+    <span style="color:#d1d5db;"></span>
     {{# } }}
 </script>
 
@@ -95,7 +95,7 @@ $csrfToken = Csrf::token();
         <div style="font-size:12.5px;">{{ t.substring(0,10) }}</div>
         <div style="font-size:11.5px;color:#999;">{{ t.substring(11,19) }}</div>
     </div>
-    {{# } else { }}<span style="color:#bbb;">-</span>{{# } }}
+    {{# } else { }}<span style="color:#bbb;"></span>{{# } }}
 </script>
 <script type="text/html" id="withdrawProcessedTpl">
     {{# if (d.processed_at) { var t = d.processed_at; }}
@@ -116,13 +116,17 @@ $csrfToken = Csrf::token();
         <a class="em-btn em-sm-btn em-green-btn" lay-event="paid"><i class="fa fa-money"></i>已打款</a>
         <a class="em-btn em-sm-btn em-red-btn" lay-event="reject"><i class="fa fa-times"></i>驳回</a>
     {{# } else { }}
-        <span style="color:#d1d5db;">—</span>
+        <span style="color:#d1d5db;"></span>
     {{# } }}
     </div>
 </script>
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admWithdraw handler，避免事件成倍触发
+    $(document).off('.admWithdraw');
+    $(window).off('.admWithdraw');
+
     'use strict';
     var csrfToken = <?= json_encode($csrfToken) ?>;
 
@@ -184,7 +188,7 @@ $(function () {
         // ============================================================
         // 状态选项卡：点击切换 currentStatus 并刷新
         // ============================================================
-        $(document).on('click', '#withdrawStatusTabs .em-tabs__item', function (e) {
+        $(document).on('click.admWithdraw', '#withdrawStatusTabs .em-tabs__item', function (e) {
             e.preventDefault();
             $('#withdrawStatusTabs .em-tabs__item').removeClass('is-active');
             $(this).addClass('is-active');
@@ -195,18 +199,18 @@ $(function () {
         // ============================================================
         // 快捷搜索：回车触发；清空按钮立即刷新
         // ============================================================
-        $(document).on('keypress', '#withdrawQuickSearch', function (e) {
+        $(document).on('keypress.admWithdraw', '#withdrawQuickSearch', function (e) {
             if (e.which !== 13) return;
             e.preventDefault();
             doReload();
         });
-        $(document).on('click', '#withdrawQuickClear', function () {
+        $(document).on('click.admWithdraw', '#withdrawQuickClear', function () {
             $('#withdrawQuickSearch').val('').focus();
             doReload();
         });
 
         // 刷新
-        $(document).on('click', '#withdrawRefreshBtn', function () {
+        $(document).on('click.admWithdraw', '#withdrawRefreshBtn', function () {
             table.reload('withdrawTableId');
         });
 

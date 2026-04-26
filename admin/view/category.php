@@ -91,6 +91,10 @@ $csrfToken = Csrf::token();
 <script>
 
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admCategory handler，避免事件成倍触发
+    $(document).off('.admCategory');
+    $(window).off('.admCategory');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -177,7 +181,7 @@ $(function(){
             });
 
             // 封面图点击预览
-            $(document).on('click', '[lay-event="previewImg"]', function () {
+            $(document).on('click.admCategory', '[lay-event="previewImg"]', function () {
                 var src = $(this).attr('src');
                 if (src) {
                     layer.photos({photos: {title: '', id: 0, start: 0, data: [{alt: '', pid: 0, src: src}]}, anim: 5});

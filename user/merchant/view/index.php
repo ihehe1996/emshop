@@ -12,7 +12,6 @@ $lv = $merchantLevel ?? [];
 
 // 菜单项可见性按等级开关
 $showSelfGoods = (int) ($lv['allow_self_goods'] ?? 0) === 1;
-$showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -33,9 +32,17 @@ $showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
 <!-- 顶部栏（对齐 /user/view/index.php 的 v2 样式：紫色 logo mark + 右侧用户下拉） -->
 <header class="uc-header uc-header--v2">
     <div class="uc-header-inner">
+        <?php
+        // 站点 Logo：与 test 模板 / 个人中心同款，图片优先文字兜底
+        $siteLogoType = (string) (Config::get('site_logo_type') ?? 'text');
+        $siteLogo     = (string) (Config::get('site_logo') ?? '');
+        ?>
         <a href="/" class="uc-header-logo">
-            <span class="uc-header-logo__mark"><i class="fa fa-cube"></i></span>
-            <?= htmlspecialchars($uc['siteName']) ?>
+            <?php if ($siteLogoType === 'image' && $siteLogo !== ''): ?>
+            <img src="<?= htmlspecialchars($siteLogo) ?>" alt="<?= htmlspecialchars($uc['siteName']) ?>" class="uc-header-logo__img">
+            <?php else: ?>
+            <span class="uc-header-logo__text"><?= htmlspecialchars($uc['siteName']) ?></span>
+            <?php endif; ?>
         </a>
         <span class="uc-header-title">
             <i class="fa fa-sitemap"></i> 商户后台
@@ -99,7 +106,7 @@ $showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
             <?php endif; ?>
             <div class="mc-shop-card__balance">
                 <span class="mc-shop-card__balance-label">店铺余额</span>
-                <span class="mc-shop-card__balance-value"><?= htmlspecialchars($uc['currencySymbol']) ?><?= $uc['shopBalance'] ?></span>
+                <span class="mc-shop-card__balance-value"><?= htmlspecialchars((string) $uc['shopBalance']) ?></span>
             </div>
         </div>
 
@@ -118,6 +125,20 @@ $showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
                 <i class="fa fa-file-text-o"></i><span>订单管理</span>
             </a>
 
+            <div class="uc-nav-title">内容</div>
+            <a href="/user/merchant/navi.php" data-pjax="#merchantContent" class="uc-nav-item">
+                <i class="fa fa-compass"></i><span>导航管理</span>
+            </a>
+            <a href="/user/merchant/blog_category.php" data-pjax="#merchantContent" class="uc-nav-item">
+                <i class="fa fa-folder-open"></i><span>文章分类</span>
+            </a>
+            <a href="/user/merchant/blog.php" data-pjax="#merchantContent" class="uc-nav-item">
+                <i class="fa fa-file-text"></i><span>文章管理</span>
+            </a>
+            <a href="/user/merchant/page.php" data-pjax="#merchantContent" class="uc-nav-item">
+                <i class="fa fa-file-o"></i><span>页面管理</span>
+            </a>
+
             <div class="uc-nav-title">财务</div>
             <a href="/user/merchant/finance.php" data-pjax="#merchantContent" class="uc-nav-item">
                 <i class="fa fa-list-alt"></i><span>余额明细</span>
@@ -125,13 +146,6 @@ $showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
             <a href="/user/merchant/withdraw.php" data-pjax="#merchantContent" class="uc-nav-item">
                 <i class="fa fa-credit-card"></i><span>店铺余额</span>
             </a>
-
-            <?php if ($showOwnPay): ?>
-            <div class="uc-nav-title">增值</div>
-            <a href="/user/merchant/payment.php" data-pjax="#merchantContent" class="uc-nav-item">
-                <i class="fa fa-money"></i><span>独立收款</span>
-            </a>
-            <?php endif; ?>
 
             <div class="uc-nav-title">扩展</div>
             <a href="/user/merchant/plugin.php" data-pjax="#merchantContent" class="uc-nav-item">

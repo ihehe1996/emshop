@@ -263,6 +263,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function () {
+    // PJAX 防重复绑定：清掉本页历史 .admAttach handler，避免事件成倍触发
+    $(document).off('.admAttach');
+    $(window).off('.admAttach');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -392,14 +396,14 @@ $(function () {
         }
 
         // 点击图片缩略图
-        $(document).on('click', '.attach-item__thumb', function (e) {
+        $(document).on('click.admAttach', '.attach-item__thumb', function (e) {
             e.stopPropagation();
             var idx = parseInt($(this).attr('data-img-index') || '-1', 10);
             if (idx >= 0) openViewer(idx);
         });
 
         // 点击"选中"圆圈 → toggle 选中态（不触发预览）
-        $(document).on('click', '.attach-item__check', function (e) {
+        $(document).on('click.admAttach', '.attach-item__check', function (e) {
             e.stopPropagation();
             var $item = $(this).closest('.attach-item');
             var id = $item.data('id');
@@ -413,7 +417,7 @@ $(function () {
         });
 
         // 复制链接
-        $(document).on('click', '.attach-action-btn--copy', function (e) {
+        $(document).on('click.admAttach', '.attach-action-btn--copy', function (e) {
             e.stopPropagation();
             var url = $(this).closest('.attach-item').data('url');
             var fullUrl = window.location.protocol + '//' + window.location.host + url;
@@ -438,7 +442,7 @@ $(function () {
         }
 
         // 删除单个
-        $(document).on('click', '.attach-action-btn--del', function (e) {
+        $(document).on('click.admAttach', '.attach-action-btn--del', function (e) {
             e.stopPropagation();
             var $item = $(this).closest('.attach-item');
             var id = $item.data('id');

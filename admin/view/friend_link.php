@@ -88,6 +88,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admFriendLink handler，避免事件成倍触发
+    $(document).off('.admFriendLink');
+    $(window).off('.admFriendLink');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -152,16 +156,16 @@ $(function(){
                 where: { _action: 'list', keyword: $.trim($('#linkSearchKeyword').val() || '') }
             });
         }
-        $(document).on('keypress', '#linkSearchKeyword', function (e) {
+        $(document).on('keypress.admFriendLink', '#linkSearchKeyword', function (e) {
             if (e.which === 13) { e.preventDefault(); doQuickSearch(); }
         });
-        $(document).on('click', '#linkQuickClear', function () {
+        $(document).on('click.admFriendLink', '#linkQuickClear', function () {
             $('#linkSearchKeyword').val('').focus();
             doQuickSearch();
         });
 
         // 刷新
-        $(document).on('click', '#linkRefreshBtn', function () {
+        $(document).on('click.admFriendLink', '#linkRefreshBtn', function () {
             table.reload('linkTableId');
         });
 

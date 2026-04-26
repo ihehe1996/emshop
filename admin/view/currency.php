@@ -137,6 +137,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admCurrency handler，避免事件成倍触发
+    $(document).off('.admCurrency');
+    $(window).off('.admCurrency');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -188,7 +192,7 @@ $(function(){
         });
 
         // 刷新
-        $(document).on('click', '#currencyRefreshBtn', function () {
+        $(document).on('click.admCurrency', '#currencyRefreshBtn', function () {
             table.reload('currencyTableId');
         });
 

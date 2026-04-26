@@ -123,6 +123,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admBlog handler，避免事件成倍触发
+    $(document).off('.admBlog');
+    $(window).off('.admBlog');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -242,7 +246,7 @@ $(function(){
         // ============================================================
         // 搜索 / 重置 / 刷新
         // ============================================================
-        $(document).on('click', '#blogSearchBtn', function () {
+        $(document).on('click.admBlog', '#blogSearchBtn', function () {
             table.reload('blogTableId', {
                 where: {
                     keyword: $('#blogSearchKeyword').val() || '',
@@ -253,7 +257,7 @@ $(function(){
             });
         });
 
-        $(document).on('click', '#blogResetBtn', function () {
+        $(document).on('click.admBlog', '#blogResetBtn', function () {
             $('#blogSearchKeyword').val('');
             $('#blogSearchCategory').val('');
             table.reload('blogTableId', {
@@ -262,12 +266,12 @@ $(function(){
             });
         });
 
-        $(document).on('click', '#blogRefreshBtn', function () {
+        $(document).on('click.admBlog', '#blogRefreshBtn', function () {
             table.reload('blogTableId');
         });
 
         // 封面图点击：Viewer.js 预览（全局已加载）
-        $(document).on('click', '.blog-cover-img', function () {
+        $(document).on('click.admBlog', '.blog-cover-img', function () {
             var src = $(this).attr('src');
             if (!src) return;
             var $tmp = $('<div style="display:none;"><img src="' + src + '"></div>').appendTo('body');

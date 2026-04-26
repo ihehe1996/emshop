@@ -66,6 +66,10 @@ $avatarUrl = !empty($userFull['avatar']) ? $esc((string) $userFull['avatar']) : 
 <script>
 
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admProfile handler，避免事件成倍触发
+    $(document).off('.admProfile');
+    $(window).off('.admProfile');
+
 
     layui.use(['layer', 'upload'], function () {
         var layer = layui.layer;
@@ -511,7 +515,7 @@ $(function(){
         });
 
         // 头像点击弹出大图
-        $(document).on('click', '#profileAvatarPreview', function () {
+        $(document).on('click.admProfile', '#profileAvatarPreview', function () {
             layer.photos({
                 photos: {
                     title: '',

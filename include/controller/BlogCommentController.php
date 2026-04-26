@@ -50,6 +50,13 @@ class BlogCommentController extends BaseController
             return;
         }
 
+        // 验证文章属于当前 scope
+        $blog = BlogModel::getByIdForScope($blogId, MerchantContext::currentId());
+        if (!$blog) {
+            Response::error('文章不存在');
+            return;
+        }
+
         $result = BlogCommentModel::getTopComments($blogId, $page, $limit, $sort);
 
         // 为每条顶级评论加载前3条回复
@@ -99,6 +106,12 @@ class BlogCommentController extends BaseController
 
         if ($blogId <= 0) {
             Response::error('参数错误');
+            return;
+        }
+        // 必须给当前 scope 的文章发评论
+        $blog = BlogModel::getByIdForScope($blogId, MerchantContext::currentId());
+        if (!$blog) {
+            Response::error('文章不存在');
             return;
         }
         if ($content === '') {

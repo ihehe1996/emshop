@@ -18,6 +18,8 @@ require_once __DIR__ . '/global_public.php';
  */
 
 $siteName = Config::get('sitename', 'EMSHOP');
+$siteLogoType = (string) (Config::get('site_logo_type') ?? 'text');
+$siteLogo     = (string) (Config::get('site_logo') ?? '');
 // 访客当前展示币种符号；下方 JS 里用它拼金额
 $currencySymbol = Currency::visitorSymbol();
 
@@ -90,13 +92,52 @@ if (Request::isPost()) {
     header('Content-Type: application/json; charset=utf-8');
 
     $mode = (string) Input::post('mode', '');
+    $action = (string) Input::post('action', '');
+
+    // —— 子动作：刷新算术验证码（用户点"换一题"时调用）
+    // 不计入限流（仅签发新题，不查订单）
+    if ($action === 'refresh_captcha') {
+        echo json_encode([
+            'code' => 200,
+            'data' => ['expr' => Captcha::issue('find_order')],
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     $orderNo = trim((string) Input::post('order_no', ''));
     $guestTokenPost = trim((string) Input::post('guest_token', ''));
     $contactQuery = trim((string) Input::post('contact_query', ''));
     $orderPassword = trim((string) Input::post('order_password', ''));
+    $captchaInput = trim((string) Input::post('captcha', ''));
 
     try {
         $result = [];
+
+        // —— credentials / orderno 模式必须过两层防护：
+        //   1) IP 限流（撞库的真正防线）：每分钟 ≤ 10 次
+        //   2) 算术 captcha（人类友好门槛，过滤无脑脚本）
+        // token 模式跳过：浏览器 cookie 里的 guest_token 等同于已认证身份，自身就是凭据
+        if ($mode === 'credentials' || $mode === 'orderno') {
+            $rlKey = 'find_order:' . RateLimit::clientIp();
+            if (RateLimit::tooManyAttempts($rlKey, 10)) {
+                $wait = RateLimit::availableIn($rlKey);
+                // 限流命中也刷新一次 captcha，避免攻击者用同一个答案做 retry burst
+                Captcha::issue('find_order');
+                throw new RuntimeException("请求过于频繁，请 {$wait} 秒后再试");
+            }
+            // 先记 hit（即使 captcha 错也算一次，这样答错+重试也吃配额，逼着攻击者降速）
+            RateLimit::hit($rlKey, 60);
+
+            if (!Captcha::verify($captchaInput, 'find_order')) {
+                // 答错时返回一道新题，前端要刷新显示
+                echo json_encode([
+                    'code' => 400,
+                    'msg' => '验证码错误，请重试',
+                    'data' => ['captcha_expr' => Captcha::issue('find_order')],
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        }
 
         if ($mode === 'token') {
             // —— tab1：通过浏览器 guest_token 列近 10 单
@@ -168,10 +209,31 @@ if (Request::isPost()) {
             throw new RuntimeException('无效的查询方式');
         }
 
+        // 查询成功：把命中订单号加入 session"已授权可看详情"白名单。
+        // 详情页 GET ?order_no=xxx 必须命中白名单才能访问，避免攻击者绕过 POST 路径上的
+        // captcha + ratelimit，直接遍历订单号偷数据。
+        if (session_status() === PHP_SESSION_NONE) @session_start();
+        $visible = $_SESSION['em_find_order_visible'] ?? [];
+        foreach ($result as $r) {
+            $no = (string) ($r['order_no'] ?? '');
+            if ($no !== '') $visible[$no] = time();
+        }
+        // 防 session 无限膨胀：保留 7 天内访问过的，过期的清掉
+        $cutoff = time() - 7 * 86400;
+        foreach ($visible as $no => $t) {
+            if ($t < $cutoff) unset($visible[$no]);
+        }
+        $_SESSION['em_find_order_visible'] = $visible;
+
         echo json_encode(['code' => 200, 'data' => $result], JSON_UNESCAPED_UNICODE);
         exit;
     } catch (Throwable $e) {
-        echo json_encode(['code' => 400, 'msg' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        // 失败时给 captcha 模式补发一道新题（已 consume，不发新的会让用户误以为还能用旧值）
+        $errPayload = ['code' => 400, 'msg' => $e->getMessage()];
+        if ($mode === 'credentials' || $mode === 'orderno') {
+            $errPayload['data'] = ['captcha_expr' => Captcha::issue('find_order')];
+        }
+        echo json_encode($errPayload, JSON_UNESCAPED_UNICODE);
         exit;
     }
 }
@@ -181,19 +243,53 @@ if (Request::isPost()) {
 $guestToken = GuestToken::get();
 $esc = fn (string $s): string => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
 
+// 当前 tab：?tab=token / credentials / orderno；缺省 = token（浏览器订单）
+// 走 URL 参数而不是单页 tab，是为了让"刷新页面"能停在用户当前所在的查询方式，
+// 同时配合 PJAX 切 tab 不整页刷新
+$validTabs = ['token', 'credentials', 'orderno'];
+$currentTab = (string) Input::get('tab', 'token');
+if (!in_array($currentTab, $validTabs, true)) $currentTab = 'token';
+
+// credentials/orderno tab 没在配置开启时降级到 token
+$contactOn = !empty($gfConfig['contact_enabled']);
+$passwordOn = !empty($gfConfig['password_enabled']);
+if (($currentTab === 'credentials' || $currentTab === 'orderno') && !$contactOn && !$passwordOn) {
+    $currentTab = 'token';
+}
+
+// 初始 captcha：只有进入 credentials/orderno 时才签发，token tab 不要 captcha
+// 注意：每次页面渲染（含 PJAX 切 tab）都会重新签发，自然替换旧题
+$captchaExpr = '';
+if ($currentTab === 'credentials' || $currentTab === 'orderno') {
+    $captchaExpr = Captcha::issue('find_order');
+}
+
 // GET ?order_no=xxx → 渲染单订单详情（游客场景，无侧边栏）
-// 与 mode=orderno 一致：仅凭订单号即可查看，不做额外鉴权（遵循现有设计）
+// 安全约束：必须先经过 POST 查询（受 captcha + ratelimit 保护）拿到这个订单号，
+// 才会被写入 session 白名单，详情页才允许显示。
+// 直接拼链接访问 / 复制别人的订单号 → 白名单不命中 → 走拒绝分支，
+// 拒绝时不区分"订单不存在"和"订单存在但你无权看"，避免被用作存在性探测。
 $detailOrder = null;
 $detailGoods = [];
+$detailDenied = false;
 $detailOrderNo = trim((string) Input::get('order_no', ''));
 if ($detailOrderNo !== '') {
-    $row = Database::fetchOne(
-        "SELECT * FROM {$prefix}order WHERE order_no = ? LIMIT 1",
-        [$detailOrderNo]
-    );
-    if ($row) {
-        $detailOrder = $sanitizeOrder($row);
-        $detailGoods = $detailOrder['order_goods'] ?? [];
+    if (session_status() === PHP_SESSION_NONE) @session_start();
+    $visible = $_SESSION['em_find_order_visible'] ?? [];
+    if (!isset($visible[$detailOrderNo])) {
+        $detailDenied = true;
+    } else {
+        $row = Database::fetchOne(
+            "SELECT * FROM {$prefix}order WHERE order_no = ? LIMIT 1",
+            [$detailOrderNo]
+        );
+        if ($row) {
+            $detailOrder = $sanitizeOrder($row);
+            $detailGoods = $detailOrder['order_goods'] ?? [];
+        } else {
+            // 白名单写入后订单又被删除的边角情况：也走拒绝分支，对外表现一致
+            $detailDenied = true;
+        }
     }
 }
 
@@ -231,8 +327,11 @@ $statusMap = [
 <header class="fo-header">
     <div class="fo-header-inner">
         <a href="/" class="fo-header-logo">
-            <span class="fo-header-logo__mark"><i class="fa fa-cube"></i></span>
-            <?= $esc($siteName) ?>
+            <?php if ($siteLogoType === 'image' && $siteLogo !== ''): ?>
+            <img src="<?= $esc($siteLogo) ?>" alt="<?= $esc($siteName) ?>" class="fo-header-logo__img">
+            <?php else: ?>
+            <span class="fo-header-logo__text"><?= $esc($siteName) ?></span>
+            <?php endif; ?>
         </a>
         <span class="fo-header-title"><i class="fa fa-search"></i> 订单查询</span>
         <div class="fo-header-right">
@@ -357,19 +456,37 @@ $statusMap = [
         </div>
         <?php endif; ?>
     </div>
-<?php elseif ($detailOrderNo !== ''): ?>
-    <!-- 非法 order_no：显示错误 -->
+<?php elseif ($detailDenied): ?>
+    <!-- 拒绝直链访问：订单存在性故意不暴露，统一文案引导走查询入口 -->
     <div class="fo-card fo-detail">
         <div class="fo-detail__header">
-            <div class="fo-detail__title"><i class="fa fa-exclamation-triangle"></i> 订单不存在</div>
-            <a href="/user/find_order.php" data-pjax class="fo-detail__back"><i class="fa fa-angle-left"></i> 返回查单</a>
+            <div class="fo-detail__title"><i class="fa fa-lock"></i> 无法直接访问订单详情</div>
+            <a href="/user/find_order.php" data-pjax class="fo-detail__back"><i class="fa fa-angle-left"></i> 去查询</a>
         </div>
-        <p style="padding:20px;text-align:center;color:#9ca3af;">没有找到编号为 <code><?= $esc($detailOrderNo) ?></code> 的订单。</p>
+        <div style="padding:24px 28px;color:#475569;line-height:1.8;">
+            <p style="margin-bottom:8px;">为保护买家隐私，订单详情不能通过链接直接打开。</p>
+            <p style="color:#94a3b8;font-size:13px;">请回到查单页，使用浏览器订单 / 联系方式 / 订单密码 / 订单编号 任一种方式查询，从结果中点击「查看详情」即可正常查看。</p>
+        </div>
+    </div>
+<?php elseif ($detailOrderNo !== ''): ?>
+    <!-- 兜底（白名单命中但订单已被硬删等极端情况）—— 文案与 detailDenied 保持一致 -->
+    <div class="fo-card fo-detail">
+        <div class="fo-detail__header">
+            <div class="fo-detail__title"><i class="fa fa-lock"></i> 无法直接访问订单详情</div>
+            <a href="/user/find_order.php" data-pjax class="fo-detail__back"><i class="fa fa-angle-left"></i> 去查询</a>
+        </div>
+        <div style="padding:24px 28px;color:#475569;line-height:1.8;">
+            <p style="margin-bottom:8px;">订单不存在或已被删除。</p>
+            <p style="color:#94a3b8;font-size:13px;">请回到查单页重新查询。</p>
+        </div>
     </div>
 <?php else: ?>
-    <!-- 查单列表（默认） -->
+    <!-- 查单列表（默认）：hero 标题 + 三 tab 查询面板 -->
     <div class="fo-card">
-        <div class="fo-title">查询订单</div>
+        <div class="fo-hero">
+            <div class="fo-hero__title">订单查询</div>
+            <div class="fo-hero__sub">输入订单号或联系方式查看订单状态</div>
+        </div>
         <?php include __DIR__ . '/view/find_order.php'; ?>
     </div>
 <?php endif; ?>

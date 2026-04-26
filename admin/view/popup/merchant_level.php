@@ -135,13 +135,6 @@ include __DIR__ . '/header.php';
                         </div>
                         <div class="layui-form-mid layui-word-aux">允许商户自行上架商品</div>
                     </div>
-                    <div class="layui-form-item">
-                        <label class="layui-form-label">独立收款</label>
-                        <div class="layui-input-block">
-                            <input type="checkbox" name="allow_own_pay" lay-skin="switch" lay-text="允许|禁用" value="1" <?= $chk('allow_own_pay') ?>>
-                        </div>
-                        <div class="layui-form-mid layui-word-aux">允许商户安装支付插件（仅对自建商品生效）</div>
-                    </div>
                 </div>
             </div>
 
@@ -196,7 +189,7 @@ $(function () {
             // 处理未勾选的 checkbox —— 默认 form.serialize() 不会提交未勾选项
             var data = $('#mlForm').serializeArray();
             var switches = ['allow_subdomain','allow_custom_domain',
-                            'allow_self_goods','allow_own_pay','is_enabled'];
+                            'allow_self_goods','is_enabled'];
             var present = {};
             $.each(data, function (_, it) { present[it.name] = true; });
             $.each(switches, function (_, key) {

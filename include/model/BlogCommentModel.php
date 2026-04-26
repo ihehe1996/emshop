@@ -188,9 +188,9 @@ class BlogCommentModel
     }
 
     /**
-     * 后台评论列表（分页 + 筛选）
+     * 后台评论列表（分页 + 筛选）。评论按其归属博客的 merchant_id 隔离。
      *
-     * @param array  $where  筛选条件：blog_id / status / keyword
+     * @param array  $where  筛选条件：blog_id / status / keyword / merchant_id
      * @param int    $page   页码
      * @param int    $limit  每页条数
      * @return array{total:int, page:int, limit:int, list:array}
@@ -201,6 +201,11 @@ class BlogCommentModel
         $conditions = ['c.deleted_at IS NULL'];
         $params = [];
 
+        // merchant_id 过滤：通过 blog 表 JOIN 实现
+        if (array_key_exists('merchant_id', $where)) {
+            $conditions[] = 'b.merchant_id = ?';
+            $params[] = (int) $where['merchant_id'];
+        }
         if (isset($where['status']) && $where['status'] !== '') {
             $conditions[] = 'c.status = ?';
             $params[] = (int) $where['status'];
@@ -217,7 +222,10 @@ class BlogCommentModel
         $whereSql = 'WHERE ' . implode(' AND ', $conditions);
 
         $total = Database::fetchOne(
-            "SELECT COUNT(*) as count FROM {$prefix}blog_comment c {$whereSql}",
+            "SELECT COUNT(*) as count
+             FROM {$prefix}blog_comment c
+             LEFT JOIN {$prefix}blog b ON c.blog_id = b.id
+             {$whereSql}",
             $params
         );
         $totalCount = (int) ($total['count'] ?? 0);
@@ -242,16 +250,20 @@ class BlogCommentModel
     }
 
     /**
-     * 按状态统计评论数量
+     * 按状态统计评论数量（限定 merchant_id 范围）
      *
      * @return array{all:int, pending:int, approved:int, rejected:int}
      */
-    public static function getStatusCounts(): array
+    public static function getStatusCounts(int $merchantId = 0): array
     {
         $prefix = Database::prefix();
         $rows = Database::query(
-            "SELECT status, COUNT(*) as cnt FROM {$prefix}blog_comment
-             WHERE deleted_at IS NULL GROUP BY status"
+            "SELECT c.status, COUNT(*) as cnt
+             FROM {$prefix}blog_comment c
+             LEFT JOIN {$prefix}blog b ON c.blog_id = b.id
+             WHERE c.deleted_at IS NULL AND b.merchant_id = ?
+             GROUP BY c.status",
+            [$merchantId]
         );
         $map = [];
         foreach ($rows as $r) {

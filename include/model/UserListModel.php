@@ -46,23 +46,27 @@ final class UserListModel
         $countRow = Database::fetchOne($countSql, $params);
         $total = $countRow !== null ? (int) $countRow['cnt'] : 0;
 
-        // 数据（左连商户 + 等级，获取店铺名/等级名用于列表展示）
+        // 数据（左连商户 + 商户等级 + 用户等级；用户等级影响买家折扣）
         $merchantTable = Database::prefix() . 'merchant';
-        $levelTable = Database::prefix() . 'merchant_level';
+        $merchantLevelTable = Database::prefix() . 'merchant_level';
+        $userLevelTable = Database::prefix() . 'user_levels';
         $sql = sprintf(
             'SELECT u.`id`, u.`username`, u.`email`, u.`mobile`, u.`nickname`, u.`avatar`, u.`money`,
-                    u.`role`, u.`status`, u.`last_login_ip`, u.`last_login_at`, u.`created_at`,
+                    u.`role`, u.`status`, u.`level_id`, u.`last_login_ip`, u.`last_login_at`, u.`created_at`,
                     m.`id` AS merchant_id, m.`name` AS merchant_name,
-                    l.`name` AS merchant_level_name
+                    ml.`name` AS merchant_level_name,
+                    ul.`name` AS user_level_name
              FROM `%s` u
              LEFT JOIN `%s` m ON m.`user_id` = u.`id` AND m.`deleted_at` IS NULL
-             LEFT JOIN `%s` l ON l.`id` = m.`level_id`
+             LEFT JOIN `%s` ml ON ml.`id` = m.`level_id`
+             LEFT JOIN `%s` ul ON ul.`id` = u.`level_id` AND ul.`enabled` = \'y\'
              WHERE %s
              ORDER BY u.`id` DESC
              LIMIT %d OFFSET %d',
             $this->table,
             $merchantTable,
-            $levelTable,
+            $merchantLevelTable,
+            $userLevelTable,
             $where,
             $limit,
             $offset
@@ -82,7 +86,7 @@ final class UserListModel
     {
         $sql = sprintf(
             'SELECT `id`, `username`, `email`, `mobile`, `nickname`, `avatar`, `money`, `secret`, `role`, `status`,
-                    `merchant_id`, `shop_balance`,
+                    `merchant_id`, `shop_balance`, `level_id`,
                     `last_login_ip`, `last_login_at`, `created_at`
              FROM `%s`
              WHERE `id` = ? AND `role` = \'user\' LIMIT 1',
@@ -165,7 +169,7 @@ final class UserListModel
      */
     public function update(int $id, array $data): bool
     {
-        $fields = ['nickname', 'email', 'mobile', 'avatar', 'status', 'secret'];
+        $fields = ['nickname', 'email', 'mobile', 'avatar', 'status', 'secret', 'level_id'];
 
         $sets = [];
         $params = [];
@@ -243,10 +247,10 @@ final class UserListModel
      */
     public function create(array $data): int
     {
-        // 可写字段白名单；推广返佣相关字段也允许在注册时一次性写入
+        // 可写字段白名单；推广返佣 + 用户等级也允许在注册时一次性写入
         $fields = [
             'username', 'password', 'email', 'mobile', 'nickname', 'avatar', 'status',
-            'invite_code', 'inviter_l1', 'inviter_l2',
+            'invite_code', 'inviter_l1', 'inviter_l2', 'level_id',
         ];
 
         $cols = [];

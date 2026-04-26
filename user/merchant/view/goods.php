@@ -176,7 +176,6 @@ $csrfToken = Csrf::token();
 <script type="text/html" id="mcRefTitleTpl">
     <div style="text-align:left;line-height:1.4;">
         <div style="font-weight:500;">{{ d.title }}</div>
-        <div style="color:#9ca3af;font-size:12px;">{{ d.code || '-' }}</div>
     </div>
 </script>
 
@@ -235,7 +234,6 @@ $csrfToken = Csrf::token();
 <script type="text/html" id="mcSelfActionTpl">
     <a class="layui-btn layui-btn-sm" lay-event="edit"><i class="fa fa-pencil"></i> 编辑</a>
     <a class="layui-btn layui-btn-sm layui-btn-normal" lay-event="stock"><i class="fa fa-cube"></i> 库存</a>
-    <a class="layui-btn layui-btn-sm layui-btn-warm" lay-event="clone"><i class="fa fa-copy"></i> 克隆</a>
     <a class="layui-btn layui-btn-sm layui-btn-danger" lay-event="del"><i class="fa fa-trash"></i> 删除</a>
 </script>
 
@@ -252,6 +250,9 @@ $(function(){
     'use strict';
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
 
+    // PJAX 防重复绑定：清掉历史 .mcGoodsPage handler，下面所有 $(document).on 都带这个命名空间
+    $(document).off('.mcGoodsPage');
+
     layui.use(['layer', 'form', 'table', 'element'], function () {
         var layer = layui.layer;
         var form = layui.form;
@@ -261,7 +262,7 @@ $(function(){
         form.render('select');
 
         // Tab 切换（不刷新页面）
-        $(document).on('click', '.mc-goods-tab', function () {
+        $(document).on('click.mcGoodsPage', '.mc-goods-tab', function () {
             var tab = $(this).data('tab');
             $('.mc-goods-tab').removeClass('is-active');
             $(this).addClass('is-active');
@@ -290,26 +291,17 @@ $(function(){
                 cols: [[
                     {title: '图', width: 60, templet: '#mcRefCoverTpl', align: 'center'},
                     {field: 'title', title: '商品', minWidth: 220, templet: '#mcRefTitleTpl'},
-                    {title: '主站原价', minWidth: 110, templet: '#mcRefBaseTpl', align: 'right'},
-                    {title: '拿货价', minWidth: 110, templet: '#mcRefCostTpl', align: 'right'},
                     {field: 'markup_rate', title: '加价率', minWidth: 90, templet: '#mcRefMarkupTpl', align: 'center'},
-                    {title: '本店售价', minWidth: 120, templet: '#mcRefSellTpl', align: 'right'},
                     {title: '推荐', width: 120, templet: '#mcRefRecTpl', align: 'center'},
                     {title: '状态', width: 100, templet: '#mcRefSaleTpl', align: 'center'},
                     {title: '操作', width: 190, templet: '#mcRefActionTpl', align: 'center'}
                 ]],
                 parseData: function (res) {
                     if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
-                    // 折扣率提示
-                    if (res.data && res.data.discount_rate != null) {
-                        var r = res.data.discount_rate;
-                        var pct = ((1 - r) * 100).toFixed(2).replace(/\.?0+$/, '');
-                        $('#mcRefDiscountTip').html(
-                            r >= 1
-                                ? '<i class="fa fa-info-circle"></i> 当前商户主用户等级未设置或无折扣，拿货价 = 主站原价（无折扣）'
-                                : '<i class="fa fa-info-circle"></i> 当前商户主用户等级享受 <strong>' + pct + '%</strong> 拿货折扣，公式：拿货价 = 主站原价 × ' + r.toFixed(4) + '，店内售价 = 拿货价 × (1 + 加价率)'
-                        );
-                    }
+                    // 拿货成本 / 加价率提示（v1.3+：商户拿货统一按主站原价；不再有"店主等级折扣"）
+                    $('#mcRefDiscountTip').html(
+                        '<i class="fa fa-info-circle"></i> 拿货成本 = 主站原价（无折扣）；店内售价 = 主站原价 × (1 + 本店加价率)'
+                    );
                     return {
                         'code': res.code === 200 ? 0 : res.code,
                         'msg': res.msg,
@@ -326,11 +318,11 @@ $(function(){
                 is_on_sale: $('#mcRefStatus').val() || ''
             };
         }
-        $(document).on('click', '#mcRefSearchBtn', function () {
+        $(document).on('click.mcGoodsPage', '#mcRefSearchBtn', function () {
             if (!refLoaded) renderRef();
             else table.reload('mcRefTableId', {page: {curr: 1}, where: refWhere()});
         });
-        $(document).on('click', '#mcRefResetBtn', function () {
+        $(document).on('click.mcGoodsPage', '#mcRefResetBtn', function () {
             $('#mcRefKeyword').val('');
             $('#mcRefStatus').val(''); form.render('select');
             if (!refLoaded) renderRef();
@@ -419,18 +411,17 @@ $(function(){
                 limit: 20,
                 lineStyle: 'height: 55px;',
                 cols: [[
-                    {type: 'checkbox', fixed: 'left'},
-                    {field: 'id', title: 'ID', width: 70, align: 'center'},
+                    {type: 'checkbox'},
                     {field: 'title', title: '商品', minWidth: 260, templet: function (d) {
                         return '<div style="text-align:left;line-height:1.4;">'
-                             + '<div style="font-weight:500;">' + d.title + '</div>'
-                             + '<div style="color:#9ca3af;font-size:12px;">' + (d.code || '-') + '</div></div>';
+                             + '<div style="font-weight:500;">' + d.title + '</div></div>';
                     }},
                     {title: '价格', minWidth: 120, templet: '#mcSelfPriceTpl', align: 'right'},
-                    {field: 'goods_type', title: '类型', minWidth: 100, align: 'center'},
+                    {field: 'type_label', title: '类型', minWidth: 100, align: 'center'},
+                    {field: 'total_stock', title: '库存', width: 80, align: 'center'},
                     {field: 'total_sales', title: '销量', width: 80, align: 'center'},
                     {title: '状态', width: 100, templet: '#mcSelfSaleTpl', align: 'center'},
-                    {title: '操作', width: 320, templet: '#mcSelfActionTpl', align: 'center'}
+                    {title: '操作', width: 250, templet: '#mcSelfActionTpl', align: 'center'}
                 ]],
                 parseData: function (res) {
                     if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
@@ -450,11 +441,11 @@ $(function(){
                 is_on_sale: $('#mcSelfStatus').val() || ''
             };
         }
-        $(document).on('click', '#mcSelfSearchBtn', function () {
+        $(document).on('click.mcGoodsPage', '#mcSelfSearchBtn', function () {
             if (!selfLoaded) renderSelf();
             else table.reload('mcSelfTableId', {page: {curr: 1}, where: selfWhere()});
         });
-        $(document).on('click', '#mcSelfResetBtn', function () {
+        $(document).on('click.mcGoodsPage', '#mcSelfResetBtn', function () {
             $('#mcSelfKeyword').val('');
             $('#mcSelfStatus').val(''); form.render('select');
             if (!selfLoaded) renderSelf();
@@ -486,7 +477,9 @@ $(function(){
         });
 
         // 打开自建商品新建/编辑 iframe 弹窗（id=0 为新建）
+        // 弹窗内提交成功会写 window._mcSelfSaved = true；这里在关闭时检测并 reload 表格
         function openSelfEditPopup(id) {
+            window._mcSelfSaved = false;
             var url = '/user/merchant/goods.php?_popup=self_edit' + (id ? '&id=' + id : '');
             layer.open({
                 type: 2,
@@ -495,12 +488,23 @@ $(function(){
                 area: [window.innerWidth >= 960 ? '780px' : '94%', window.innerHeight >= 720 ? '640px' : '88%'],
                 shadeClose: false,
                 maxmin: true,
-                content: url
+                content: url,
+                end: function () {
+                    if (window._mcSelfSaved) {
+                        window._mcSelfSaved = false;
+                        if (selfLoaded) {
+                            table.reload('mcSelfTableId');
+                            refreshBatchBar();
+                        } else {
+                            renderSelf();
+                        }
+                    }
+                }
             });
         }
 
         // "新建商品" 按钮
-        $(document).on('click', '#mcSelfAddBtn', function () {
+        $(document).on('click.mcGoodsPage', '#mcSelfAddBtn', function () {
             openSelfEditPopup(0);
         });
 
@@ -527,7 +531,7 @@ $(function(){
         table.on('checkbox(mcSelfTable)', refreshBatchBar);
 
         // 批量按钮
-        $(document).on('click', '#mcSelfBatchBar [data-batch]', function () {
+        $(document).on('click.mcGoodsPage', '#mcSelfBatchBar [data-batch]', function () {
             var action = $(this).data('batch');
             var sel = table.checkStatus('mcSelfTableId');
             if (!sel || !sel.data || !sel.data.length) { layer.msg('请先勾选商品'); return; }
@@ -552,7 +556,7 @@ $(function(){
                 layer.confirm(confirmText, function (idx) { layer.close(idx); run(); });
             } else { run(); }
         });
-        $(document).on('click', '#mcSelfBatchClear', function () {
+        $(document).on('click.mcGoodsPage', '#mcSelfBatchClear', function () {
             // layui table 没有直接的 clear 方法，这里通过 reload 整表来清空勾选
             table.reload('mcSelfTableId');
             refreshBatchBar();

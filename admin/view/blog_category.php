@@ -63,6 +63,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admBlogCat handler，避免事件成倍触发
+    $(document).off('.admBlogCat');
+    $(window).off('.admBlogCat');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -137,7 +141,7 @@ $(function(){
         });
 
         // 搜索
-        $(document).on('click', '#catSearchBtn', function () {
+        $(document).on('click.admBlogCat', '#catSearchBtn', function () {
             treeTable.reloadData('catTableId', {
                 where: {
                     _action: 'list',
@@ -147,7 +151,7 @@ $(function(){
         });
 
         // 重置
-        $(document).on('click', '#catResetBtn', function () {
+        $(document).on('click.admBlogCat', '#catResetBtn', function () {
             $('#catSearchKeyword').val('');
             treeTable.reloadData('catTableId', {
                 where: {
@@ -158,13 +162,13 @@ $(function(){
         });
 
         // 刷新按钮
-        $(document).on('click', '#catRefreshBtn', function () {
+        $(document).on('click.admBlogCat', '#catRefreshBtn', function () {
             treeTable.reloadData('catTableId');
         });
 
         // 全部展开/折叠
         var treeExpanded = true;
-        $(document).on('click', '#catToggleBtn', function () {
+        $(document).on('click.admBlogCat', '#catToggleBtn', function () {
             treeExpanded = !treeExpanded;
             treeTable.expandAll('catTableId', treeExpanded);
             var $btn = $('#catToggleBtn');
@@ -195,7 +199,7 @@ $(function(){
         });
 
         // 批量删除
-        $(document).on('click', '#catBatchDelBtn', function () {
+        $(document).on('click.admBlogCat', '#catBatchDelBtn', function () {
             if ($(this).hasClass('em-disabled-btn')) return;
             var st = treeTable.checkStatus('catTableId');
             var rows = (st && st.data) ? st.data : [];

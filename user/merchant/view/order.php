@@ -7,25 +7,28 @@ $csrfToken = Csrf::token();
 <div class="mc-page">
     <div class="mc-page-header">
         <h2 class="mc-page-title">订单管理</h2>
-        <p class="mc-page-desc">只读视图：订单状态由主站维护，这里可查看每项的拿货价 / 手续费快照与净收入</p>
+        <p class="mc-page-desc">本店订单的发货、详情查看；金额按买家下单时的快照币种展示，不受访客切币种影响</p>
     </div>
 
-    <!-- 状态筛选 tabs（参考 /user/order.php：卡片式胶囊按钮 + 计数徽章） -->
-    <div class="uc-order-tabs" id="mcOrderTabs">
-        <a href="javascript:;" class="uc-order-tab is-active" data-status="all">全部</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="pending">待付款</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="paid">待发货</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="delivered">待收货</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="completed">已完成</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="refunded">已退款</a>
-        <a href="javascript:;" class="uc-order-tab" data-status="cancelled">已取消</a>
+    <!-- 状态切换 tabs -->
+    <div class="mco-tabs" id="mcoTabs">
+        <a href="javascript:;" class="mco-tab is-active" data-status="all"><i class="fa fa-th-large"></i> 全部</a>
+        <a href="javascript:;" class="mco-tab" data-status="pending"><i class="fa fa-clock-o"></i> 待付款</a>
+        <a href="javascript:;" class="mco-tab" data-status="paid"><i class="fa fa-cube"></i> 待发货</a>
+        <a href="javascript:;" class="mco-tab" data-status="delivered"><i class="fa fa-truck"></i> 待收货</a>
+        <a href="javascript:;" class="mco-tab" data-status="completed"><i class="fa fa-check-circle"></i> 已完成</a>
+        <a href="javascript:;" class="mco-tab" data-status="refunded"><i class="fa fa-undo"></i> 已退款</a>
+        <a href="javascript:;" class="mco-tab" data-status="cancelled"><i class="fa fa-times-circle"></i> 已取消</a>
     </div>
 
-    <div class="mc-section">
-        <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
-            <input type="text" class="layui-input" id="mcOrderKeyword" placeholder="订单号 / 联系信息搜索" style="width:260px;">
-            <button type="button" class="layui-btn" id="mcOrderSearchBtn"><i class="fa fa-search"></i> 搜索</button>
-            <button type="button" class="layui-btn layui-btn-primary" id="mcOrderResetBtn"><i class="fa fa-rotate-left"></i> 重置</button>
+    <div class="mc-section" style="padding:0;overflow:hidden;">
+        <div class="mco-toolbar">
+            <div class="mco-toolbar__field">
+                <i class="fa fa-search"></i>
+                <input type="text" id="mcOrderKeyword" class="mco-input" placeholder="订单号 / 联系信息">
+            </div>
+            <button type="button" class="mc-btn mc-btn--primary" id="mcOrderSearchBtn"><i class="fa fa-search"></i> 搜索</button>
+            <button type="button" class="mc-btn" id="mcOrderResetBtn"><i class="fa fa-rotate-left"></i> 重置</button>
         </div>
 
         <table id="mcOrderTable" lay-filter="mcOrderTable"></table>
@@ -33,95 +36,217 @@ $csrfToken = Csrf::token();
 </div>
 
 <style>
-.uc-order-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
-.uc-order-tab {
-    padding:8px 16px; border-radius:8px; font-size:14px;
-    color:#666; transition: all 0.2s; background:#fff;
-    display:inline-flex; align-items:center;
+/* tabs */
+.mco-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
+.mco-tab {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:8px 16px; border-radius:8px; font-size:13px;
+    color:#6b7280; background:#fff; transition:all .15s;
+    border: 1px solid #e5e7eb;
 }
-.uc-order-tab:hover { background:#f5f7fa; color:#333; }
-.uc-order-tab.is-active { background:#eef2ff; color:#4e6ef2; font-weight:500; }
-.uc-order-tab__count {
-    display:inline-block; min-width:18px; padding:0 5px;
-    margin-left:4px; border-radius:9px;
-    background:#ffece8; color:#fa5252;
-    font-size:11px; line-height:16px; text-align:center;
-    vertical-align:1px;
+.mco-tab:hover { background:#f5f7fa; color:#1f2937; }
+.mco-tab.is-active { background:#eef2ff; color:#4e6ef2; border-color:#c7d2fe; font-weight:500; }
+.mco-tab i { font-size:12px; }
+.mco-tab__cnt {
+    display:inline-block; min-width:18px; padding:0 6px;
+    margin-left:2px; height:17px; line-height:17px; text-align:center;
+    background:#fee2e2; color:#dc2626; border-radius:9px;
+    font-size:11px; font-weight:500;
 }
-.uc-order-tab.is-active .uc-order-tab__count { background:#4e6ef2; color:#fff; }
-.mc-status-badge { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-.mc-status-pending    { background:#fff7ed;color:#c2410c; }
-.mc-status-paid       { background:#eff6ff;color:#1d4ed8; }
-.mc-status-delivering { background:#f0f9ff;color:#0369a1; }
-.mc-status-delivered  { background:#f0fdf4;color:#15803d; }
-.mc-status-completed  { background:#dcfce7;color:#166534; }
-.mc-status-refunding  { background:#fef2f2;color:#b91c1c; }
-.mc-status-refunded   { background:#f3f4f6;color:#6b7280; }
-.mc-status-cancelled  { background:#f3f4f6;color:#9ca3af; }
-.mc-status-other      { background:#f3f4f6;color:#6b7280; }
+.mco-tab.is-active .mco-tab__cnt { background:#4e6ef2; color:#fff; }
+
+/* toolbar */
+.mco-toolbar {
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:14px 16px; background:#fafbfc;
+    border-bottom:1px solid #f0f1f4;
+}
+.mco-toolbar__field {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:0 10px; height:32px; flex:1; max-width:340px;
+    background:#fff; border:1px solid #e5e7eb; border-radius:6px;
+    transition:border-color .15s;
+}
+.mco-toolbar__field:focus-within { border-color:#4e6ef2; }
+.mco-toolbar__field i { color:#9ca3af; font-size:12px; }
+.mco-input { border:0; outline:none; background:transparent; flex:1; font-size:13px; color:#374151; min-width:120px; }
+.mco-input::placeholder { color:#9ca3af; }
+
+/* 行内组件 */
+.mco-orderno {
+    display:inline-block;
+    padding:1px 8px; font-size:12px;
+    background:#f3f4f6; border:1px solid #e5e7eb; border-radius:4px;
+    color:#374151;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.mco-orderno__sub { color:#9ca3af; font-size:11px; margin-top:3px; }
+.mco-goods { display:flex; align-items:center; gap:8px; line-height:1.4; }
+.mco-goods__cover { width:32px; height:32px; border-radius:4px; object-fit:cover; background:#f1f5f9; flex-shrink:0; }
+.mco-goods__info { flex:1; min-width:0; }
+.mco-goods__title { font-size:12.5px; color:#1f2937; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mco-goods__title__more { display:inline-block; margin-left:4px; padding:0 6px; font-size:11px; background:#f3f4f6; color:#6b7280; border-radius:9px; }
+.mco-goods__sub { font-size:11.5px; color:#9ca3af; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.mco-buyer { font-size:12.5px; color:#1f2937; }
+.mco-buyer--guest { color:#9ca3af; font-style:italic; }
+
+.mco-amount { line-height:1.4; text-align:right; }
+.mco-amount__pay { color:#1f2937; font-weight:600; font-size:13px; }
+.mco-amount__sub { font-size:11px; color:#9ca3af; }
+.mco-amount__net { color:#16a34a; font-weight:700; font-size:13px; }
+
+.mco-pay {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:1px 8px; font-size:11.5px; font-weight:500;
+    background:#eef2ff; color:#4338ca; border-radius:10px;
+}
+.mco-pay--empty { background:#f3f4f6; color:#9ca3af; font-weight:400; }
+
+.mco-status {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:2px 9px; font-size:12px; font-weight:500; border-radius:11px;
+}
+.mco-status i { font-size:10px; }
+.mco-status--pending          { background:#fff7ed; color:#c2410c; }
+.mco-status--paid             { background:#dbeafe; color:#1e40af; }
+.mco-status--delivering       { background:#ede9fe; color:#5b21b6; }
+.mco-status--delivered        { background:#cffafe; color:#155e75; }
+.mco-status--completed        { background:#dcfce7; color:#166534; }
+.mco-status--cancelled        { background:#f3f4f6; color:#6b7280; }
+.mco-status--refunding        { background:#fef3c7; color:#92400e; }
+.mco-status--refunded         { background:#f3f4f6; color:#4b5563; }
+.mco-status--expired          { background:#f3f4f6; color:#6b7280; }
+.mco-status--failed,
+.mco-status--delivery_failed  { background:#fef2f2; color:#b91c1c; }
+
+.mco-time {
+    display:inline-flex; flex-direction:column; align-items:center; line-height:1.3;
+}
+.mco-time__date { color:#374151; font-weight:500; font-size:12.5px; }
+.mco-time__hms  { color:#9ca3af; font-size:11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.mco-empty { color:#d1d5db; }
+
+.mco-actions { display:flex; gap:4px; justify-content:center; }
+.mco-act-btn {
+    display:inline-flex; align-items:center; gap:3px;
+    padding:3px 10px; font-size:12px;
+    border:1px solid #e5e7eb; border-radius:5px;
+    background:#fff; color:#4b5563; cursor:pointer; transition:all .15s;
+}
+.mco-act-btn:hover { border-color:#4e6ef2; color:#4e6ef2; background:#f5f7ff; }
+.mco-act-btn--primary { background:#4e6ef2; color:#fff; border-color:#4e6ef2; }
+.mco-act-btn--primary:hover { background:#3c58d9; color:#fff; border-color:#3c58d9; }
 </style>
 
-<script type="text/html" id="mcOrderNoTpl">
-    <div style="line-height:1.4;text-align:left;">
-        <div style="font-family:Consolas,Monaco,monospace;font-size:12px;">{{ d.order_no }}</div>
-        <div style="color:#9ca3af;font-size:11px;">{{ d.buyer_label }} · {{ d.items_count }} 件</div>
+<script type="text/html" id="mcoOrderTpl">
+    <div>
+        <div><span class="mco-orderno">{{ d.order_no }}</span></div>
+        <div class="mco-orderno__sub">{{ d.items_count }} 件商品{{# if (d.pending_ship_count > 0) { }} · <span style="color:#c2410c;">{{ d.pending_ship_count }} 待发</span>{{# } }}</div>
     </div>
 </script>
 
-<script type="text/html" id="mcOrderAmountTpl">
-    <div style="text-align:right;line-height:1.4;">
-        <div style="color:#1f2937;font-weight:600;">{{ d.pay_amount_view }}</div>
-        <div style="font-size:11px;color:#9ca3af;">成本 {{ d.total_cost_view }}{{# if(d.total_fee > 0){ }} · 手续费 {{ d.total_fee_view }}{{# } }}</div>
+<script type="text/html" id="mcoGoodsTpl">
+    {{# if (d.goods_count > 0) { var first = d.goods[0]; }}
+    <div class="mco-goods">
+        <img class="mco-goods__cover" src="{{ first.cover || '/content/static/img/placeholder.png' }}" alt="" onerror="this.style.visibility='hidden';">
+        <div class="mco-goods__info">
+            <div class="mco-goods__title">
+                {{ first.title }}
+                {{# if (d.goods_count > 1) { }}<span class="mco-goods__title__more">+{{ d.goods_count - 1 }}</span>{{# } }}
+            </div>
+            <div class="mco-goods__sub">{{# if (first.spec) { }}{{ first.spec }} · {{# } }}× {{ first.quantity }}</div>
+        </div>
     </div>
-</script>
-
-<script type="text/html" id="mcOrderNetTpl">
-    <span style="color:#16a34a;font-weight:600;">{{ d.net_income_view }}</span>
-</script>
-
-<script type="text/html" id="mcOrderChannelTpl">
-    {{# if(d.pay_channel === 'merchant'){ }}
-        <span class="layui-badge layui-bg-blue">独立收款</span>
     {{# } else { }}
-        <span class="layui-badge layui-bg-gray">主站</span>
+    <span class="mco-empty">—</span>
     {{# } }}
 </script>
 
-<script type="text/html" id="mcOrderStatusTpl">
-    {{# var map = {pending:'待付',paid:'已付',delivering:'发货中',delivered:'已发货',
-                   completed:'已完成',refunding:'退款中',refunded:'已退款',cancelled:'已取消',
-                   expired:'已过期',failed:'失败',delivery_failed:'发货失败'}; }}
-    <span class="mc-status-badge mc-status-{{ d.status }}">{{ map[d.status] || d.status }}</span>
+<script type="text/html" id="mcoBuyerTpl">
+    {{# if (d.is_guest) { }}
+    <span class="mco-buyer mco-buyer--guest">{{ d.buyer_label }}</span>
+    {{# } else { }}
+    <span class="mco-buyer">{{ d.buyer_label }}</span>
+    {{# } }}
 </script>
 
-<script type="text/html" id="mcOrderActionTpl">
-    <a class="layui-btn layui-btn-sm layui-btn-primary" lay-event="detail"><i class="fa fa-eye"></i> 详情</a>
+<script type="text/html" id="mcoAmountTpl">
+    <div class="mco-amount">
+        <div class="mco-amount__pay">{{ d.pay_amount_view }}</div>
+        <div class="mco-amount__sub">成本 {{ d.total_cost_view }}{{# if (parseInt(d.total_fee) > 0) { }} · 手续费 {{ d.total_fee_view }}{{# } }}</div>
+    </div>
+</script>
+
+<script type="text/html" id="mcoNetTpl">
+    <span class="mco-amount__net">{{ d.net_income_view }}</span>
+</script>
+
+<script type="text/html" id="mcoPayTpl">
+    {{# if (d.payment_name) { }}
+    <span class="mco-pay"><i class="fa fa-credit-card"></i> {{ d.payment_name }}</span>
+    {{# } else { }}
+    <span class="mco-pay mco-pay--empty">未支付</span>
+    {{# } }}
+</script>
+
+<script type="text/html" id="mcoStatusTpl">
+    {{# var icons = {pending:'clock-o',paid:'check-circle',delivering:'paper-plane',delivered:'truck',completed:'flag-checkered',
+                    cancelled:'ban',refunding:'undo',refunded:'times-circle',expired:'hourglass-end',failed:'exclamation-circle',delivery_failed:'exclamation-triangle'};
+        var s = String(d.status || ''); }}
+    <span class="mco-status mco-status--{{ s }}"><i class="fa fa-{{ icons[s] || 'circle' }}"></i> {{ d.status_name }}</span>
+</script>
+
+<script type="text/html" id="mcoTimeTpl">
+    {{# if (d.created_at) {
+        var dt = String(d.created_at).replace('T',' ').substring(0,19);
+        var parts = dt.split(' ');
+    }}
+    <span class="mco-time">
+        <span class="mco-time__date">{{ parts[0] }}</span>
+        <span class="mco-time__hms">{{ parts[1] || '' }}</span>
+    </span>
+    {{# } else { }}<span class="mco-empty">—</span>{{# } }}
+</script>
+
+<script type="text/html" id="mcoActionTpl">
+    <div class="mco-actions">
+        {{# if (d.can_ship) { }}
+        <button type="button" class="mco-act-btn mco-act-btn--primary" lay-event="ship"><i class="fa fa-paper-plane"></i> 发货</button>
+        {{# } }}
+        <button type="button" class="mco-act-btn" lay-event="detail"><i class="fa fa-eye"></i> 详情</button>
+    </div>
 </script>
 
 <script>
 $(function(){
     'use strict';
+    // PJAX 防重复绑定
+    $(document).off('.mcOrderPage');
+    $(window).off('.mcOrderPage');
+
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
     window.updateCsrf = function (t) { if (t) csrfToken = t; };
 
     layui.use(['layer', 'form', 'table'], function () {
-        var layer = layui.layer;
-        var form = layui.form;
-        var table = layui.table;
+        var layer = layui.layer, form = layui.form, table = layui.table;
 
         var currentStatus = 'all';
 
-        function where() {
+        function buildWhere() {
             return {
                 _action: 'list',
                 status: currentStatus,
                 keyword: $('#mcOrderKeyword').val() || ''
             };
         }
+        function refreshTable() {
+            table.reload('mcOrderTableId', { page: { curr: 1 }, where: buildWhere() });
+        }
 
         function applyTabCounts(counts) {
             if (!counts) return;
-            // "待发货" tab = paid + delivering 合并；"已退款" 显示 refunded（退款中不单独显示）
+            // 待发货 = paid + delivering 合并；已退款 = refunded + refunding 合并
             var merged = {
                 all: counts.all || 0,
                 pending: counts.pending || 0,
@@ -129,14 +254,14 @@ $(function(){
                 delivered: counts.delivered || 0,
                 completed: counts.completed || 0,
                 refunded: (counts.refunded || 0) + (counts.refunding || 0),
-                cancelled: counts.cancelled || 0,
+                cancelled: counts.cancelled || 0
             };
-            $('#mcOrderTabs .uc-order-tab').each(function () {
+            $('#mcoTabs .mco-tab').each(function () {
                 var $t = $(this);
                 var st = $t.data('status');
                 var c = merged[st] != null ? merged[st] : 0;
-                $t.find('.uc-order-tab__count').remove();
-                if (c > 0) $t.append(' <span class="uc-order-tab__count">' + c + '</span>');
+                $t.find('.mco-tab__cnt').remove();
+                if (c > 0) $t.append(' <span class="mco-tab__cnt">' + c + '</span>');
             });
         }
 
@@ -145,18 +270,22 @@ $(function(){
             id: 'mcOrderTableId',
             url: '/user/merchant/order.php',
             method: 'POST',
-            where: where(),
+            where: buildWhere(),
             page: true,
             limit: 20,
-            lineStyle: 'height: 60px;',
+            limits: [10, 20, 50, 100],
+            cellMinWidth: 80,
+            lineStyle: 'height: 64px;',
             cols: [[
-                {title: '订单', minWidth: 260, templet: '#mcOrderNoTpl'},
-                {title: '支付金额 / 成本', minWidth: 160, templet: '#mcOrderAmountTpl', align: 'right'},
-                {title: '净收入', minWidth: 100, templet: '#mcOrderNetTpl', align: 'right'},
-                {title: '通道', minWidth: 90, templet: '#mcOrderChannelTpl', align: 'center'},
-                {title: '状态', minWidth: 90, templet: '#mcOrderStatusTpl', align: 'center'},
-                {field: 'created_at', title: '下单时间', minWidth: 150, align: 'center'},
-                {title: '操作', width: 90, templet: '#mcOrderActionTpl', align: 'center'}
+                { title: '订单',     width: 200, templet: '#mcoOrderTpl' },
+                { title: '商品',     minWidth: 240, templet: '#mcoGoodsTpl' },
+                { title: '买家',     width: 120, align: 'center', templet: '#mcoBuyerTpl' },
+                { title: '实付 / 成本', width: 160, align: 'right', templet: '#mcoAmountTpl' },
+                { title: '净收入',   width: 110, align: 'right', templet: '#mcoNetTpl' },
+                { title: '支付方式', width: 130, align: 'center', templet: '#mcoPayTpl' },
+                { title: '状态',     width: 110, align: 'center', templet: '#mcoStatusTpl' },
+                { title: '下单时间', width: 130, align: 'center', templet: '#mcoTimeTpl' },
+                { title: '操作',     width: 170, align: 'center', templet: '#mcoActionTpl' }
             ]],
             parseData: function (res) {
                 if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
@@ -170,93 +299,67 @@ $(function(){
             }
         });
 
-        $(document).on('click', '#mcOrderTabs .uc-order-tab', function () {
-            $('#mcOrderTabs .uc-order-tab').removeClass('is-active');
+        // tabs
+        $(document).on('click.mcOrderPage', '#mcoTabs .mco-tab', function () {
+            $('#mcoTabs .mco-tab').removeClass('is-active');
             $(this).addClass('is-active');
             currentStatus = $(this).data('status');
-            table.reload('mcOrderTableId', {page: {curr: 1}, where: where()});
+            refreshTable();
         });
-        $(document).on('click', '#mcOrderSearchBtn', function () {
-            table.reload('mcOrderTableId', {page: {curr: 1}, where: where()});
+        // 搜索 / 重置
+        $(document).on('click.mcOrderPage', '#mcOrderSearchBtn', function () {
+            refreshTable();
         });
-        $(document).on('click', '#mcOrderResetBtn', function () {
+        $(document).on('keypress.mcOrderPage', '#mcOrderKeyword', function (e) {
+            if (e.which === 13) refreshTable();
+        });
+        $(document).on('click.mcOrderPage', '#mcOrderResetBtn', function () {
             $('#mcOrderKeyword').val('');
-            table.reload('mcOrderTableId', {page: {curr: 1}, where: where()});
+            currentStatus = 'all';
+            $('#mcoTabs .mco-tab').removeClass('is-active');
+            $('#mcoTabs .mco-tab[data-status="all"]').addClass('is-active');
+            refreshTable();
         });
 
+        // 行内事件：详情 / 发货
         table.on('tool(mcOrderTable)', function (obj) {
-            if (obj.event === 'detail') openDetail(obj.data.id);
+            var d = obj.data;
+            if (obj.event === 'detail') {
+                openDetail(d);
+            } else if (obj.event === 'ship') {
+                openShip(d);
+            }
         });
 
-        function openDetail(id) {
-            $.ajax({
-                url: '/user/merchant/order.php',
-                type: 'POST', dataType: 'json',
-                data: {_action: 'detail', csrf_token: csrfToken, id: id},
-                success: function (res) {
-                    if (res.code !== 200) { layer.msg(res.msg || '加载失败'); return; }
-                    if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
-                    renderDetail(res.data.order, res.data.items);
-                }
+        function openDetail(d) {
+            layer.open({
+                type: 2,
+                title: '订单详情 - ' + d.order_no,
+                skin: 'admin-modal',
+                maxmin: true,
+                shadeClose: true,
+                area: [window.innerWidth >= 1100 ? '960px' : '95%', window.innerHeight >= 760 ? '720px' : '92%'],
+                content: '/user/merchant/order.php?_popup=detail&id=' + encodeURIComponent(d.id)
             });
         }
 
-        function renderDetail(order, items) {
-            var statusMap = {pending:'待付',paid:'已付',delivering:'发货中',delivered:'已发货',
-                completed:'已完成',refunding:'退款中',refunded:'已退款',cancelled:'已取消'};
-            var contact = '';
-            try {
-                var c = order.contact_info;
-                if (c && c.indexOf('{') === 0) {
-                    var p = JSON.parse(c);
-                    contact = Object.keys(p).map(function (k) { return k + ': ' + p[k]; }).join('<br>');
-                } else {
-                    contact = (c || '').replace(/\n/g, '<br>');
-                }
-            } catch (e) { contact = order.contact_info || ''; }
-
-            var itemsHtml = items.map(function (it) {
-                return '<tr>'
-                     + '<td>' + (it.goods_title || '') + (it.spec_name ? '<div style="color:#9ca3af;font-size:12px;">' + it.spec_name + '</div>' : '') + '</td>'
-                     + '<td style="text-align:right;">' + it.price_view + ' × ' + it.quantity + '</td>'
-                     + '<td style="text-align:right;color:#8b5cf6;">' + it.cost_amount_view + '</td>'
-                     + '<td style="text-align:right;color:#f59e0b;">' + it.fee_amount_view + '</td>'
-                     + '<td style="text-align:right;color:#16a34a;font-weight:600;">' + it.line_net_view + '</td>'
-                     + '</tr>';
-            }).join('');
-
-            var html = '<div style="padding:18px;">'
-                + '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px 24px;margin-bottom:16px;font-size:13px;">'
-                +   '<div><span style="color:#9ca3af;">订单号</span> <span style="font-family:Consolas,Monaco,monospace;">' + order.order_no + '</span></div>'
-                +   '<div><span style="color:#9ca3af;">状态</span> <span class="mc-status-badge mc-status-' + order.status + '">' + (statusMap[order.status] || order.status) + '</span></div>'
-                +   '<div><span style="color:#9ca3af;">下单时间</span> ' + order.created_at + '</div>'
-                +   '<div><span style="color:#9ca3af;">支付通道</span> ' + (order.pay_channel === 'merchant' ? '独立收款' : '主站') + '</div>'
-                +   '<div><span style="color:#9ca3af;">支付方式</span> ' + (order.payment_name || '-') + '</div>'
-                +   '<div><span style="color:#9ca3af;">支付时间</span> ' + (order.pay_time || '-') + '</div>'
-                + '</div>'
-                + '<div style="margin-bottom:10px;font-weight:600;">商品明细</div>'
-                + '<table class="layui-table">'
-                +   '<thead><tr><th>商品</th><th style="text-align:right;">单价 × 数量</th><th style="text-align:right;">成本</th><th style="text-align:right;">手续费</th><th style="text-align:right;">净收入</th></tr></thead>'
-                +   '<tbody>' + itemsHtml + '</tbody>'
-                + '</table>'
-                + '<div style="display:flex;justify-content:flex-end;gap:24px;margin:14px 0;font-size:13px;">'
-                +   '<div><span style="color:#9ca3af;">商品金额</span> ' + order.goods_amount_view + '</div>'
-                +   '<div><span style="color:#9ca3af;">优惠</span> -' + order.discount_amount_view + '</div>'
-                +   '<div style="font-weight:600;">实付 ' + order.pay_amount_view + '</div>'
-                + '</div>'
-                + '<div style="margin-top:14px;padding:12px;background:#f9fafb;border-radius:6px;">'
-                +   '<div style="font-weight:600;margin-bottom:6px;">买家联系方式</div>'
-                +   '<div style="color:#374151;font-size:13px;line-height:1.7;">' + (contact || '—') + '</div>'
-                + '</div>'
-                + '</div>';
-
-            layer.open({
-                type: 1,
-                title: '订单详情',
+        function openShip(d) {
+            // 标志位让 popup 在发货成功后通知父窗口刷新
+            window._orderShipSuccess = false;
+            var idx = layer.open({
+                type: 2,
+                title: '发货 - ' + d.order_no,
                 skin: 'admin-modal',
-                area: [window.innerWidth >= 1000 ? '780px' : '95%', window.innerHeight >= 700 ? '680px' : '90%'],
-                shadeClose: true,
-                content: html
+                maxmin: true,
+                shadeClose: false,
+                area: [window.innerWidth >= 900 ? '780px' : '95%', window.innerHeight >= 700 ? '640px' : '92%'],
+                content: '/user/merchant/order.php?_popup=ship&id=' + encodeURIComponent(d.id),
+                end: function () {
+                    if (window._orderShipSuccess) {
+                        window._orderShipSuccess = false;
+                        refreshTable();
+                    }
+                }
             });
         }
     });

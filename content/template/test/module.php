@@ -15,21 +15,23 @@ defined('EM_ROOT') || exit('access denied!');
 // 1. 收集全局数据（由 Dispatcher 在 render 前注入）
 // ============================================================
 $data = $this->getData();
-$controller = $data['_controller'] ?? 'index';        // 当前控制器名
-$homepageMode = $data['homepage_mode'] ?? 'mall';      // 'mall' 或 'blog'
+$controller   = $data['_controller'] ?? 'index';      // 当前控制器名（已被 HOMEPAGE_MODE 替换）
+$homepageMode = $data['homepage_mode'] ?? 'mall';     // 'mall' / 'goods_list' / 'blog'
+$isHomepage   = !empty($data['is_homepage']);         // 当前是否落在站点根 "/"（替换前的原始判断）
 
 // ============================================================
 // 2. 判断当前页面身份（决定哪个导航项高亮）
 // ============================================================
-$isMallMode = ($homepageMode !== 'blog');
+$isMallMode      = ($homepageMode === 'mall');
+$isGoodsListMode = ($homepageMode === 'goods_list');
+$isBlogMode      = ($homepageMode === 'blog');
 
-if ($controller === 'index') {
+// is_homepage 优先 —— 三种首页模式下都让"首页"导航高亮，避免被替换后的 controller 干扰
+if ($isHomepage) {
     $navId = 'home';
-} elseif ($homepageMode == 'mall' && $controller === 'blog_index') {
-    $navId = 'blog';
-} elseif (in_array($controller, ['goods_list', 'goods', 'goods_index', 'goods_tag'])) {
+} elseif (in_array($controller, ['goods_list', 'goods', 'goods_index', 'goods_tag'], true)) {
     $navId = 'goods';
-} elseif (in_array($controller, ['blog_list', 'blog', 'blog_tag'])) {
+} elseif (in_array($controller, ['blog_list', 'blog_index', 'blog', 'blog_tag'], true)) {
     $navId = 'blog';
 } else {
     $navId = '';
@@ -38,17 +40,22 @@ if ($controller === 'index') {
 // ============================================================
 // 3. 常用链接（其他页面可能用到）
 // ============================================================
-// URL 帮助函数会按 Config('url_format') 生成对应格式，无需在此处判断
-$navGoodsUrl  = $isMallMode ? url_goods_list() : url_goods_index();
-$navBlogUrl   = $isMallMode ? url_blog_index() : url_blog_list();
+// URL 帮助函数按 Config('url_format') 生成对应格式。"商城/博客"导航的目标按当前
+// 首页模式分流——首页占用了哪个入口，导航就指向另一种页面，避免点击和首页重复。
+//   mall      ：首页=goods_index → 商城导航去 goods_list / 博客导航去 blog_index
+//   goods_list：首页=goods_list  → 商城导航去 goods_index / 博客导航去 blog_index
+//   blog      ：首页=blog_index  → 商城导航去 goods_index / 博客导航去 blog_list
+$navGoodsUrl = $isMallMode ? url_goods_list() : url_goods_index();
+$navBlogUrl  = $isBlogMode ? url_blog_list()  : url_blog_index();
 $navSearchUrl = url_search();
 $navCartUrl   = url_cart();
 
 // ============================================================
-// 4. 从数据库加载导航（NaviModel）
+// 4. 从数据库加载导航（NaviModel）—— 按当前 MerchantContext 过滤：
+//    主站只看主站导航 + 系统导航；商户看自己的自定义 + 系统导航
 // ============================================================
 $naviModel = new NaviModel();
-$naviTree = $naviModel->getEnabledTree();
+$naviTree = $naviModel->getEnabledTree(MerchantContext::currentId());
 
 // 系统导航的链接根据首页模式动态调整
 $systemLinkMap = [
@@ -170,14 +177,40 @@ if ($frontUser && !empty($frontUser['id'])) {
 // ============================================================
 // 6. 注入模板变量（供 header.php / footer.php 直接输出）
 // ============================================================
+// ============================================================
+// 7. ICP 备案 + 第三方统计代码
+//    - 主站 / 二级域名访问：用主站 site_icp（同一个备案主体）
+//    - 自定义顶级域名访问：必须用商户自己 merchant.icp
+//      （因为该域名是商户独立备案的，不属于主站备案号）
+//    - 统计代码暂不区分（只主站可配置，sub-站自动复用主站埋点；后续如需可扩）
+// ============================================================
+$_currentHost = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+if (($_p = strpos($_currentHost, ':')) !== false) $_currentHost = substr($_currentHost, 0, $_p);
+
+$_mc = MerchantContext::current();
+$_onCustomDomain = $_mc !== null
+    && !empty($_mc['custom_domain'])
+    && (int) ($_mc['domain_verified'] ?? 0) === 1
+    && strtolower((string) $_mc['custom_domain']) === $_currentHost;
+
+$siteIcp = $_onCustomDomain
+    ? (string) ($_mc['icp'] ?? '')
+    : (string) (Config::get('site_icp') ?? '');
+$siteStatisticalCode = (string) (Config::get('site_statistical_code') ?? '');
+
+// ============================================================
+// 8. 注入模板变量（供 header.php / footer.php 直接输出）
+// ============================================================
 $this->assign([
-    'nav_html'         => $navHtml,
-    'nav_items'        => $navItems,
-    'nav_footer_html'  => $navFooterHtml,
-    'nav_id'           => $navId,
-    'nav_goods_url'    => $navGoodsUrl,
-    'nav_blog_url'     => $navBlogUrl,
-    'nav_search_url'   => $navSearchUrl,
-    'nav_cart_url'     => $navCartUrl,
-    'front_user'       => $frontUser,
+    'nav_html'              => $navHtml,
+    'nav_items'             => $navItems,
+    'nav_footer_html'       => $navFooterHtml,
+    'nav_id'                => $navId,
+    'nav_goods_url'         => $navGoodsUrl,
+    'nav_blog_url'          => $navBlogUrl,
+    'nav_search_url'        => $navSearchUrl,
+    'nav_cart_url'          => $navCartUrl,
+    'front_user'            => $frontUser,
+    'site_icp'              => $siteIcp,
+    'site_statistical_code' => $siteStatisticalCode,
 ]);

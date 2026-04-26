@@ -63,6 +63,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admGoodsTag handler，避免事件成倍触发
+    $(document).off('.admGoodsTag');
+    $(window).off('.admGoodsTag');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -110,14 +114,14 @@ $(function(){
                 page: {curr: 1}
             });
         }
-        $(document).on('keypress', '#goodsTagSearchKeyword', function (e) {
+        $(document).on('keypress.admGoodsTag', '#goodsTagSearchKeyword', function (e) {
             if (e.which === 13) { e.preventDefault(); doQuickSearch(); }
         });
-        $(document).on('click', '#goodsTagQuickClear', function () {
+        $(document).on('click.admGoodsTag', '#goodsTagQuickClear', function () {
             $('#goodsTagSearchKeyword').val('').focus();
             doQuickSearch();
         });
-        $(document).on('click', '#goodsTagRefreshBtn', function () {
+        $(document).on('click.admGoodsTag', '#goodsTagRefreshBtn', function () {
             table.reload('goodsTagTableId');
         });
 
@@ -146,8 +150,8 @@ $(function(){
             });
         }
 
-        $(document).on('click', '#goodsTagAddBtn', function () { openEditForm(null); });
-        $(document).on('click', '#goodsTagFormCancel', function () {
+        $(document).on('click.admGoodsTag', '#goodsTagAddBtn', function () { openEditForm(null); });
+        $(document).on('click.admGoodsTag', '#goodsTagFormCancel', function () {
             if (editLayerIdx !== null) layer.close(editLayerIdx);
         });
 

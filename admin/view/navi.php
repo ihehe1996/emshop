@@ -80,6 +80,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admNavi handler，避免事件成倍触发
+    $(document).off('.admNavi');
+    $(window).off('.admNavi');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -123,13 +127,13 @@ $(function(){
         });
 
         // 刷新
-        $(document).on('click', '#naviRefreshBtn', function () {
+        $(document).on('click.admNavi', '#naviRefreshBtn', function () {
             treeTable.reloadData('naviTableId');
         });
 
         // 展开/折叠
         var expanded = true;
-        $(document).on('click', '#naviToggleBtn', function () {
+        $(document).on('click.admNavi', '#naviToggleBtn', function () {
             expanded = !expanded;
             treeTable.expandAll('naviTableId', expanded);
             $(this).html(expanded

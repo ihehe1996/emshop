@@ -5,6 +5,24 @@ defined('EM_ROOT') || exit('access denied!');
 $current_category = isset($current_category) ? (int) $current_category : (int) ($_GET['category_id'] ?? 0);
 ?>
 <!-- 商品列表 · GoodsController::_list() -->
+
+<?php
+// 店铺公告 —— 当前 scope 已设公告且勾选了"商品列表页"展示位置时输出
+$_announce = $announcement ?? null;
+if (is_array($_announce) && !empty($_announce['html']) && in_array('goods_list', $_announce['positions'] ?? [], true)):
+?>
+<div class="wrapper">
+    <div class="site-announcement">
+        <div class="site-announcement__head">
+            <span class="site-announcement__icon"><i class="fa fa-bullhorn"></i></span>
+            <span class="site-announcement__title">店铺公告</span>
+            <span class="site-announcement__title-sep"></span>
+        </div>
+        <div class="site-announcement__body"><?= $_announce['html'] ?></div>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="page-body">
 
     <!-- 面包屑 -->
@@ -100,7 +118,7 @@ $current_category = isset($current_category) ? (int) $current_category : (int) (
     <?php if (!empty($goods_list)): ?>
     <div class="goods-grid">
         <?php foreach ($goods_list as $g): ?>
-        <a href="<?= url_goods((int) $g['id']) ?>" class="card goods-card">
+        <a <?= goods_card_href_attrs($g) ?> class="card goods-card">
             <div class="card-img">
                 <img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>">
                 <?php if (($g['delivery_type'] ?? '') === 'auto'): ?>

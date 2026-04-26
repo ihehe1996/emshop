@@ -49,7 +49,7 @@ if ($action === 'save') {
     if (in_array($slug, $reserved, true)) {
         Response::error('URL 别名 "' . $slug . '" 是系统保留字，请换一个');
     }
-    if (PageModel::slugExists($slug, $id)) {
+    if (PageModel::slugExists($slug, $id, 0)) {
         Response::error('URL 别名 "' . $slug . '" 已被占用');
     }
     // template_name 只允许小写字母数字中划线下划线
@@ -71,9 +71,17 @@ if ($action === 'save') {
 
     try {
         if ($id) {
+            $existing = PageModel::getById($id);
+            if (!$existing) {
+                Response::error('页面不存在');
+            }
+            if ((int) $existing['merchant_id'] !== 0) {
+                Response::error('无权操作商户页面');
+            }
             PageModel::update($id, $data);
             $pageId = $id;
         } else {
+            $data['merchant_id'] = 0; // 主站后台创建的页面固定归主站
             $pageId = PageModel::create($data);
         }
         if (!$pageId) {
@@ -89,6 +97,9 @@ if ($action === 'save') {
 // ========== 默认：弹窗模式渲染编辑页 ==========
 $id = (int) ($_GET['id'] ?? 0);
 $pageRow = $id ? PageModel::getById($id) : null;
+if ($pageRow && (int) $pageRow['merchant_id'] !== 0) {
+    $pageRow = null; // 主站后台不展示商户页面
+}
 
 $isPopup = Input::get('_popup', '') === '1';
 if ($isPopup) {

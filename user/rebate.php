@@ -6,8 +6,16 @@ require_once __DIR__ . '/global.php';
 
 /**
  * 用户中心 - 我的推广。
+ *
+ * 推广返佣只在主站启用；商户子域名（MerchantContext::currentId() > 0）访问时
+ * 直接跳回个人中心首页，避免误以为商户站也支持邀请赚佣金。
  */
 userRequireLogin();
+
+if (MerchantContext::currentId() > 0) {
+    header('Location: /user/home.php');
+    exit;
+}
 
 $siteName = Config::get('sitename', 'EMSHOP');
 $csrfToken = Csrf::token();

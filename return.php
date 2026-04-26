@@ -43,7 +43,8 @@ if ($plugin === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $plugin)) {
 }
 
 $data = array_merge($_GET, $_POST);
-doAction('payment_return_' . $plugin, $data);
+// 走 PaymentService 包装：商户站子域名打过来的回调，必须切到主站 scope 让插件读到正确凭证
+PaymentService::dispatchReturn($plugin, $data);
 
 // 兜底：插件未跳转时按身份走
 Response::redirect(payment_return_redirect_url());

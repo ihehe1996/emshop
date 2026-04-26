@@ -43,6 +43,63 @@ if (Request::isPost()) {
             Response::success('已重置', ['csrf_token' => Csrf::refresh()]);
             break;
 
+        // ===== 启动 swoole（未运行时才允许）=====
+        case 'start': {
+            assertShellAvailable();
+            if (PHP_OS_FAMILY !== 'Linux') {
+                Response::error('启动操作仅在 Linux 环境可用（swoole 不支持 Windows 原生）');
+            }
+            // 已在跑就别重复启动
+            if (swooleApiGet($swooleApiUrl . '/status') !== null) {
+                Response::success('Swoole 已在运行', ['csrf_token' => Csrf::refresh()]);
+            }
+            $php = swoolePhpBinary();
+            $script = escapeshellarg(EM_ROOT . '/swoole/server.php');
+            $log = escapeshellarg(EM_ROOT . '/swoole/startup.log');
+            // nohup + 重定向 + & + 关闭 stdin —— 让进程脱离 fpm 进程组，
+            // 否则 fpm 回收 worker 时会把 swoole 一起带走
+            $cmd = "nohup {$php} {$script} start > {$log} 2>&1 < /dev/null &";
+            @exec($cmd);
+            // 给 swoole 1.5 秒预热再返回，让前端 loadStatus 能立刻拿到 running=true
+            usleep(1_500_000);
+            Response::success('已发出启动指令', ['csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
+        // ===== 停止 swoole =====
+        case 'stop': {
+            assertShellAvailable();
+            if (PHP_OS_FAMILY !== 'Linux') {
+                Response::error('停止操作仅在 Linux 环境可用');
+            }
+            $php = swoolePhpBinary();
+            $script = escapeshellarg(EM_ROOT . '/swoole/server.php');
+            $output = []; $rc = 0;
+            @exec("{$php} {$script} stop 2>&1", $output, $rc);
+            $msg = trim(implode("\n", $output));
+            Response::success($msg !== '' ? $msg : '已停止', ['csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
+        // ===== 重启（实际是 reload：平滑替换 worker，不丢请求）=====
+        case 'reload': {
+            assertShellAvailable();
+            if (PHP_OS_FAMILY !== 'Linux') {
+                Response::error('重启操作仅在 Linux 环境可用');
+            }
+            // reload 必须 swoole 在跑，否则 SIGUSR1 没人接
+            if (swooleApiGet($swooleApiUrl . '/status') === null) {
+                Response::error('Swoole 未运行，请先启动');
+            }
+            $php = swoolePhpBinary();
+            $script = escapeshellarg(EM_ROOT . '/swoole/server.php');
+            $output = []; $rc = 0;
+            @exec("{$php} {$script} reload 2>&1", $output, $rc);
+            $msg = trim(implode("\n", $output));
+            Response::success($msg !== '' ? $msg : '已发送 reload 信号', ['csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
         default:
             Response::error('未知操作');
     }
@@ -90,6 +147,42 @@ if (Request::isPjax()) {
 } else {
     $adminContentView = __DIR__ . '/view/swoole.php';
     require __DIR__ . '/index.php';
+}
+
+/**
+ * 检查 exec/shell_exec 是否被 php.ini disable_functions 禁用，被禁就直接返回错误。
+ */
+function assertShellAvailable(): void
+{
+    $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+    foreach (['exec', 'shell_exec'] as $fn) {
+        if (in_array($fn, $disabled, true) || !function_exists($fn)) {
+            Response::error("php.ini 禁用了 {$fn}，无法在网页内控制 swoole 进程，请手动在终端执行命令");
+        }
+    }
+}
+
+/**
+ * 取一个能用的 php 可执行文件路径。
+ *
+ * 注意 PHP_BINARY 在 fpm 模式下是 php-fpm，不是 cli 的 php，所以优先用 `which php` 找 cli。
+ * 找不到再退回 PHP_BINARY（同目录下通常有 php cli 二进制），实在不行硬编码 'php' 走 $PATH。
+ */
+function swoolePhpBinary(): string
+{
+    $which = trim((string) @shell_exec('command -v php 2>/dev/null'));
+    if ($which !== '' && is_executable($which)) {
+        return escapeshellarg($which);
+    }
+    if (defined('PHP_BINARY') && is_executable(PHP_BINARY)) {
+        // fpm 路径 = /usr/bin/php-fpm，同目录的 php cli = /usr/bin/php
+        $cliCandidate = dirname(PHP_BINARY) . '/php';
+        if (is_executable($cliCandidate)) {
+            return escapeshellarg($cliCandidate);
+        }
+        return escapeshellarg(PHP_BINARY);
+    }
+    return 'php';
 }
 
 /**

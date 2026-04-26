@@ -41,14 +41,6 @@ include __DIR__ . '/header.php';
                 </div>
             </div>
             <div class="layui-form-item">
-                <label class="layui-form-label">slug</label>
-                <div class="layui-input-block">
-                    <input type="text" class="layui-input" name="slug" id="mchOpenSlug" maxlength="32"
-                           placeholder="3-32 字符，字母/数字/短横线，开通后不可改">
-                </div>
-                <div class="layui-form-mid layui-word-aux">URL 目录形如 /s/{slug}/</div>
-            </div>
-            <div class="layui-form-item">
                 <label class="layui-form-label">店铺名</label>
                 <div class="layui-input-block">
                     <input type="text" class="layui-input" name="name" id="mchOpenName" maxlength="100"
@@ -60,7 +52,7 @@ include __DIR__ . '/header.php';
                 <div class="layui-input-block">
                     <div style="position:relative;">
                         <input type="text" class="layui-input" id="mchOpenParentKw" maxlength="60"
-                               placeholder="可选：输入 slug 搜索上级商户" autocomplete="off">
+                               placeholder="可选：输入店铺名搜索上级商户" autocomplete="off">
                         <div id="mchOpenParentResults" class="mch-open-results"></div>
                     </div>
                     <div id="mchOpenParentChosen" style="margin-top:6px;color:#1890ff;display:none;"></div>
@@ -137,15 +129,10 @@ $(function () {
             $('#mchOpenUserKw').val(name);
             $('#mchOpenUserResults').removeClass('active').html('');
             $('#mchOpenUserChosen').text('✓ 已选：' + name + ' (ID ' + id + ')').show();
-            // 自动建议 slug
-            if (!$('#mchOpenSlug').val()) {
-                var suggest = (name || '').toString().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
-                if (suggest.length >= 3) $('#mchOpenSlug').val(suggest);
-            }
             if (!$('#mchOpenName').val()) $('#mchOpenName').val(name + '的店铺');
         });
 
-        // 上级商户搜索（按 name/slug）
+        // 上级商户搜索（按 name）
         var parentTimer = null;
         $('#mchOpenParentKw').on('input', function () {
             var kw = $.trim($(this).val());
@@ -171,7 +158,7 @@ $(function () {
                     items.forEach(function (m) {
                         html += '<div class="mch-open-item" data-id="' + m.id + '" data-name="' + m.name + '">'
                              + '<div>' + m.name + '</div>'
-                             + '<div class="mch-open-item__sub">slug: ' + m.slug + '</div>'
+                             + '<div class="mch-open-item__sub">ID: ' + m.id + '</div>'
                              + '</div>';
                     });
                     $list.html(html).addClass('active');
@@ -205,11 +192,6 @@ $(function () {
         $('#mchOpenSubmitBtn').on('click', function () {
             if (!$('#mchOpenUserId').val()) { layer.msg('请选择商户主'); return; }
             if (!$('select[name="level_id"]').val()) { layer.msg('请选择等级'); return; }
-            var slug = $.trim($('#mchOpenSlug').val());
-            if (!/^[a-z0-9]([a-z0-9\-]{1,30})[a-z0-9]$/i.test(slug)) {
-                layer.msg('slug 格式不合法（3-32 字母/数字/短横线）');
-                return;
-            }
             if (!$.trim($('#mchOpenName').val())) { layer.msg('请填写店铺名'); return; }
 
             var $btn = $(this);

@@ -75,6 +75,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admLanguage handler，避免事件成倍触发
+    $(document).off('.admLanguage');
+    $(window).off('.admLanguage');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -124,7 +128,7 @@ $(function(){
         });
 
         // 刷新
-        $(document).on('click', '#langRefreshBtn', function () {
+        $(document).on('click.admLanguage', '#langRefreshBtn', function () {
             table.reload('langTableId');
         });
 
@@ -193,7 +197,7 @@ $(function(){
         });
 
         // 图标点击放大：Viewer.js（admin/view/index.php 已全局加载）
-        $(document).on('click', '.lang-icon-img', function () {
+        $(document).on('click.admLanguage', '.lang-icon-img', function () {
             var src = $(this).attr('src');
             if (!src) return;
             var $tmp = $('<div style="display:none;"><img src="' + src + '"></div>').appendTo('body');

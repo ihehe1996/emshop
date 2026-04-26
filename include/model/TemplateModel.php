@@ -135,7 +135,6 @@ final class TemplateModel
             'author_url' => '',
             'template_url' => '',
             'description' => '',
-            'custom' => false,
             'preview' => '',
         ];
 
@@ -178,12 +177,6 @@ final class TemplateModel
                 }
                 if (preg_match('/^Author\s+Url:\s*(.+)$/i', $line, $m)) {
                     $header['author_url'] = trim($m[1]);
-                    continue;
-                }
-                // 自定义 / 本地开发模板标记：头部写 "Custom: true" 即跳过中心服务授权校验
-                if (preg_match('/^Custom:\s*(.+)$/i', $line, $m)) {
-                    $v = strtolower(trim($m[1]));
-                    $header['custom'] = in_array($v, ['1', 'y', 'yes', 'true', 'on'], true);
                     continue;
                 }
             }

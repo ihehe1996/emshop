@@ -55,7 +55,7 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="sidebar-title">最新商品</div>
         <div class="sidebar-goods-list">
             <?php foreach (array_slice($recent_goods, 0, 5) as $g): ?>
-            <a href="<?= url_goods((int) $g['id']) ?>" class="sidebar-goods-item">
+            <a <?= goods_card_href_attrs($g) ?> class="sidebar-goods-item">
                 <div class="sidebar-goods-img"><img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>"></div>
                 <div class="sidebar-goods-info">
                     <div class="sidebar-goods-name"><?= htmlspecialchars($g['name']) ?></div>
@@ -78,7 +78,7 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="sidebar-title">热门商品</div>
         <div class="sidebar-goods-list">
             <?php foreach (array_slice($hot_goods, 0, 5) as $g): ?>
-            <a href="<?= url_goods((int) $g['id']) ?>" class="sidebar-goods-item">
+            <a <?= goods_card_href_attrs($g) ?> class="sidebar-goods-item">
                 <div class="sidebar-goods-img"><img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>"></div>
                 <div class="sidebar-goods-info">
                     <div class="sidebar-goods-name"><?= htmlspecialchars($g['name']) ?></div>

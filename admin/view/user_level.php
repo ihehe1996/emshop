@@ -77,6 +77,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admUserLevel handler，避免事件成倍触发
+    $(document).off('.admUserLevel');
+    $(window).off('.admUserLevel');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -199,7 +203,7 @@ $(function(){
         });
 
         // 刷新按钮
-        $(document).on('click', '#levelRefreshBtn', function () {
+        $(document).on('click.admUserLevel', '#levelRefreshBtn', function () {
             table.reload('levelTableId');
         });
 

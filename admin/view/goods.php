@@ -208,6 +208,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admGoods handler，避免事件成倍触发
+    $(document).off('.admGoods');
+    $(window).off('.admGoods');
+
     'use strict';
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
@@ -431,14 +435,14 @@ $(function(){
         }
 
         // 完整搜索（详细条件面板内的按钮）
-        $(document).on('click', '#goodsSearchBtn', function () {
+        $(document).on('click.admGoods', '#goodsSearchBtn', function () {
             // 同步到快捷搜索输入框（保持两端显示一致）
             $('#goodsQuickSearch').val($('#goodsSearchKeyword').val() || '');
             doSearchReload();
         });
 
         // 重置：清所有条件 + 同步快捷搜索框
-        $(document).on('click', '#goodsResetBtn', function () {
+        $(document).on('click.admGoods', '#goodsResetBtn', function () {
             $('#goodsSearchKeyword').val('');
             $('#goodsSearchCategory').val('');
             $('#goodsSearchType').val('');
@@ -449,7 +453,7 @@ $(function(){
         });
 
         // 快捷搜索（绝对定位在 admin-page 右上角）：回车触发；同步关键词到完整搜索面板
-        $(document).on('keypress', '#goodsQuickSearch', function (e) {
+        $(document).on('keypress.admGoods', '#goodsQuickSearch', function (e) {
             if (e.which !== 13) return;
             e.preventDefault();
             $('#goodsSearchKeyword').val($(this).val());
@@ -457,13 +461,13 @@ $(function(){
         });
 
         // 快捷搜索清空按钮：清空输入 + 同步 + 立即刷新列表
-        $(document).on('click', '#goodsQuickClear', function () {
+        $(document).on('click.admGoods', '#goodsQuickClear', function () {
             $('#goodsQuickSearch').val('').focus();
             $('#goodsSearchKeyword').val('');
             doSearchReload();
         });
 
-        $(document).on('click', '#goodsRefreshBtn', function () {
+        $(document).on('click.admGoods', '#goodsRefreshBtn', function () {
             table.reload('goodsTableId');
         });
 
@@ -548,7 +552,7 @@ $(function(){
         // ============================================================
         // 封面图点击放大（Viewer.js，带缩略图导航）
         // ============================================================
-        $(document).on('click', '.goods-cover-img', function() {
+        $(document).on('click.admGoods', '.goods-cover-img', function() {
             var imagesJson = $(this).attr('data-images');
             var covers = [];
             try { covers = JSON.parse(imagesJson || '[]'); } catch(e) {}

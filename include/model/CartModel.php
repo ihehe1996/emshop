@@ -135,23 +135,11 @@ class CartModel
         $rows = Database::query($sql, $params);
         $items = [];
 
-        // 商户主等级折扣率 + 商户默认加价率（一次性解析）
-        $discount = 1.0;
-        $defaultMarkup = 0; // 只在 merchant 上下文下有效
+        // 价格 factor：买家折扣始终生效；商户站 + 引用商品再额外乘 (1+markup)
+        // 自建商品 / 主站作用域的商品都只乘买家折扣
+        $buyerDiscount = GoodsModel::resolveBuyerDiscountRate();
+        $defaultMarkup = 0;
         if ($merchantId > 0) {
-            $lvRow = Database::fetchOne(
-                "SELECT ul.`discount` AS d
-                   FROM {$prefix}user u
-              LEFT JOIN {$prefix}user_levels ul ON ul.`id` = u.`level_id` AND ul.`enabled` = 'y'
-                  WHERE u.`id` = ? LIMIT 1",
-                [$merchantOwnerId]
-            );
-            $raw = (int) ($lvRow['d'] ?? 0);
-            if ($raw > 0) {
-                $r = ($raw / 1000000) / 10;
-                if ($r > 0 && $r <= 1) $discount = $r;
-            }
-
             $mRow = Database::fetchOne(
                 "SELECT `default_markup_rate` FROM {$prefix}merchant WHERE `id` = ? LIMIT 1",
                 [$merchantId]
@@ -167,27 +155,35 @@ class CartModel
             // 商户上下文下判断归属 + 价格重写
             $belongsToCurrentShop = true;
             $shopBadge = '';
+            $factor = $buyerDiscount;
+
             if ($merchantId > 0) {
                 $goodsOwnerId = (int) ($row['g_owner_id'] ?? 0);
                 // 主站货默认可见：ref 行不存在（mgr_is_on_sale === null）或显式 =1 都算上架
                 $mgrOnSale = $row['mgr_is_on_sale'] ?? null;
                 $isRef = ($goodsOwnerId === 0) && ($mgrOnSale === null || (int) $mgrOnSale === 1);
-                $isSelf = ($goodsOwnerId === $merchantOwnerId);
+                // merchantOwnerId > 0 防御：商户 user_id 异常为 0 时不能把 owner_id=0 的主站商品
+                // 当成"自建"漏出，绕过 mgr 下架过滤
+                $isSelf = ($merchantOwnerId > 0) && ($goodsOwnerId === $merchantOwnerId);
                 $belongsToCurrentShop = $isRef || $isSelf;
 
                 if ($isRef) {
-                    // 没覆盖行（mgr_markup_rate === NULL）→ 用商户默认加价率
+                    // 引用商品：先 markup 再买家折扣
                     $markup = isset($row['mgr_markup_rate']) && $row['mgr_markup_rate'] !== null
                         ? (int) $row['mgr_markup_rate']
                         : $defaultMarkup;
-                    $factor = $discount * (1 + $markup / 10000);
-                    $specPriceRaw = (int) round($specPriceRaw * $factor);
-                    $specMarketRaw = (int) round($specMarketRaw * $factor);
+                    $factor = (1 + $markup / 10000) * $buyerDiscount;
                 }
                 // 不属于本店：保持原价展示，加标记让 UI 提示 / 结算时过滤
                 if (!$belongsToCurrentShop) {
                     $shopBadge = ($goodsOwnerId === 0) ? '主站商品' : '其它店铺';
+                    $factor = 1.0; // 跨店商品按原价展示，不加任何 factor
                 }
+            }
+
+            if ($factor !== 1.0) {
+                $specPriceRaw = (int) round($specPriceRaw * $factor);
+                $specMarketRaw = (int) round($specMarketRaw * $factor);
             }
 
             $price = $specPriceRaw > 0 ? (float) GoodsModel::moneyFromDb($specPriceRaw) : 0;

@@ -115,7 +115,10 @@ window.EMSHOP_CURRENCY = {
                 <a href="/user/order.php" class="header-user-menu-item"><i class="fa fa-file-text-o"></i>我的订单</a>
                 <a href="/user/wallet.php" class="header-user-menu-item"><i class="fa fa-credit-card"></i>我的钱包</a>
                 <a href="/user/balance_log.php" class="header-user-menu-item"><i class="fa fa-list-alt"></i>余额明细</a>
+                <?php // 推广 / 返佣只在主站启用；商户子域名下隐藏入口 ?>
+                <?php if (MerchantContext::currentId() === 0): ?>
                 <a href="/user/rebate.php" class="header-user-menu-item"><i class="fa fa-share-alt"></i>我的推广</a>
+                <?php endif; ?>
                 <div class="header-user-menu-divider"></div>
                 <a href="?c=login&a=logout" class="header-user-menu-item header-user-menu-item--danger"><i class="fa fa-sign-out"></i>退出登录</a>
             </div>

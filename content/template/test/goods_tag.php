@@ -45,7 +45,7 @@ defined('EM_ROOT') || exit('access denied!');
     <?php if (!empty($goods_list)): ?>
     <div class="goods-grid">
         <?php foreach ($goods_list as $g): ?>
-        <a href="<?= url_goods((int) $g['id']) ?>" class="card goods-card">
+        <a <?= goods_card_href_attrs($g) ?> class="card goods-card">
             <div class="card-img">
                 <img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>">
                 <?php if (($g['delivery_type'] ?? '') === 'auto'): ?>

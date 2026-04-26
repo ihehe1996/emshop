@@ -73,6 +73,10 @@ $csrfToken = Csrf::token();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admBlogTag handler，避免事件成倍触发
+    $(document).off('.admBlogTag');
+    $(window).off('.admBlogTag');
+
     'use strict';
 
     var csrfToken = <?= json_encode($csrfToken) ?>;
@@ -131,17 +135,17 @@ $(function(){
         // ============================================================
         // 搜索 / 重置 / 刷新
         // ============================================================
-        $(document).on('click', '#tagSearchBtn', function () {
+        $(document).on('click.admBlogTag', '#tagSearchBtn', function () {
             table.reload('tagTableId', {
                 where: { keyword: $('#tagSearchKeyword').val() || '' },
                 page: {curr: 1}
             });
         });
-        $(document).on('click', '#tagResetBtn', function () {
+        $(document).on('click.admBlogTag', '#tagResetBtn', function () {
             $('#tagSearchKeyword').val('');
             table.reload('tagTableId', { where: { keyword: '' }, page: {curr: 1} });
         });
-        $(document).on('click', '#tagRefreshBtn', function () {
+        $(document).on('click.admBlogTag', '#tagRefreshBtn', function () {
             table.reload('tagTableId');
         });
 
@@ -172,8 +176,8 @@ $(function(){
             });
         }
 
-        $(document).on('click', '#tagAddBtn', function () { openEditForm(null); });
-        $(document).on('click', '#tagFormCancel', function () {
+        $(document).on('click.admBlogTag', '#tagAddBtn', function () { openEditForm(null); });
+        $(document).on('click.admBlogTag', '#tagFormCancel', function () {
             if (editLayerIdx !== null) layer.close(editLayerIdx);
         });
 

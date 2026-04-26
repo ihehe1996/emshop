@@ -105,6 +105,10 @@ $typeOptions = CouponModel::typeOptions();
 
 <script>
 $(function(){
+    // PJAX 防重复绑定：清掉本页历史 .admCoupon handler，避免事件成倍触发
+    $(document).off('.admCoupon');
+    $(window).off('.admCoupon');
+
     'use strict';
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
     var tableIns;
@@ -164,7 +168,7 @@ $(function(){
             }
         });
 
-        $(document).on('click', '#couponSearchBtn', function () {
+        $(document).on('click.admCoupon', '#couponSearchBtn', function () {
             table.reload('couponTableId', {
                 page: { curr: 1 },
                 where: {
@@ -176,7 +180,7 @@ $(function(){
             });
         });
 
-        $(document).on('click', '#couponResetBtn', function () {
+        $(document).on('click.admCoupon', '#couponResetBtn', function () {
             $('#couponSearchKeyword').val('');
             $('#couponSearchType').val('');
             $('#couponSearchEnabled').val('');
@@ -184,7 +188,7 @@ $(function(){
             table.reload('couponTableId', { page: { curr: 1 }, where: { _action: 'list' } });
         });
 
-        $(document).on('click', '#couponRefreshBtn', function () {
+        $(document).on('click.admCoupon', '#couponRefreshBtn', function () {
             table.reload('couponTableId');
         });
 

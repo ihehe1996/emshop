@@ -246,29 +246,6 @@ include __DIR__ . '/header.php';
         </div>
     </div>
 
-    <!-- 独立收款 -->
-    <div class="popup-section">
-        <div class="mch-info-row">
-            <div class="mch-info-row__label">等级允许</div>
-            <div class="mch-info-row__value">
-                <?php if ((int) ($merchantLevel['allow_own_pay'] ?? 0) === 1): ?>
-                <span class="em-tag em-tag--on">允许</span>
-                <?php else: ?>
-                <span class="em-tag em-tag--muted">不允许</span>
-                <?php endif; ?>
-            </div>
-        </div>
-        <div class="mch-info-row">
-            <div class="mch-info-row__label">当前状态</div>
-            <div class="mch-info-row__value">
-                <?php if ((int) ($merchantDetail['own_pay_enabled'] ?? 0) === 1): ?>
-                <span class="em-tag em-tag--blue">已启用</span>
-                <?php else: ?>
-                <span class="em-tag em-tag--muted">未启用</span>
-                <?php endif; ?>
-            </div>
-        </div>
-    </div>
 </div>
 
 <!-- 底部：默认 popup-footer 就是右对齐（flex-end），去掉 --single 居中修饰 -->

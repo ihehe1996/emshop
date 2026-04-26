@@ -472,6 +472,7 @@ final class InstallService
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
                 `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'父级ID，0=顶级\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'0=主站；>0=商户\',
                 `name` VARCHAR(100) NOT NULL COMMENT \'分类名称\',
                 `slug` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'URL别名\',
                 `description` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'分类描述\',
@@ -487,7 +488,8 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 KEY `idx_parent_id` (`parent_id`),
                 KEY `idx_slug` (`slug`),
-                KEY `idx_status` (`status`)
+                KEY `idx_status` (`status`),
+                KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'文章分类表\'',
             $blogCatTable
         ));
@@ -496,6 +498,7 @@ final class InstallService
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'父级ID，0=顶级\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'0=主站；>0=商户自定义导航；is_system=1 时永远 0\',
                 `name` VARCHAR(100) NOT NULL COMMENT \'导航名称\',
                 `type` VARCHAR(20) NOT NULL DEFAULT \'custom\' COMMENT \'类型：system/custom/goods_cat/blog_cat\',
                 `type_ref_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联ID\',
@@ -510,9 +513,60 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 KEY `idx_parent_id` (`parent_id`),
                 KEY `idx_sort` (`sort`),
-                KEY `idx_status` (`status`)
+                KEY `idx_status` (`status`),
+                KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'导航表\'',
             $naviTable
+        ));
+
+        // 文章表（多租户：merchant_id=0 主站，>0 商户）
+        $blogTable = Database::prefix() . 'blog';
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `category_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'分类ID\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'0=主站文章；>0=商户文章\',
+                `title` VARCHAR(255) NOT NULL COMMENT \'文章标题\',
+                `slug` VARCHAR(255) DEFAULT NULL COMMENT \'URL别名\',
+                `excerpt` TEXT COMMENT \'摘要\',
+                `content` LONGTEXT COMMENT \'正文内容\',
+                `cover_image` VARCHAR(500) DEFAULT NULL COMMENT \'封面图\',
+                `user_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'作者用户ID\',
+                `views_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'阅读量\',
+                `is_top` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'是否置顶\',
+                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序（越小越靠前）\',
+                `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'状态：1=发布 0=草稿\',
+                `created_by` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'创建人ID\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `deleted_at` DATETIME DEFAULT NULL COMMENT \'软删除时间，NULL表示未删除\',
+                PRIMARY KEY (`id`),
+                KEY `idx_category` (`category_id`),
+                KEY `idx_status_sort` (`status`, `is_top`, `sort`, `id`),
+                KEY `idx_views` (`views_count`),
+                KEY `idx_deleted` (`deleted_at`),
+                KEY `idx_merchant_status` (`merchant_id`, `status`, `deleted_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'文章表\'',
+            $blogTable
+        ));
+
+        // 文章标签：商户和主站独立池（uk_merchant_name 允许同名）
+        $blogTagTable = Database::prefix() . 'blog_tag';
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'0=主站标签池；>0=商户标签池\',
+                `name` VARCHAR(50) NOT NULL COMMENT \'标签名称\',
+                `slug` VARCHAR(50) DEFAULT \'\' COMMENT \'URL别名\',
+                `color` VARCHAR(20) DEFAULT \'\' COMMENT \'标签颜色（可选）\',
+                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序\',
+                `article_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'文章数量（冗余计数）\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_merchant_name` (`merchant_id`, `name`),
+                KEY `idx_sort` (`sort`, `id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'博客标签表\'',
+            $blogTagTable
         ));
 
         // 默认系统导航：仅当表内还没有同名系统导航时才插入，避免重复执行 install 脚本生成重复数据
@@ -611,7 +665,6 @@ final class InstallService
                 `allow_subdomain` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许二级域名\',
                 `allow_custom_domain` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许自定义顶级域名\',
                 `allow_self_goods` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许上架自建商品\',
-                `allow_own_pay` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许独立收款（仅对自建商品生效）\',
                 `sort` INT NOT NULL DEFAULT 100,
                 `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
                 `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -632,7 +685,6 @@ final class InstallService
                 `user_id` BIGINT UNSIGNED NOT NULL COMMENT \'商户主 user_id\',
                 `parent_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'上级商户 id（一层）\',
                 `level_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'商户等级 id\',
-                `slug` VARCHAR(32) NOT NULL COMMENT \'URL 目录 /s/{slug}/\',
                 `name` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'店铺名\',
                 `logo` VARCHAR(500) NOT NULL DEFAULT \'\',
                 `slogan` VARCHAR(255) NOT NULL DEFAULT \'\',
@@ -641,8 +693,6 @@ final class InstallService
                 `subdomain` VARCHAR(64) DEFAULT NULL COMMENT \'二级域名前缀\',
                 `custom_domain` VARCHAR(200) DEFAULT NULL COMMENT \'自定义域名\',
                 `domain_verified` TINYINT(1) NOT NULL DEFAULT 0,
-                `own_pay_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'独立收款是否实际开启（等级允许 + 管理员审核）\',
-                `pay_channel_config` TEXT COMMENT \'商户自建支付通道配置 JSON\',
                 `theme` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'模板名（v1 不生效）\',
                 `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%）；无商品级覆盖时采用\',
                 `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=正常 0=禁用\',
@@ -653,7 +703,6 @@ final class InstallService
                 `deleted_at` DATETIME DEFAULT NULL,
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_user_id` (`user_id`),
-                UNIQUE KEY `uk_slug` (`slug`),
                 UNIQUE KEY `uk_subdomain` (`subdomain`),
                 UNIQUE KEY `uk_custom_domain` (`custom_domain`),
                 KEY `idx_parent` (`parent_id`),
@@ -712,10 +761,11 @@ final class InstallService
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
                 `merchant_id` INT UNSIGNED NOT NULL,
                 `master_category_id` INT UNSIGNED NOT NULL COMMENT \'主站 goods_category.id\',
-                `alias_name` VARCHAR(100) NOT NULL COMMENT \'商户侧显示名\',
+                `alias_name` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'商户侧显示名（空=跟随主站名）\',
+                `is_hidden` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=在本店隐藏该主站分类\',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_merchant_master` (`merchant_id`, `master_category_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户分类重命名映射\'',
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户分类重命名/隐藏映射\'',
             $merchantCategoryMapTable
         ));
 
@@ -768,15 +818,17 @@ final class InstallService
             $merchantWithdrawTable
         ));
 
-        // 自定义页面表（WordPress 式 Pages：静态页，可挂到导航）
+        // 自定义页面表（WordPress 式 Pages：静态页，可挂到导航）—— 多租户隔离
         $pageTable = $prefix . 'page';
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'0=主站；>0=商户\',
                 `title` VARCHAR(200) NOT NULL COMMENT \'页面标题\',
                 `slug` VARCHAR(100) NOT NULL COMMENT \'URL 别名，访问 /p/{slug}\',
                 `content` LONGTEXT COMMENT \'页面正文 HTML（富文本）\',
                 `status` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'0=草稿, 1=已发布\',
+                `is_homepage` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=该 scope 的站点首页（同 merchant_id 最多一条）\',
                 `template_name` VARCHAR(50) NOT NULL DEFAULT \'\' COMMENT \'指定主题模板文件名（不含 page- 前缀和扩展名），空=用通用 page.php\',
                 `seo_title` VARCHAR(200) NOT NULL DEFAULT \'\',
                 `seo_keywords` VARCHAR(500) NOT NULL DEFAULT \'\',
@@ -787,11 +839,26 @@ final class InstallService
                 `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 `deleted_at` DATETIME NULL DEFAULT NULL COMMENT \'软删除时间\',
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_slug` (`slug`),
+                UNIQUE KEY `uk_merchant_slug` (`merchant_id`, `slug`),
                 KEY `idx_status` (`status`),
-                KEY `idx_deleted` (`deleted_at`)
+                KEY `idx_deleted` (`deleted_at`),
+                KEY `idx_merchant_status` (`merchant_id`, `status`, `deleted_at`),
+                KEY `idx_merchant_homepage` (`merchant_id`, `is_homepage`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'自定义页面（WordPress 式 Pages）\'',
             $pageTable
+        ));
+
+        // 商户隐藏的系统导航
+        $merchantNaviHiddenTable = $prefix . 'merchant_navi_hidden';
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `merchant_id` INT UNSIGNED NOT NULL COMMENT \'商户 ID\',
+                `navi_id` BIGINT UNSIGNED NOT NULL COMMENT \'导航 ID（必须 is_system=1）\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`merchant_id`, `navi_id`),
+                KEY `idx_navi` (`navi_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'商户隐藏的系统导航\'',
+            $merchantNaviHiddenTable
         ));
 
         // 货币表（方案 A 多币种：主货币 ×1000000 存，其他货币仅用于前台展示换算）
@@ -839,6 +906,36 @@ final class InstallService
             $userAddressTable
         ));
 
+        // 插件安装记录：物理文件全站共享一份，DB 行按 scope（main / merchant_X）隔离
+        // 唯一索引必须 (name, scope) —— 同一个 epay 可以同时安装在主站和商户两套独立配置
+        $pluginTable = $prefix . 'plugin';
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(64) NOT NULL COMMENT \'插件目录名/标识\',
+                `scope` VARCHAR(64) NOT NULL DEFAULT \'main\' COMMENT \'作用域：main=主站 / merchant_{id}=商户独立安装\',
+                `title` VARCHAR(128) NOT NULL COMMENT \'插件显示名称\',
+                `version` VARCHAR(32) NOT NULL DEFAULT \'1.0.0\' COMMENT \'插件版本\',
+                `author` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'插件作者\',
+                `author_url` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'作者主页\',
+                `description` TEXT NOT NULL COMMENT \'插件描述\',
+                `category` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'插件分类（如：支付插件 / 商品插件 / 系统扩展）\',
+                `icon` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'插件图标\',
+                `preview` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'预览图\',
+                `main_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'主入口文件\',
+                `setting_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'设置页文件\',
+                `show_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'前台展示文件\',
+                `is_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'是否已启用\',
+                `installed_at` DATETIME DEFAULT NULL COMMENT \'安装时间\',
+                `updated_at` DATETIME DEFAULT NULL COMMENT \'更新时间\',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_name_scope` (`name`, `scope`),
+                KEY `idx_scope_enabled` (`scope`, `is_enabled`),
+                KEY `idx_category` (`category`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件安装记录\'',
+            $pluginTable
+        ));
+
         // ============ 既有表加字段 ============
         $userTable = $prefix . 'user';
         $this->addColumnIfMissing(
@@ -864,11 +961,6 @@ final class InstallService
             $orderTable,
             'merchant_id',
             'INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'下单时所在商户 id；0=主站订单\''
-        );
-        $this->addColumnIfMissing(
-            $orderTable,
-            'pay_channel',
-            'VARCHAR(16) NOT NULL DEFAULT \'main\' COMMENT \'实际收款通道：main/merchant\''
         );
         $this->addColumnIfMissing(
             $orderTable,
@@ -967,7 +1059,6 @@ final class InstallService
                 'allow_subdomain' => 0,
                 'allow_custom_domain' => 0,
                 'allow_self_goods' => 1,
-                'allow_own_pay' => 0,
                 'sort' => 100,
                 'is_enabled' => 1,
             ]);

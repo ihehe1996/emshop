@@ -107,6 +107,9 @@ final class Dispatcher
     /** @var string 当前 URL 中的 c 参数（原始） */
     private string $rawController = '';
 
+    /** @var bool 当前请求是否落在站点根 "/"（HOMEPAGE_MODE 替换前 controller 为 index） */
+    private bool $isHomepage = false;
+
     /** @var array<string, mixed> URL 路径中的其余参数（pathinfo 模式） */
     private array $pathArgs = [];
 
@@ -158,6 +161,15 @@ final class Dispatcher
         $mtime = @filemtime($hbFile);
         if ($mtime === false || (time() - $mtime) > 15) {
             $this->renderSwooleDownNotice();
+            return;
+        }
+
+        // 0.15 商户入口等级门控：host 命中了一个真实商户但商户等级不允许该入口方式（二级域名 /
+        //      自定义顶级域名），显式渲染"店铺暂未开放"页，避免静默把主站内容露给访客。
+        //      一般由管理员事后降了等级 / 员工越权开了门而等级不匹配触发。
+        $blocked = MerchantContext::blockedReason();
+        if ($blocked !== '') {
+            $this->renderShopUnavailableNotice($blocked);
             return;
         }
 
@@ -240,10 +252,11 @@ final class Dispatcher
             '_action'         => $this->action,
             '_theme'          => $this->theme,
             'homepage_mode'   => defined('HOMEPAGE_MODE') ? HOMEPAGE_MODE : 'mall',
+            // 模板用：站点根 "/" 入口（HOMEPAGE_MODE 替换前的原始判断），用于"首页"导航高亮
+            'is_homepage'     => $this->isHomepage,
             // 商户上下文信息：模板可直接用（未设则 null / 0）
             '_merchant'       => $merchant,
             '_merchant_id'    => $merchant ? (int) $merchant['id'] : 0,
-            '_merchant_slug'  => $merchant ? (string) $merchant['slug'] : '',
         ]);
 
         // 4. 执行前置钩子
@@ -267,6 +280,17 @@ final class Dispatcher
      */
     private function tryPrettyRoute(): bool
     {
+        // 显式 ?c=xxx 的请求是接口调用（如前端 $.post('?c=order&a=create')）。
+        // 当前页面 URL 可能是 pretty 形式（/post-1.html、/post/1），
+        // jQuery 把相对的 ?c=order&a=create 拼到当前 path 上 → /post-1.html?c=order&a=create。
+        // 如果不在这里早退，下面的 path 解析会先命中 /post-1.html → 'goods/_detail'，
+        // 直接 return true，把 ?c=order&a=create 这两个参数静默吞掉，前端就只能看到非 JSON 响应"网络异常"。
+        // 已知合法 controller 时强制走 query string 模式，让接口请求不受当前页面 URL 形式干扰。
+        $cParam = trim((string) ($_GET['c'] ?? ''));
+        if ($cParam !== '' && isset(self::CONTROLLER_MAP[$this->sanitize($cParam)])) {
+            return false;
+        }
+
         $extraQuery = array_diff_key($_GET, array_flip(['c', 'a', 'post', 'blog']));
 
         // —— Query string 模式：?post=1 / ?blog=1
@@ -305,19 +329,22 @@ final class Dispatcher
         if (substr($path, -5) === '.html') {
             $base = substr($path, 0, -5);
 
-            // 静态页：cart / coupon / search / blog
+            // 静态页：cart / coupon / search / blog / post（商城首页）
+            // post 显式指向 goods_index，避免被 HOMEPAGE_MODE 替换成博客首页
             $staticMap = ['cart' => ['cart', '_index'],
                           'coupon' => ['coupon', '_index'],
                           'search' => ['search', '_index'],
-                          'blog' => ['blog_index', '_index']];
+                          'blog' => ['blog_index', '_index'],
+                          'post' => ['goods_index', '_index']];
             if (isset($staticMap[$base])) {
                 [$this->controller, $this->action] = $staticMap[$base];
                 $this->pathArgs = $extraQuery;
                 return true;
             }
             // blog-tag-N / blog-tag-N-M（带分页，放在 blog-* 前面匹配）
+            // BlogTagController 只有 _detail（按 id 列出该标签下文章），故直接派发到 _detail
             if (preg_match('/^blog-tag-(\d+)(?:-(\d+))?$/', $base, $m)) {
-                $this->controller = 'blog_tag'; $this->action = '_list';
+                $this->controller = 'blog_tag'; $this->action = '_detail';
                 $this->pathArgs = ['id' => (int) $m[1]] + $extraQuery;
                 if (!empty($m[2])) $this->pathArgs['page'] = (int) $m[2];
                 return true;
@@ -403,8 +430,9 @@ final class Dispatcher
                 return true;
             }
             // tag-N 或 tag-N-M（带分页）/ search-xxx
+            // GoodsTagController 只有 _detail（按 id 列出该标签下商品），故直接派发到 _detail
             if (preg_match('/^tag-(\d+)(?:-(\d+))?$/', $base, $m)) {
-                $this->controller = 'goods_tag'; $this->action = '_list';
+                $this->controller = 'goods_tag'; $this->action = '_detail';
                 $this->pathArgs = ['id' => (int) $m[1]] + $extraQuery;
                 if (!empty($m[2])) $this->pathArgs['page'] = (int) $m[2];
                 return true;
@@ -440,7 +468,7 @@ final class Dispatcher
         }
         // /tag/N 或 /tag/N/M（带分页）
         if ($first === 'tag' && $n >= 2 && ctype_digit($segments[1])) {
-            $this->controller = 'goods_tag'; $this->action = '_list';
+            $this->controller = 'goods_tag'; $this->action = '_detail';
             $this->pathArgs = ['id' => (int) $segments[1]] + $extraQuery;
             if ($n >= 3 && ctype_digit($segments[2])) {
                 $this->pathArgs['page'] = (int) $segments[2];
@@ -499,7 +527,7 @@ final class Dispatcher
             }
             // /blog/tag/N 或 /blog/tag/N/M
             if ($seg === 'tag' && isset($segments[2]) && ctype_digit($segments[2])) {
-                $this->controller = 'blog_tag'; $this->action = '_list';
+                $this->controller = 'blog_tag'; $this->action = '_detail';
                 $this->pathArgs = ['id' => (int) $segments[2]] + $extraQuery;
                 if ($n >= 4 && ctype_digit($segments[3])) {
                     $this->pathArgs['page'] = (int) $segments[3];
@@ -511,8 +539,8 @@ final class Dispatcher
         // /post 及 /post/...，以及 /buy/...（dir2 模式商品前缀）
         if (in_array($first, ['post', 'buy'], true)) {
             if ($n === 1) {
-                // 单独 /post/ 视为商城首页
-                $this->controller = 'index'; $this->action = '_index';
+                // 单独 /post/ 视为商城首页 —— 显式 goods_index，避免被 HOMEPAGE_MODE 替换
+                $this->controller = 'goods_index'; $this->action = '_index';
                 $this->pathArgs = $extraQuery;
                 return true;
             }
@@ -617,10 +645,42 @@ final class Dispatcher
         $this->controller = $this->sanitize($this->controller);
         $this->action = $this->sanitize($this->action);
 
-        // 博客模式下默认路由为 blog_index（博客首页），商城模式默认路由为 index（商城首页）
-        if ($this->controller === self::DEFAULT_CONTROLLER && defined('HOMEPAGE_MODE') && HOMEPAGE_MODE === 'blog') {
-            $this->controller = self::BLOG_DEFAULT_CONTROLLER;
-            $this->rawController = self::BLOG_DEFAULT_CONTROLLER;
+        // 站点根 "/" 的入口替换：按"页面首页 → homepage_mode"两级优先分流
+        //   优先级 1（最高）：当前 scope 在 em_page 表里设了 is_homepage=1 的页面 → 走 PageController
+        //   优先级 2：settings.homepage_mode（mall / goods_list / blog）
+        //     mall（默认）：保持 controller='index'（IndexController → goods_index 模板）
+        //     blog       ：替换成 blog_index（博客首页）
+        //     goods_list ：替换成 goods_list（商品列表页）
+        // 注意：只替换显式 controller='index'（即 "/" 入口）；用户访问 /post/ 等显式路径时
+        // 控制器已被 parseRoute 设成 goods_index 等，不会走到这里。
+        //
+        // 替换会丢失"是首页"这个语义（替换后 controller 看起来就是 goods_list / blog_index 等），
+        // 模板里"首页"导航的高亮就不知道该不该亮。所以替换前先记录一下原始判断。
+        $this->isHomepage = ($this->controller === self::DEFAULT_CONTROLLER);
+        if ($this->isHomepage) {
+            // 优先级 1：页面首页 —— 主站和商户各自的 em_page.is_homepage 行
+            $homepagePage = null;
+            if (class_exists('PageModel')) {
+                $homepagePage = PageModel::getHomepage(MerchantContext::currentId());
+            }
+            if ($homepagePage !== null && !empty($homepagePage['slug'])) {
+                $this->controller = 'page';
+                $this->rawController = 'page';
+                $this->action = '_detail';
+                // PageController::_detail 用 getArg('slug') 解析；pathArgs 兼容 query 模式
+                $this->pathArgs['slug'] = (string) $homepagePage['slug'];
+                $_GET['slug'] = (string) $homepagePage['slug'];
+            } elseif (defined('HOMEPAGE_MODE')) {
+                // 优先级 2：homepage_mode 配置
+                if (HOMEPAGE_MODE === 'blog') {
+                    $this->controller = self::BLOG_DEFAULT_CONTROLLER;
+                    $this->rawController = self::BLOG_DEFAULT_CONTROLLER;
+                } elseif (HOMEPAGE_MODE === 'goods_list') {
+                    $this->controller = 'goods_list';
+                    $this->rawController = 'goods_list';
+                    $this->action = '_list';
+                }
+            }
         }
 
         // 首页/单页控制器默认动作为 _index，列表/详情控制器默认动作为 _list
@@ -870,6 +930,44 @@ final class Dispatcher
            . '<h1>站点升级中</h1>'
            . '<p class="desc">当前站点正在维护升级，请稍后再来访问。</p>'
            . '<p class="sub">给您带来不便，敬请谅解。</p>'
+           . '<div class="brand">' . htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8') . '</div>'
+           . '</div></body></html>';
+    }
+
+    /**
+     * 渲染"店铺暂未开放"页（商户入口被等级门控拦截）。
+     *
+     * 触发：host 命中了某个真实商户，但商户等级关了对应入口（allow_subdomain=0 / allow_custom_domain=0）。
+     * 用 403 + noindex：是策略拒绝而非临时故障，也不应被搜索引擎收录。
+     * 文案对访客保持中性（"暂未开放"），不泄漏"等级"这类后台概念。
+     *
+     * @param string $reason 'subdomain' 或 'custom_domain'，当前只用来区分日志 / 后续埋点
+     */
+    private function renderShopUnavailableNotice(string $reason): void
+    {
+        http_response_code(403);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        header('X-Robots-Tag: noindex, nofollow');
+        $siteName = (string) (Config::get('sitename') ?? 'EMSHOP');
+        echo '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+           . '<meta name="viewport" content="width=device-width,initial-scale=1">'
+           . '<meta name="robots" content="noindex,nofollow">'
+           . '<title>' . htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8') . ' · 店铺暂未开放</title>'
+           . '<style>'
+           . 'body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;background:#f9fafb;color:#111827;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}'
+           . '.wrap{max-width:520px;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:40px 36px;box-shadow:0 4px 20px rgba(0,0,0,.05);text-align:center;}'
+           . '.ico{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,rgba(99,102,241,.14),rgba(129,140,248,.08));color:#4f46e5;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 20px;}'
+           . 'h1{font-size:20px;font-weight:600;color:#111827;margin:0 0 10px;}'
+           . '.desc{font-size:14px;color:#6b7280;line-height:1.7;margin-bottom:8px;}'
+           . '.sub{font-size:12px;color:#9ca3af;line-height:1.7;}'
+           . '.brand{margin-top:22px;padding-top:16px;border-top:1px solid #f3f4f6;font-size:12px;color:#9ca3af;}'
+           . '</style></head><body>'
+           . '<div class="wrap">'
+           . '<div class="ico">&#128274;</div>'
+           . '<h1>店铺暂未开放</h1>'
+           . '<p class="desc">本店铺当前不可访问，请稍后再来或联系店主确认。</p>'
+           . '<p class="sub">如果您是店主，请联系平台管理员确认店铺等级权限。</p>'
            . '<div class="brand">' . htmlspecialchars($siteName, ENT_QUOTES, 'UTF-8') . '</div>'
            . '</div></body></html>';
     }

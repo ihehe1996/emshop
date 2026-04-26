@@ -26,6 +26,14 @@ final class Database
     private static $connection = null;
 
     /**
+     * 事务嵌套深度。在长进程（如 swoole）下，连接失效时只有不在事务中才能安全重连重试 ——
+     * 事务中重连意味着锁/SAVEPOINT 状态全丢，应直接抛错让上层 rollBack。
+     *
+     * @var int
+     */
+    private static $transactionDepth = 0;
+
+    /**
      * 返回数据库配置。
      *
      * @return array<string, mixed>
@@ -139,27 +147,29 @@ final class Database
      */
     public static function query(string $sql, array $params = []): array
     {
-        if (self::driver() === 'mysqli') {
-            $stmt = self::prepareMysqli($sql, $params);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            $rows = [];
+        return self::withReconnectRetry(function () use ($sql, $params) {
+            if (self::driver() === 'mysqli') {
+                $stmt = self::prepareMysqli($sql, $params);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                $rows = [];
 
-            if ($result !== false) {
-                $rows = $result->fetch_all(MYSQLI_ASSOC);
-                $result->free();
+                if ($result !== false) {
+                    $rows = $result->fetch_all(MYSQLI_ASSOC);
+                    $result->free();
+                }
+
+                $stmt->close();
+                return $rows;
             }
 
-            $stmt->close();
-            return $rows;
-        }
-
-        /** @var PDO $pdo */
-        $pdo = self::connect();
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        return is_array($rows) ? $rows : [];
+            /** @var PDO $pdo */
+            $pdo = self::connect();
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return is_array($rows) ? $rows : [];
+        });
     }
 
     /**
@@ -169,19 +179,21 @@ final class Database
      */
     public static function execute(string $sql, array $params = []): int
     {
-        if (self::driver() === 'mysqli') {
-            $stmt = self::prepareMysqli($sql, $params);
-            $stmt->execute();
-            $affected = $stmt->affected_rows;
-            $stmt->close();
-            return $affected;
-        }
+        return self::withReconnectRetry(function () use ($sql, $params) {
+            if (self::driver() === 'mysqli') {
+                $stmt = self::prepareMysqli($sql, $params);
+                $stmt->execute();
+                $affected = $stmt->affected_rows;
+                $stmt->close();
+                return $affected;
+            }
 
-        /** @var PDO $pdo */
-        $pdo = self::connect();
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
-        return (int) $stmt->rowCount();
+            /** @var PDO $pdo */
+            $pdo = self::connect();
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return (int) $stmt->rowCount();
+        });
     }
 
     /**
@@ -189,11 +201,20 @@ final class Database
      */
     public static function statement(string $sql, bool $withoutDatabase = false): bool
     {
-        if (self::driver() === 'mysqli') {
-            return (bool) self::connect($withoutDatabase)->query($sql);
+        // $withoutDatabase 时连的是临时无库连接，没必要走重连逻辑
+        if ($withoutDatabase) {
+            if (self::driver() === 'mysqli') {
+                return (bool) self::connect(true)->query($sql);
+            }
+            return self::connect(true)->exec($sql) !== false;
         }
 
-        return self::connect($withoutDatabase)->exec($sql) !== false;
+        return self::withReconnectRetry(function () use ($sql) {
+            if (self::driver() === 'mysqli') {
+                return (bool) self::connect()->query($sql);
+            }
+            return self::connect()->exec($sql) !== false;
+        });
     }
 
     /**
@@ -222,33 +243,36 @@ final class Database
         );
 
         // INSERT 返回 lastInsertId，UPDATE/DELETE 返回 affected rows
-        if (self::driver() === 'mysqli') {
-            /** @var mysqli $conn */
-            $conn = self::connect();
-            $types = '';
-            foreach ($values as $v) {
-                $types .= is_int($v) ? 'i' : (is_float($v) ? 'd' : 's');
+        return self::withReconnectRetry(function () use ($sql, $values) {
+            if (self::driver() === 'mysqli') {
+                /** @var mysqli $conn */
+                $conn = self::connect();
+                $types = '';
+                foreach ($values as $v) {
+                    $types .= is_int($v) ? 'i' : (is_float($v) ? 'd' : 's');
+                }
+                $refs = [];
+                $refs[] = &$types;
+                $localValues = $values;          // 副本：保证 retry 时 references 仍指向有效变量
+                foreach ($localValues as $i => $v) {
+                    $refs[] = &$localValues[$i];
+                }
+                $stmt = $conn->prepare($sql);
+                if (count($refs) > 1) {
+                    call_user_func_array([$stmt, 'bind_param'], $refs);
+                }
+                $stmt->execute();
+                $id = (int) $stmt->insert_id;
+                $stmt->close();
+                return $id;
             }
-            $refs = [];
-            $refs[] = &$types;
-            foreach ($values as $i => $v) {
-                $refs[] = &$values[$i];
-            }
-            $stmt = $conn->prepare($sql);
-            if ($refs !== []) {
-                call_user_func_array([$stmt, 'bind_param'], $refs);
-            }
-            $stmt->execute();
-            $id = (int) $stmt->insert_id;
-            $stmt->close();
-            return $id;
-        }
 
-        /** @var PDO $pdo */
-        $pdo = self::connect();
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($values);
-        return (int) $pdo->lastInsertId();
+            /** @var PDO $pdo */
+            $pdo = self::connect();
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($values);
+            return (int) $pdo->lastInsertId();
+        });
     }
 
     /**
@@ -304,6 +328,8 @@ final class Database
 
     /**
      * 开启事务。
+     * 维护 $transactionDepth：事务中连接断开时不能透明重连（事务状态会丢），
+     * withReconnectRetry 会感知此计数并跳过重试，让上层 catch + rollBack。
      */
     public static function begin(): void
     {
@@ -312,6 +338,7 @@ final class Database
         } else {
             self::connect()->beginTransaction();
         }
+        self::$transactionDepth++;
     }
 
     /**
@@ -320,6 +347,7 @@ final class Database
     public static function commit(): void
     {
         self::connect()->commit();
+        if (self::$transactionDepth > 0) self::$transactionDepth--;
     }
 
     /**
@@ -327,7 +355,12 @@ final class Database
      */
     public static function rollBack(): void
     {
-        self::connect()->rollBack();
+        try {
+            self::connect()->rollBack();
+        } finally {
+            // 即使 rollBack 抛错也要把计数复位，避免后续查询误以为还在事务里而拒绝重连
+            if (self::$transactionDepth > 0) self::$transactionDepth--;
+        }
     }
 
     /**
@@ -443,5 +476,47 @@ final class Database
             $params = $ordered;
         }
         return $convertedSql === null ? $sql : $convertedSql;
+    }
+
+    /**
+     * 长进程下（如 swoole 常驻 worker）连接被服务端 wait_timeout 断开是常态。
+     * 这里识别"连接已死"类错误：mysqli/PDO 的 errno 2006 / 2013。
+     */
+    private static function isConnectionLost(Throwable $e): bool
+    {
+        $code = (int) $e->getCode();
+        if ($code === 2006 || $code === 2013) return true;
+        // PDOException：errorCode() 返回 SQLSTATE，真实 driver errno 在 errorInfo[1]
+        if ($e instanceof PDOException && property_exists($e, 'errorInfo') && is_array($e->errorInfo)) {
+            $driverCode = (int) ($e->errorInfo[1] ?? 0);
+            if ($driverCode === 2006 || $driverCode === 2013) return true;
+        }
+        // 兜底：看消息文本（部分场景 errno 是 0 但消息明确）
+        $msg = $e->getMessage();
+        return stripos($msg, 'gone away') !== false
+            || stripos($msg, 'Lost connection') !== false;
+    }
+
+    /**
+     * 通用包装：调用 $fn 执行查询；如果撞上连接已死，丢弃旧连接 + 重连 + 重试一次。
+     * 事务进行中（$transactionDepth > 0）时不重试 —— 事务状态会随旧连接一起丢，
+     * 透明重试只会让上层基于"事务已生效"的假设崩盘，必须抛错让上层 rollBack。
+     *
+     * @template T
+     * @param callable(): T $fn
+     * @return T
+     */
+    private static function withReconnectRetry(callable $fn)
+    {
+        try {
+            return $fn();
+        } catch (Throwable $e) {
+            if (self::$transactionDepth > 0 || !self::isConnectionLost($e)) {
+                throw $e;
+            }
+            // 丢掉死连接，下次 connect() 会重新建立
+            self::$connection = null;
+            return $fn();
+        }
     }
 }

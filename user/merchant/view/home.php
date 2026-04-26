@@ -12,7 +12,6 @@
 
 $lv = $merchantLevel ?? [];
 $showSelfGoods = (int) ($lv['allow_self_goods'] ?? 0) === 1;
-$showOwnPay = (int) ($lv['allow_own_pay'] ?? 0) === 1;
 $domainAlerts = $domainAlerts ?? [];
 ?>
 <div class="mc-page">
@@ -39,7 +38,7 @@ $domainAlerts = $domainAlerts ?? [];
             <div class="mc-stat-icon" style="background:#eef2ff;color:#4e6ef2;"><i class="fa fa-rmb"></i></div>
             <div class="mc-stat-body">
                 <div class="mc-stat-label">店铺余额</div>
-                <div class="mc-stat-value"><?= htmlspecialchars($uc['currencySymbol']) ?><?= $uc['shopBalance'] ?></div>
+                <div class="mc-stat-value"><?= htmlspecialchars((string) $uc['shopBalance']) ?></div>
             </div>
         </div>
         <div class="mc-stat-card">
@@ -133,7 +132,6 @@ $domainAlerts = $domainAlerts ?? [];
                 ['二级域名',       (int) $merchantLevel['allow_subdomain'] === 1],
                 ['自定义顶级域名', (int) $merchantLevel['allow_custom_domain'] === 1],
                 ['自建商品',       (int) $merchantLevel['allow_self_goods'] === 1],
-                ['独立收款',       (int) $merchantLevel['allow_own_pay'] === 1],
             ];
             foreach ($badges as $b):
             ?>

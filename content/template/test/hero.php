@@ -15,17 +15,9 @@ if ((empty($_slides) || !is_array($_slides)) && ($_hero_scene ?? 'mall') === 'ma
     $_slides = $_heroStorage->getValue('hero_slides');
     if (is_string($_slides)) { $_slides = json_decode($_slides, true); }
 }
+// 未配置任何轮播图 → 整个 hero 版块不渲染（不再用兜底文案占位）
 if (empty($_slides) || !is_array($_slides)) {
-    $isBlog = (($_hero_scene ?? 'mall') === 'blog');
-    $_slides = [
-        [
-            'image'    => '',
-            'title'    => $isBlog ? (htmlspecialchars($site_name ?? 'EMSHOP') . ' 博客') : ('欢迎来到 ' . htmlspecialchars($site_name ?? 'EMSHOP')),
-            'subtitle' => $isBlog ? '分享技术心得，记录成长历程' : '精选优质商品，安全快捷交易',
-            'link'     => $isBlog ? '?c=blog_list' : '?c=goods_list',
-            'btn_text' => $isBlog ? '浏览文章' : '立即选购',
-        ],
-    ];
+    return;
 }
 $_slideCount = count($_slides);
 ?>

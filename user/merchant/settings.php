@@ -39,12 +39,21 @@ if (Request::isPost()) {
                 if ($markupPct > 1000) $markupPct = 1000; // 最高 1000%（保险用）
                 $defaultMarkup = (int) round($markupPct * 100);
 
+                // 公告显示位置：checkbox group → 逗号分隔字符串；仅允许白名单值
+                $rawPositions = $_POST['announcement_positions'] ?? [];
+                if (!is_array($rawPositions)) $rawPositions = [];
+                $allowedPositions = ['home', 'goods_list'];
+                $positions = array_values(array_intersect($allowedPositions, array_map('strval', $rawPositions)));
+
                 $data = [
                     'name' => $name,
                     'logo' => trim((string) Input::post('logo', '')),
                     'slogan' => trim((string) Input::post('slogan', '')),
                     'description' => trim((string) Input::post('description', '')),
                     'icp' => trim((string) Input::post('icp', '')),
+                    // 富文本，不 trim（trim 会破坏富文本里嵌入的换行 / 空白结构）
+                    'announcement' => (string) Input::post('announcement', ''),
+                    'announcement_positions' => implode(',', $positions),
                     'default_markup_rate' => $defaultMarkup,
                 ];
                 Database::update('merchant', $data, $merchantId);

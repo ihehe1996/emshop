@@ -23,16 +23,17 @@ if ($action === 'list') {
     $keyword = trim((string) ($_POST['keyword'] ?? ''));
     $status = isset($_POST['status']) && $_POST['status'] !== '' ? (int) $_POST['status'] : null;
 
-    $where = [];
+    // 主站后台只看 merchant_id=0
+    $where = ['merchant_id' => 0];
     if ($keyword) $where['keyword'] = $keyword;
     if ($status !== null) $where['status'] = $status;
 
     $result = PageModel::getList($where, $page, $limit);
 
-    // 状态计数（供 em-tabs 计数徽章使用）
-    $countAll = PageModel::getList([], 1, 1)['total'];
-    $countPublished = PageModel::getList(['status' => 1], 1, 1)['total'];
-    $countDraft = PageModel::getList(['status' => 0], 1, 1)['total'];
+    // 状态计数（供 em-tabs 计数徽章使用）—— 同样限定主站
+    $countAll = PageModel::getList(['merchant_id' => 0], 1, 1)['total'];
+    $countPublished = PageModel::getList(['merchant_id' => 0, 'status' => 1], 1, 1)['total'];
+    $countDraft = PageModel::getList(['merchant_id' => 0, 'status' => 0], 1, 1)['total'];
 
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
@@ -50,12 +51,46 @@ if ($action === 'list') {
     exit;
 }
 
+// ========== 设为站点首页（主站作用域）==========
+if ($action === 'set_homepage') {
+    $id = (int) ($_POST['id'] ?? 0);
+    $page = PageModel::getById($id);
+    if (!$page) {
+        Response::error('页面不存在');
+    }
+    if ((int) $page['merchant_id'] !== 0) {
+        Response::error('无权操作商户页面');
+    }
+    if (PageModel::setHomepage($id, 0)) {
+        Response::success('已设为主站首页', ['csrf_token' => Csrf::token()]);
+    } else {
+        Response::error('设置失败');
+    }
+}
+
+// ========== 取消页面首页（回退到 homepage_mode）==========
+if ($action === 'clear_homepage') {
+    $id = (int) ($_POST['id'] ?? 0);
+    $page = PageModel::getById($id);
+    if (!$page) {
+        Response::error('页面不存在');
+    }
+    if ((int) $page['merchant_id'] !== 0) {
+        Response::error('无权操作商户页面');
+    }
+    PageModel::clearHomepage(0, $id);
+    Response::success('已取消首页', ['csrf_token' => Csrf::token()]);
+}
+
 // ========== 切换发布状态 ==========
 if ($action === 'toggle_status') {
     $id = (int) ($_POST['id'] ?? 0);
     $page = PageModel::getById($id);
     if (!$page) {
         Response::error('页面不存在');
+    }
+    if ((int) $page['merchant_id'] !== 0) {
+        Response::error('无权操作商户页面');
     }
     $newStatus = (int) $page['status'] ? 0 : 1;
     PageModel::update($id, ['status' => $newStatus]);
@@ -65,6 +100,13 @@ if ($action === 'toggle_status') {
 // ========== 删除 ==========
 if ($action === 'delete') {
     $id = (int) ($_POST['id'] ?? 0);
+    $page = PageModel::getById($id);
+    if (!$page) {
+        Response::error('页面不存在');
+    }
+    if ((int) $page['merchant_id'] !== 0) {
+        Response::error('无权操作商户页面');
+    }
     if (PageModel::delete($id)) {
         Response::success('删除成功', ['csrf_token' => Csrf::token()]);
     } else {
@@ -79,8 +121,17 @@ if ($action === 'batch') {
     if (empty($ids)) {
         Response::error('请选择页面');
     }
-    $failed = 0;
-    foreach ($ids as $id) {
+    // 限定本批次只能是主站页面
+    $prefix = Database::prefix();
+    $allowed = Database::query(
+        "SELECT id FROM {$prefix}page WHERE merchant_id = 0 AND id IN (" . implode(',', array_map('intval', $ids)) . ")"
+    );
+    $allowedIds = array_map(fn($r) => (int) $r['id'], $allowed);
+    if (empty($allowedIds)) {
+        Response::error('所选页面均无权操作');
+    }
+    $failed = count($ids) - count($allowedIds);
+    foreach ($allowedIds as $id) {
         try {
             if ($batchAction === 'publish')    PageModel::update($id, ['status' => 1]);
             elseif ($batchAction === 'draft')  PageModel::update($id, ['status' => 0]);

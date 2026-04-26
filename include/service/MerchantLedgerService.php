@@ -18,26 +18,6 @@ declare(strict_types=1);
 final class MerchantLedgerService
 {
     /**
-     * 计算"引用商品"在订单行的拿货价（×1000000）。
-     *
-     * 注意：商户上下文下 order_goods.price 已是店内价 = base × d_user × (1+u)
-     *       所以拿货价 = 行总价 / (1+u)；无需再单独查 d_user
-     *
-     * @param int $priceRaw   订单项单价（×1000000，店内价）
-     * @param int $quantity
-     * @param int $markupRate 加价率（万分位，0 表示不加价）
-     * @return int
-     */
-    public static function computeRefCost(int $priceRaw, int $quantity, int $markupRate): int
-    {
-        $lineTotal = $priceRaw * $quantity;
-        if ($markupRate <= 0) {
-            return $lineTotal;
-        }
-        return (int) round($lineTotal * 10000 / (10000 + $markupRate));
-    }
-
-    /**
      * 计算自建商品的主站手续费（×1000000）。
      * 公式：fee = price × qty × self_goods_fee_rate / 10000
      *
@@ -98,10 +78,10 @@ final class MerchantLedgerService
             $totalFee  += (int) ($it['fee_amount'] ?? 0);
         }
 
-        // 优惠券由谁承担：v1 算作从商户实得里扣，等同于主站分账不受影响
-        // 实得 = pay_amount − cost − fee
-        $payAmount = (int) ($order['pay_amount'] ?? 0);
-        $income = $payAmount - $totalCost - $totalFee;
+        // 商户实得 = Σ(每行 price × qty − cost − fee)，跟 pay_amount 解耦。
+        // 优惠券（discount_amount）由主站承担 —— 主站做营销活动是它自己的策略，
+        // 不把代价摊给商户。否则会出现"主站发券、商户卖货倒亏"的反直觉情况。
+        $income = $totalLine - $totalCost - $totalFee;
         if ($income < 0) $income = 0; // 边界保护；正常不会负
 
         Database::begin();
@@ -221,30 +201,6 @@ final class MerchantLedgerService
     // ------------------------------------------------------------
     // 私有
     // ------------------------------------------------------------
-
-    /**
-     * 解析商户主用户等级折扣率：9.9 折 → 0.99。
-     */
-    private static function resolveUserDiscountRate(int $userId): float
-    {
-        static $cache = [];
-        if (isset($cache[$userId])) return $cache[$userId];
-
-        $userTable = Database::prefix() . 'user';
-        $levelTable = Database::prefix() . 'user_levels';
-        $row = Database::fetchOne(
-            'SELECT ul.`discount` AS d
-               FROM `' . $userTable . '` u
-          LEFT JOIN `' . $levelTable . '` ul ON ul.`id` = u.`level_id` AND ul.`enabled` = \'y\'
-              WHERE u.`id` = ? LIMIT 1',
-            [$userId]
-        );
-        $raw = (int) ($row['d'] ?? 0);
-        if ($raw <= 0) return $cache[$userId] = 1.0;
-        $rate = ($raw / 1000000) / 10;
-        if ($rate <= 0 || $rate > 1) $rate = 1.0;
-        return $cache[$userId] = $rate;
-    }
 
     /**
      * 解析商户的等级行。

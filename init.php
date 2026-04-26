@@ -100,17 +100,18 @@ $GLOBALS['__em_current_scope'] = $emCurrentScope;
 // 加载插件系统：按当前 scope 读已启用插件，执行其 addAction 注册钩子
 // $emHooks 由插件中的 addAction() 函数填充，供 doAction() 使用
 //
-// 系统内置必装插件（`physical` / `virtual_card`）对所有 scope 默认可用，不依赖 em_plugin 记录：
-// 它们提供基础商品类型（实体商品 / 虚拟卡密），没有它们商户根本无法新建商品。
-// 和模板里 `default` 作为 SYSTEM_APPS 白名单是同一种思路。
+// scope 解析（getRuntimeNames）：
+//   - 主站 scope：加载 main 启用的所有插件
+//   - 商户 scope：MAIN_ONLY_CATEGORIES（支付插件 / 商品插件 / 商品增强）强制从 main 取，
+//     其它分类按商户自身 scope 取 —— 这三类属于商城底层能力，由主站统一管控；其它分类
+//     给商户保留差异化扩展空间。
+//
+// 加载是严格按 em_plugin.is_enabled 驱动的，禁用=不加载（语义纯净）。
+// 禁用商品类型的副作用（已有该类型商品在前台没类型配置、无法下单）由 OrderModel 统一报错拦截。
 $emHooks = [];
 try {
     $pluginModel = new PluginModel();
-    // 插件加载严格按 em_plugin.is_enabled 驱动：禁用=不加载，语义纯净。
-    // 旧版本曾对 ['physical', 'virtual_card'] 做硬编码强制加载的白名单 —— 这属于
-    // 核心越权替用户做决定（用户以为禁用了实际还在跑），已移除；
-    // 禁用插件的副作用（已有该类型商品在前台没类型配置、无法下单）由 OrderModel 统一报错拦截。
-    $activePlugins = $pluginModel->getEnabledNames($emCurrentScope);
+    $activePlugins = $pluginModel->getRuntimeNames($emCurrentScope);
 
     if (is_array($activePlugins) && $activePlugins !== []) {
         foreach ($activePlugins as $pluginFile) {
@@ -155,7 +156,9 @@ foreach ($types as $type => $config) {
 }
 
 // 访客 ?r=XXX 归因：首次进入时写 10 年 Cookie，用于注册/下单时绑定上级
-if (php_sapi_name() !== 'cli') {
+// 注意：仅主站做归因。商户站不再支持推广返佣，访问 1022.em.cc/?r=XXX 时不写 cookie，
+// 也避免商户子域 cookie 污染主站会话。
+if (php_sapi_name() !== 'cli' && MerchantContext::currentId() === 0) {
     try {
         InviteToken::captureFromQuery();
     } catch (Throwable $e) {

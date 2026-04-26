@@ -103,7 +103,7 @@ $csrfToken = Csrf::token();
 .mc-cat-actions { text-align:right; display:flex; justify-content:flex-end; gap:6px; }
 
 .mc-map-row {
-    display:grid; grid-template-columns: 1fr 1fr 90px;
+    display:grid; grid-template-columns: 1fr 1fr 180px;
     gap:12px; padding:10px 14px;
     border-bottom: 1px solid #f3f4f6; align-items:center;
     transition: background .15s;
@@ -126,6 +126,10 @@ $(function(){
     'use strict';
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
 
+    // PJAX 防重复绑定：商户后台用 PJAX 切来切去，document 上的 delegated handler 会叠加。
+    // 统一用 .mcCatPage 命名空间，进页时先 off 一次清掉历史 binding。
+    $(document).off('.mcCatPage');
+
     layui.use(['layer', 'form'], function () {
         var layer = layui.layer;
         var form = layui.form;
@@ -133,7 +137,7 @@ $(function(){
         var topCats = []; // 顶级分类缓存（供添加子分类时选择）
 
         // Tab 切换（主站分类 默认激活；切到自定义分类才惰性加载一次）
-        $(document).on('click', '.mc-cat-tab', function () {
+        $(document).on('click.mcCatPage', '.mc-cat-tab', function () {
             $('.mc-cat-tab').removeClass('is-active');
             $(this).addClass('is-active');
             var tab = $(this).data('tab');
@@ -215,8 +219,8 @@ $(function(){
             });
         }
 
-        $(document).on('click', '#mcCatAddBtn', function () { openCatPopup(null); });
-        $(document).on('click', '.mc-cat-edit', function () {
+        $(document).on('click.mcCatPage', '#mcCatAddBtn', function () { openCatPopup(null); });
+        $(document).on('click.mcCatPage', '.mc-cat-edit', function () {
             var id = $(this).data('id');
             var all = topCats.concat();
             // 从整个列表再找
@@ -227,7 +231,7 @@ $(function(){
                     if (row) openCatPopup(row);
                 });
         });
-        $(document).on('click', '.mc-cat-del', function () {
+        $(document).on('click.mcCatPage', '.mc-cat-del', function () {
             var id = $(this).data('id');
             var name = $(this).data('name');
             layer.confirm('确定删除分类「' + name + '」？', function (idx) {
@@ -337,18 +341,24 @@ $(function(){
             $('#mcMapList').html(html);
         }
         function mapRowHtml(c, isChild) {
-            return '<div class="mc-map-row' + (isChild ? ' is-child' : '') + '">'
+            var hidden = parseInt(c.is_hidden, 10) === 1;
+            var hideBtnLabel = hidden ? '<i class="fa fa-eye"></i> 显示' : '<i class="fa fa-eye-slash"></i> 隐藏';
+            var hideBtnClass = hidden ? 'mc-btn--warn' : '';
+            var hiddenTag = hidden ? ' <span class="em-tag em-tag--muted" style="margin-left:6px;">已隐藏</span>' : '';
+            return '<div class="mc-map-row' + (isChild ? ' is-child' : '') + '" data-master-id="' + c.id + '">'
                  +   '<div>'
                  +     (isChild ? '<i class="fa fa-level-up fa-rotate-90" style="color:#d1d5db;margin-right:6px;"></i>' : '')
                  +     escapeHtml(c.name)
+                 +     hiddenTag
                  +   '</div>'
                  +   '<div><input type="text" class="mc-map-alias" data-id="' + c.id + '" value="' + escapeHtml(c.alias_name || '') + '" placeholder="保持留空则使用主站原名" maxlength="100"></div>'
-                 +   '<div style="text-align:right;">'
+                 +   '<div style="text-align:right;display:flex;gap:6px;justify-content:flex-end;">'
+                 +     '<button type="button" class="mc-btn mc-btn--sm ' + hideBtnClass + ' mc-map-toggle-hide" data-id="' + c.id + '" data-hidden="' + (hidden ? 1 : 0) + '">' + hideBtnLabel + '</button>'
                  +     '<button type="button" class="mc-btn mc-btn--sm mc-btn--primary mc-map-save" data-id="' + c.id + '"><i class="fa fa-check"></i> 保存</button>'
                  +   '</div>'
                  + '</div>';
         }
-        $(document).on('click', '.mc-map-save', function () {
+        $(document).on('click.mcCatPage', '.mc-map-save', function () {
             var id = $(this).data('id');
             var alias = $('.mc-map-alias[data-id="' + id + '"]').val();
             $.ajax({
@@ -360,6 +370,22 @@ $(function(){
                         if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
                         layer.msg(res.msg || '已保存');
                     } else { layer.msg(res.msg || '保存失败'); }
+                }
+            });
+        });
+        // 隐藏 / 恢复显示
+        $(document).on('click.mcCatPage', '.mc-map-toggle-hide', function () {
+            var id = $(this).data('id');
+            $.ajax({
+                url: '/user/merchant/category.php',
+                type: 'POST', dataType: 'json',
+                data: {_action: 'toggle_hide_map', csrf_token: csrfToken, master_category_id: id},
+                success: function (res) {
+                    if (res.code === 200) {
+                        if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
+                        layer.msg(res.msg || '已更新');
+                        loadMap(); // 重新拉一次保持 UI 状态一致
+                    } else { layer.msg(res.msg || '更新失败'); }
                 }
             });
         });

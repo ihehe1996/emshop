@@ -1,15 +1,15 @@
 <?php
 defined('EM_ROOT') || exit('access denied!');
 
-// ===== 查单页 tabs 动态生成 =====
-// tab1：浏览器订单（guest_token 列近 10 条）
-// tab2：凭据查单（联系方式/订单密码任一或组合，按后台配置动态显示字段和名称）
-// tab3：订单编号查单（订单号 + 凭据）
-// 只要 contact 或 password 任一开启，tab2/tab3 才有意义；都不开时只显示 tab1
-$contactOn  = !empty($gfConfig['contact_enabled']);
-$passwordOn = !empty($gfConfig['password_enabled']);
+// ===== 查单页 tab 路由（PJAX 模式）=====
+// 由 user/find_order.php 注入：$currentTab / $contactOn / $passwordOn / $captchaExpr / $guestToken / $currencySymbol
+// tab 改成 <a data-pjax> 链接：
+//   /user/find_order.php          → token（默认）
+//   /user/find_order.php?tab=credentials
+//   /user/find_order.php?tab=orderno
+// 切 tab 走 PJAX 替换 #foContent；刷新页面停在当前 tab；浏览器前进后退也能用
 
-// tab2 / tab3 名称按实际开启的凭据组合
+// tab2 名称按实际开启的凭据组合
 if ($contactOn && $passwordOn) {
     $credLabel = '联系方式/订单密码查单';
 } elseif ($contactOn) {
@@ -22,27 +22,30 @@ if ($contactOn && $passwordOn) {
 $showCredTab = ($contactOn || $passwordOn);
 $showOrderNoTab = ($contactOn || $passwordOn);
 ?>
-<!-- 游客查询订单视图（由 user/find_order.php 直接包含；事件交给 guest_find.js） -->
 <div class="find-order-layout">
 
-    <!-- 查询方式 tab -->
+    <!-- 查询方式 tab：每个 tab 是独立 URL，点击走 PJAX 替换 #foContent -->
     <div class="find-order-tabs" id="findOrderTabs">
-        <button type="button" class="find-order-tab active" data-mode="token" id="tabToken">
+        <a href="/user/find_order.php" data-pjax
+           class="find-order-tab<?= $currentTab === 'token' ? ' active' : '' ?>">
             <i class="fa fa-user"></i> 浏览器订单
-        </button>
+        </a>
         <?php if ($showCredTab): ?>
-        <button type="button" class="find-order-tab" data-mode="credentials" id="tabCredentials">
+        <a href="/user/find_order.php?tab=credentials" data-pjax
+           class="find-order-tab<?= $currentTab === 'credentials' ? ' active' : '' ?>">
             <i class="fa fa-id-card"></i> <?= htmlspecialchars($credLabel) ?>
-        </button>
+        </a>
         <?php endif; ?>
         <?php if ($showOrderNoTab): ?>
-        <button type="button" class="find-order-tab" data-mode="orderno" id="tabOrderNo">
+        <a href="/user/find_order.php?tab=orderno" data-pjax
+           class="find-order-tab<?= $currentTab === 'orderno' ? ' active' : '' ?>">
             <i class="fa fa-file-text-o"></i> 订单编号查单
-        </button>
+        </a>
         <?php endif; ?>
     </div>
 
-    <!-- 面板 1：浏览器订单 -->
+    <?php if ($currentTab === 'token'): ?>
+    <!-- 浏览器订单：仅当前 tab 才渲染 -->
     <div class="find-order-panel" id="panelToken">
         <div class="find-order-hint">
             <i class="fa fa-info-circle"></i> 正在从浏览器获取订单记录...
@@ -52,10 +55,11 @@ $showOrderNoTab = ($contactOn || $passwordOn);
             正在加载订单...
         </div>
     </div>
+    <?php endif; ?>
 
-    <?php if ($showCredTab): ?>
-    <!-- 面板 2：凭据查单（不需要订单号，按凭据列出用户所有订单） -->
-    <div class="find-order-panel" id="panelCredentials" style="display:none;">
+    <?php if ($currentTab === 'credentials' && $showCredTab): ?>
+    <!-- 凭据查单 -->
+    <div class="find-order-panel" id="panelCredentials">
         <div class="find-order-form">
             <?php if ($contactOn): ?>
             <div class="find-order-form-group">
@@ -71,6 +75,17 @@ $showOrderNoTab = ($contactOn || $passwordOn);
                        placeholder="<?= htmlspecialchars($gfConfig['password_lookup_placeholder']) ?>" maxlength="32">
             </div>
             <?php endif; ?>
+            <div class="find-order-form-group fo-captcha-row">
+                <label>验证码</label>
+                <div class="fo-captcha">
+                    <span class="fo-captcha__expr"><?= htmlspecialchars($captchaExpr) ?> = ?</span>
+                    <input type="text" class="find-order-input fo-captcha__input"
+                           placeholder="算出结果" maxlength="2" inputmode="numeric" autocomplete="off">
+                    <button type="button" class="fo-captcha__refresh" title="换一题">
+                        <i class="fa fa-refresh"></i>
+                    </button>
+                </div>
+            </div>
             <button type="button" class="find-order-submit" id="credentialsSubmitBtn">
                 <i class="fa fa-search"></i> 查询订单
             </button>
@@ -78,14 +93,25 @@ $showOrderNoTab = ($contactOn || $passwordOn);
     </div>
     <?php endif; ?>
 
-    <?php if ($showOrderNoTab): ?>
-    <!-- 面板 3：仅订单编号查单（无需凭据） -->
-    <div class="find-order-panel" id="panelOrderNo" style="display:none;">
+    <?php if ($currentTab === 'orderno' && $showOrderNoTab): ?>
+    <!-- 仅订单编号查单 -->
+    <div class="find-order-panel" id="panelOrderNo">
         <div class="find-order-form">
             <div class="find-order-form-group">
                 <label>订单编号</label>
                 <input type="text" class="find-order-input" id="orderNoInput"
                        placeholder="请输入订单编号" maxlength="32">
+            </div>
+            <div class="find-order-form-group fo-captcha-row">
+                <label>验证码</label>
+                <div class="fo-captcha">
+                    <span class="fo-captcha__expr"><?= htmlspecialchars($captchaExpr) ?> = ?</span>
+                    <input type="text" class="find-order-input fo-captcha__input"
+                           placeholder="算出结果" maxlength="2" inputmode="numeric" autocomplete="off">
+                    <button type="button" class="fo-captcha__refresh" title="换一题">
+                        <i class="fa fa-refresh"></i>
+                    </button>
+                </div>
             </div>
             <button type="button" class="find-order-submit" id="orderNoSubmitBtn">
                 <i class="fa fa-search"></i> 查询订单
@@ -106,52 +132,90 @@ $showOrderNoTab = ($contactOn || $passwordOn);
 </div>
 
 <script>
+/**
+ * 注意：本块脚本会随 PJAX 替换重复执行。
+ * 防重复绑定的策略：
+ *   - 所有 $(document).on(...) 都用命名空间 + 先 .off(命名空间) 再 .on
+ *   - GuestFind.init() 内部已经做了 $doc.off('.findGuestFind')
+ * 不要把 handler 直接绑到 .find-order-tab 等元素上（DOM 替换后旧绑定会丢失，新元素拿不到事件）
+ */
 (function () {
+    var currentTab = <?= json_encode($currentTab) ?>;
     var guestToken = <?= json_encode($guestToken ?: '') ?>;
     var currencySymbol = <?= json_encode($currencySymbol) ?>;
-    var showCredTab = <?= $showCredTab ? 'true' : 'false' ?>;
-    var showOrderNoTab = <?= $showOrderNoTab ? 'true' : 'false' ?>;
 
-    // 缓存首次加载的浏览器订单结果，切回本 tab 时直接重显，避免数据"消失"
-    var tokenResultsCache = null;
-
-    // 初始化组件（tab 切换 + 两个查单按钮事件由 guest_find.js 自动处理）
-    GuestFind.init({ currencySymbol: currencySymbol });
-
-    // 浏览器订单：页面加载自动查询；autoScroll=false 避免自动滚动到结果
-    function autoLoadByToken() {
-        if (!guestToken) {
-            $('#tokenLoading').hide();
-            $('#panelToken .find-order-hint').hide();
-            $('#panelToken').append('<div class="find-order-empty">未找到浏览器订单记录<br><small>请使用其他方式查询订单</small></div>');
-            $('#tabToken').hide();
-            if (showCredTab) $('#tabCredentials').trigger('click');
-            else if (showOrderNoTab) $('#tabOrderNo').trigger('click');
-            return;
-        }
-        $.post('/user/find_order.php', { mode: 'token', guest_token: guestToken }, function (res) {
-            $('#tokenLoading').hide();
-            $('#panelToken .find-order-hint').hide();
-            if (res.code === 200 && res.data && res.data.length > 0) {
-                tokenResultsCache = res.data;
-                GuestFind.renderResults(res.data, { autoScroll: false });
-            } else {
-                $('#panelToken').append('<div class="find-order-empty">未找到浏览器订单记录<br><small>请确认您之前在此浏览器下过单</small></div>');
-            }
-        }, 'json').fail(function () {
-            $('#tokenLoading').hide();
-            $('#panelToken .find-order-hint').hide();
-            $('#panelToken').append('<div class="find-order-empty">加载失败，请刷新重试</div>');
-        });
+    // ============ Captcha 处理（仅 credentials/orderno tab 用到）============
+    function readCaptcha() {
+        return ($('.fo-captcha__input').val() || '').trim();
+    }
+    function setCaptchaExpr(expr) {
+        $('.fo-captcha__expr').text((expr || '') + ' = ?');
+        $('.fo-captcha__input').val('');
     }
 
-    // 切回"浏览器订单"时重新展示缓存（guest_find.js 的 tab 切换会 hide 结果区）
-    $(document).off('click.findOrderTokenTab').on('click.findOrderTokenTab', '#tabToken', function () {
-        if (tokenResultsCache) {
-            GuestFind.renderResults(tokenResultsCache, { autoScroll: false });
+    // 换一题：服务端签发新 captcha，前端同步显示
+    // 用命名空间 + off 先解绑，避免 PJAX 重新执行本脚本时累积 handler
+    $(document).off('click.foCaptchaRefresh').on('click.foCaptchaRefresh', '.fo-captcha__refresh', function () {
+        var $btn = $(this);
+        $btn.find('i').addClass('fa-spin');
+        $.post('/user/find_order.php', { action: 'refresh_captcha' }, function (res) {
+            if (res && res.code === 200 && res.data && res.data.expr) {
+                setCaptchaExpr(res.data.expr);
+            }
+        }, 'json').always(function () {
+            $btn.find('i').removeClass('fa-spin');
+        });
+    });
+
+    GuestFind.init({
+        currencySymbol: currencySymbol,
+        beforeSubmit: function (data, mode) {
+            // 只有需要 captcha 的模式才校验
+            if (mode === 'credentials' || mode === 'orderno') {
+                var captcha = readCaptcha();
+                if (!captcha) {
+                    layui.layer.msg('请填写验证码');
+                    return false;
+                }
+                data.captcha = captcha;
+            }
+            return data;
+        },
+        // 后端在错误响应里附带新 captcha_expr，前端同步替换显示
+        onError: function (res) {
+            if (res && res.data && res.data.captcha_expr) {
+                setCaptchaExpr(res.data.captcha_expr);
+            }
         }
     });
 
-    autoLoadByToken();
+    // ============ token tab：自动加载浏览器订单 ============
+    if (currentTab === 'token') {
+        if (!guestToken) {
+            $('#tokenLoading').hide();
+            $('#panelToken .find-order-hint').hide();
+            $('#panelToken').append(
+                '<div class="find-order-empty">未找到浏览器订单记录<br>'
+              + '<small>请使用其他方式查询订单</small></div>'
+            );
+        } else {
+            $.post('/user/find_order.php', { mode: 'token', guest_token: guestToken }, function (res) {
+                $('#tokenLoading').hide();
+                $('#panelToken .find-order-hint').hide();
+                if (res.code === 200 && res.data && res.data.length > 0) {
+                    GuestFind.renderResults(res.data, { autoScroll: false });
+                } else {
+                    $('#panelToken').append(
+                        '<div class="find-order-empty">未找到浏览器订单记录<br>'
+                      + '<small>请确认您之前在此浏览器下过单</small></div>'
+                    );
+                }
+            }, 'json').fail(function () {
+                $('#tokenLoading').hide();
+                $('#panelToken .find-order-hint').hide();
+                $('#panelToken').append('<div class="find-order-empty">加载失败，请刷新重试</div>');
+            });
+        }
+    }
 })();
 </script>

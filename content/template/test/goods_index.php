@@ -5,6 +5,23 @@ defined('EM_ROOT') || exit('access denied!');
 
 <?php include __DIR__ . '/hero.php'; ?>
 
+<?php
+// 店铺公告 —— 当前 scope 已设公告且勾选了"商城首页"展示位置时输出
+$_announce = $announcement ?? null;
+if (is_array($_announce) && !empty($_announce['html']) && in_array('home', $_announce['positions'] ?? [], true)):
+?>
+<div class="wrapper">
+    <div class="site-announcement">
+        <div class="site-announcement__head">
+            <span class="site-announcement__icon"><i class="fa fa-bullhorn"></i></span>
+            <span class="site-announcement__title">店铺公告</span>
+            <span class="site-announcement__title-sep"></span>
+        </div>
+        <div class="site-announcement__body"><?= $_announce['html'] ?></div>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="page-body">
     <div class="blog-layout">
 
@@ -20,7 +37,7 @@ defined('EM_ROOT') || exit('access denied!');
                 <?php if (!empty($recommended_goods)): ?>
                 <div class="goods-grid">
                     <?php foreach ($recommended_goods as $g): ?>
-                    <a href="<?= url_goods((int) $g['id']) ?>" class="card goods-card">
+                    <a <?= goods_card_href_attrs($g) ?> class="card goods-card">
                         <div class="card-img">
                             <img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>">
                             <?php if (($g['delivery_type'] ?? '') === 'auto'): ?>

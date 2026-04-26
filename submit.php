@@ -26,7 +26,8 @@ if ($plugin === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $plugin)) {
 $data = array_merge($_GET, $_POST);
 
 // 分发给插件处理；插件内部应负责 echo 'success' / exit
-doAction('payment_notify_' . $plugin, $data);
+// 走 PaymentService 包装：商户站子域名打过来的回调，必须切到主站 scope 让插件读到正确凭证
+PaymentService::dispatchNotify($plugin, $data);
 
 // 兜底：若插件未输出，视为未识别的回调
 http_response_code(500);

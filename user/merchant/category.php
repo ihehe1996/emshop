@@ -121,7 +121,7 @@ if (Request::isPost()) {
 
             // ================= 主站分类映射 =================
             case 'list_map': {
-                // 读主站分类 + 本店映射
+                // 读主站分类 + 本店映射（含别名 + 隐藏标记）
                 $cats = Database::query(
                     'SELECT `id`, `parent_id`, `name`, `sort`
                        FROM `' . $masterCatTable . '`
@@ -129,17 +129,19 @@ if (Request::isPost()) {
                       ORDER BY `parent_id` ASC, `sort` ASC, `id` ASC'
                 );
                 $maps = Database::query(
-                    'SELECT `master_category_id`, `alias_name`
+                    'SELECT `master_category_id`, `alias_name`, `is_hidden`
                        FROM `' . $mapTable . '`
                       WHERE `merchant_id` = ?',
                     [$merchantId]
                 );
                 $mapIdx = [];
                 foreach ($maps as $m) {
-                    $mapIdx[(int) $m['master_category_id']] = (string) $m['alias_name'];
+                    $mapIdx[(int) $m['master_category_id']] = $m;
                 }
                 foreach ($cats as &$c) {
-                    $c['alias_name'] = $mapIdx[(int) $c['id']] ?? '';
+                    $hit = $mapIdx[(int) $c['id']] ?? null;
+                    $c['alias_name'] = $hit ? (string) $hit['alias_name'] : '';
+                    $c['is_hidden']  = $hit ? (int) $hit['is_hidden'] : 0;
                 }
                 unset($c);
                 Response::success('', ['data' => $cats, 'csrf_token' => Csrf::token()]);
@@ -159,38 +161,89 @@ if (Request::isPost()) {
                     Response::error('主站分类不存在');
                 }
                 $alias = trim((string) Input::post('alias_name', ''));
-
-                if ($alias === '') {
-                    // 别名置空 = 删除映射
-                    Database::execute(
-                        'DELETE FROM `' . $mapTable . '` WHERE `merchant_id` = ? AND `master_category_id` = ?',
-                        [$merchantId, $masterId]
-                    );
-                    Response::success('已清除别名', ['csrf_token' => Csrf::refresh()]);
-                    break;
-                }
                 if (mb_strlen($alias) > 100) {
                     Response::error('别名长度不能超过 100 字符');
                 }
 
                 $existing = Database::fetchOne(
-                    'SELECT `id` FROM `' . $mapTable . '`
+                    'SELECT `id`, `is_hidden` FROM `' . $mapTable . '`
                       WHERE `merchant_id` = ? AND `master_category_id` = ? LIMIT 1',
                     [$merchantId, $masterId]
                 );
+
                 if ($existing === null) {
+                    if ($alias === '') {
+                        // 既没别名又没隐藏过 → 完全跟随主站，不写空行
+                        Response::success('已跟随主站', ['csrf_token' => Csrf::refresh()]);
+                        break;
+                    }
                     Database::insert('merchant_category_map', [
                         'merchant_id' => $merchantId,
                         'master_category_id' => $masterId,
                         'alias_name' => $alias,
+                        'is_hidden' => 0,
                     ]);
                 } else {
-                    Database::update('merchant_category_map',
-                        ['alias_name' => $alias],
-                        (int) $existing['id']
-                    );
+                    // 别名清空 + 隐藏=0 → 行已经没用，直接删
+                    if ($alias === '' && (int) $existing['is_hidden'] === 0) {
+                        Database::execute(
+                            'DELETE FROM `' . $mapTable . '` WHERE `id` = ?',
+                            [(int) $existing['id']]
+                        );
+                    } else {
+                        Database::update('merchant_category_map',
+                            ['alias_name' => $alias],
+                            (int) $existing['id']
+                        );
+                    }
                 }
                 Response::success('已保存', ['csrf_token' => Csrf::refresh()]);
+                break;
+            }
+
+            // 切换"在本店隐藏"开关
+            case 'toggle_hide_map': {
+                $masterId = (int) Input::post('master_category_id', 0);
+                if ($masterId <= 0) Response::error('缺少主站分类 id');
+                $masterExists = Database::fetchOne(
+                    'SELECT `id` FROM `' . $masterCatTable . '` WHERE `id` = ? LIMIT 1',
+                    [$masterId]
+                );
+                if ($masterExists === null) Response::error('主站分类不存在');
+
+                $existing = Database::fetchOne(
+                    'SELECT `id`, `alias_name`, `is_hidden` FROM `' . $mapTable . '`
+                      WHERE `merchant_id` = ? AND `master_category_id` = ? LIMIT 1',
+                    [$merchantId, $masterId]
+                );
+                $cur = $existing ? (int) $existing['is_hidden'] : 0;
+                $next = $cur === 1 ? 0 : 1;
+
+                if ($existing === null) {
+                    Database::insert('merchant_category_map', [
+                        'merchant_id' => $merchantId,
+                        'master_category_id' => $masterId,
+                        'alias_name' => '',
+                        'is_hidden' => $next,
+                    ]);
+                } else {
+                    // 取消隐藏 + 没别名 → 行已经没用，直接删
+                    if ($next === 0 && (string) $existing['alias_name'] === '') {
+                        Database::execute(
+                            'DELETE FROM `' . $mapTable . '` WHERE `id` = ?',
+                            [(int) $existing['id']]
+                        );
+                    } else {
+                        Database::update('merchant_category_map',
+                            ['is_hidden' => $next],
+                            (int) $existing['id']
+                        );
+                    }
+                }
+                Response::success($next === 1 ? '已隐藏' : '已恢复显示', [
+                    'is_hidden' => $next,
+                    'csrf_token' => Csrf::refresh(),
+                ]);
                 break;
             }
 

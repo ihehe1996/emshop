@@ -3,7 +3,6 @@ if (!defined('EM_ROOT')) {
     exit('Access Denied');
 }
 /** @var array<string, mixed> $row  拥有 r.* + g.title/min_price/max_price */
-/** @var float $discountRate */
 /** @var string $csrfToken */
 /** @var string $pageTitle */
 
@@ -13,8 +12,9 @@ $esc = function (string $s): string {
 
 $basePrice = (int) $row['min_price'];
 $maxBasePrice = (int) ($row['max_price'] ?? 0);
-$cost = (int) round($basePrice * $discountRate);
-$maxCost = $maxBasePrice > 0 ? (int) round($maxBasePrice * $discountRate) : 0;
+// v1.3+：商户拿货统一按主站原价（无折扣），cost = base
+$cost = $basePrice;
+$maxCost = $maxBasePrice;
 $markupPct = rtrim(rtrim(number_format(((int) $row['markup_rate']) / 100, 2, '.', ''), '0'), '.');
 
 // 弹窗是 iframe，拿不到父窗口的 window.EMSHOP_CURRENCY —— 这里重新解析访客币种 + 汇率
@@ -78,7 +78,7 @@ if ($visitorCurRow !== null) {
                     </div>
                 </div>
                 <div class="layui-form-mid layui-word-aux">
-                    折扣率 <?= number_format($discountRate, 4) ?>（由商户主的用户等级决定）
+                    商户拿货统一按主站原价收，与会员等级无关
                 </div>
             </div>
         </div>

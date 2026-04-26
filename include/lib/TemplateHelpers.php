@@ -69,6 +69,24 @@ function url_goods(int $id, array $params = []): string
 }
 
 /**
+ * 商品卡片 <a> 标签的属性串：
+ *   - jump_url 非空：直接跳外链（target=_blank + rel=nofollow noopener）
+ *   - 否则：跳商品详情页（同站）
+ *
+ * 用法：<a <?= goods_card_href_attrs($g) ?> class="card goods-card">...
+ *
+ * @param array<string,mixed> $row 商品行（来自 BaseController::queryGoodsList* 的输出，至少含 id 和 jump_url）
+ */
+function goods_card_href_attrs(array $row): string
+{
+    $jump = trim((string) ($row['jump_url'] ?? ''));
+    if ($jump !== '') {
+        return 'href="' . htmlspecialchars($jump, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="nofollow noopener"';
+    }
+    return 'href="' . htmlspecialchars(url_goods((int) ($row['id'] ?? 0)), ENT_QUOTES, 'UTF-8') . '"';
+}
+
+/**
  * 构建商品列表页 URL。
  * 支持 slug / category_id / tag_id / page 等 params。
  *
@@ -133,24 +151,50 @@ function url_goods_list(array $params = []): string
 
 /**
  * 按分类构建商品列表页 URL（有 slug 优先 slug，无 slug 用 id）。
+ *
+ * 商户自建分类（source=merchant）会在 URL 上加 category_source=merchant，
+ * 让 GoodsController._list 区分主站分类与商户分类（id 在两套表里可能撞号）。
  */
 function url_goods_category(array $cat): string
 {
+    $isMerchantCat = (string) ($cat['source'] ?? 'main') === 'merchant';
     $slug = trim((string) ($cat['slug'] ?? ''));
+    // 商户自建分类没有 slug —— 永远走 category_id 路径，并带上 source 参数
+    if ($isMerchantCat) {
+        return url_goods_list([
+            'category_id'     => (int) $cat['id'],
+            'category_source' => 'merchant',
+        ]);
+    }
     if ($slug !== '') return url_goods_list(['slug' => $slug]);
     return url_goods_list(['category_id' => (int) $cat['id']]);
 }
 
 /**
- * 商城首页 URL。
- * 默认模式下 "/" 就是首页；pretty 模式下也用 "/" 进入入口控制器。
+ * 商城首页 URL（显式指向 goods_index 控制器）。
+ *
+ * 不能简单返回 "/" —— 因为 "/" 在 HOMEPAGE_MODE='blog' / 'goods_list' 时
+ * 会被 Dispatcher 替换成博客首页 / 商品列表，点"商城"导航就回不到商城首页了。
+ * 必须用显式路径，让路由跳过首页模式替换。
  */
-function url_goods_index(): string { return '/'; }
+function url_goods_index(array $params = []): string
+{
+    switch (url_format()) {
+        case 'file':
+            return url_append('/post.html', $params);
+        case 'dir1':
+        case 'dir2':
+            return url_append('/post/', $params);
+        default:
+            return url_append('/?c=goods_index', $params);
+    }
+}
 
 /**
- * 兼容别名：url_home() 与 url_goods_index() 语义一致。
+ * 站点首页 URL —— 永远是 "/"，跟随后台 homepage_mode 走对应控制器。
+ * 用于 logo / "首页"导航等"回到当前站点根入口"的场景。
  */
-function url_home(): string { return url_goods_index(); }
+function url_home(): string { return '/'; }
 
 /**
  * 构建商品标签页 URL。

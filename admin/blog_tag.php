@@ -22,7 +22,8 @@ if ($action === 'list') {
     $limit   = (int)($_POST['limit'] ?? 20);
     $keyword = trim($_POST['keyword'] ?? '');
 
-    $where = [];
+    // 主站后台只看主站标签池
+    $where = ['merchant_id' => 0];
     if ($keyword !== '') $where['keyword'] = $keyword;
 
     $result = BlogTagModel::getAdminList($where, $page, $limit);
@@ -48,8 +49,8 @@ if ($action === 'save') {
         Response::error('标签名不能为空');
     }
 
-    // 检查重名
-    if (BlogTagModel::nameExists($name, $id)) {
+    // 检查重名（主站标签池内）
+    if (BlogTagModel::nameExists($name, $id, 0)) {
         Response::error('标签名已存在');
     }
 
@@ -59,8 +60,16 @@ if ($action === 'save') {
     ];
 
     if ($id > 0) {
+        $existing = BlogTagModel::getById($id);
+        if (!$existing) {
+            Response::error('标签不存在');
+        }
+        if ((int) $existing['merchant_id'] !== 0) {
+            Response::error('无权操作商户标签');
+        }
         BlogTagModel::update($id, $data);
     } else {
+        $data['merchant_id'] = 0; // 主站后台创建的标签固定归主站池
         $id = BlogTagModel::create($data);
     }
 
@@ -73,6 +82,13 @@ if ($action === 'delete') {
     if ($id <= 0) {
         Response::error('参数错误');
     }
+    $existing = BlogTagModel::getById($id);
+    if (!$existing) {
+        Response::error('标签不存在');
+    }
+    if ((int) $existing['merchant_id'] !== 0) {
+        Response::error('无权删除商户标签');
+    }
     if (BlogTagModel::delete($id)) {
         Response::success('删除成功', ['csrf_token' => Csrf::token()]);
     } else {
@@ -80,7 +96,7 @@ if ($action === 'delete') {
     }
 }
 
-// 批量删除
+// 批量删除（仅主站标签池）
 if ($action === 'batch_delete') {
     $ids = is_array($_POST['ids'] ?? null)
         ? array_map('intval', $_POST['ids'])
@@ -88,8 +104,12 @@ if ($action === 'batch_delete') {
     if (empty($ids)) {
         Response::error('请选择标签');
     }
-    foreach ($ids as $id) {
-        BlogTagModel::delete($id);
+    $prefix = Database::prefix();
+    $allowedRows = Database::query(
+        "SELECT id FROM {$prefix}blog_tag WHERE merchant_id = 0 AND id IN (" . implode(',', array_map('intval', $ids)) . ")"
+    );
+    foreach ($allowedRows as $row) {
+        BlogTagModel::delete((int) $row['id']);
     }
     Response::success('批量删除成功', ['csrf_token' => Csrf::token()]);
 }

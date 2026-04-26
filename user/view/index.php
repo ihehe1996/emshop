@@ -2,6 +2,9 @@
 if (!defined('EM_ROOT')) {
     exit('Access Denied');
 }
+// 站点 Logo：跟主站前台 test 模板同款（image 模式有图就显示图，否则文字）
+$siteLogoType = (string) (Config::get('site_logo_type') ?? 'text');
+$siteLogo     = (string) (Config::get('site_logo') ?? '');
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -22,8 +25,11 @@ if (!defined('EM_ROOT')) {
 <header class="uc-header uc-header--v2">
     <div class="uc-header-inner">
         <a href="/" class="uc-header-logo">
-            <span class="uc-header-logo__mark"><i class="fa fa-cube"></i></span>
-            <?= htmlspecialchars($siteName) ?>
+            <?php if ($siteLogoType === 'image' && $siteLogo !== ''): ?>
+            <img src="<?= htmlspecialchars($siteLogo) ?>" alt="<?= htmlspecialchars($siteName) ?>" class="uc-header-logo__img">
+            <?php else: ?>
+            <span class="uc-header-logo__text"><?= htmlspecialchars($siteName) ?></span>
+            <?php endif; ?>
         </a>
         <span class="uc-header-title">
             <i class="fa fa-user-circle-o"></i> 个人中心
@@ -122,9 +128,12 @@ if (!defined('EM_ROOT')) {
             <a href="/user/coupon.php" data-pjax="#userContent" class="uc-nav-item">
                 <i class="fa fa-ticket"></i><span>我的优惠券</span>
             </a>
+            <?php // 推广 / 返佣只在主站启用；商户子域名下隐藏入口 ?>
+            <?php if (MerchantContext::currentId() === 0): ?>
             <a href="/user/rebate.php" data-pjax="#userContent" class="uc-nav-item">
                 <i class="fa fa-share-alt"></i><span>我的推广</span>
             </a>
+            <?php endif; ?>
             <a href="/user/address.php" data-pjax="#userContent" class="uc-nav-item">
                 <i class="fa fa-map-marker"></i><span>收货地址</span>
             </a>

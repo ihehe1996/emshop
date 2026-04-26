@@ -366,7 +366,7 @@ $(function() {
         // 标签输入
         // ============================================================
         (function() {
-            var allTags = <?= json_encode(BlogTagModel::getAll(), JSON_UNESCAPED_UNICODE) ?>;
+            var allTags = <?= json_encode(BlogTagModel::getAll(0), JSON_UNESCAPED_UNICODE) ?>;
             var $wrap = $('#tagInputWrap');
             var $tokens = $('#tagTokens');
             var $input = $('#tagTextInput');

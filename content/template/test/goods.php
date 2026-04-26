@@ -75,33 +75,53 @@ defined('EM_ROOT') || exit('access denied!');
                     <?php else: ?>
                     <span class="detail-price-original" id="specMarketPrice" style="display:none;"></span>
                     <?php endif; ?>
+                    <!-- 满减命中时 JS 填充：原小计（删除线）+ "满 X 减 Y" 标签 -->
+                    <span class="detail-price-discount-hint" id="specDiscountHint" style="display:none;">
+                        <span class="detail-price-strike" id="specSubtotalStrike"></span>
+                        <span class="detail-price-discount-label" id="specDiscountLabel"></span>
+                    </span>
                 </div>
 
                 <?php if (!empty($specs) && count($specs) > 1): ?>
                 <!-- 规格选择 -->
                 <div class="spec-section">
                     <?php if (!empty($spec_dims)): ?>
+                    <!-- 多维度：每个按钮上方有 .spec-item-tags 容器，由 JS refreshDimBtnTags()
+                         按"假设选中此按钮形成的完整组合 spec.tags"动态填充。 -->
                     <?php foreach ($spec_dims as $dim): ?>
                     <div class="spec-group">
                         <div class="spec-group-label"><i class="fa fa-th-list"></i> <?= htmlspecialchars($dim['name']) ?></div>
                         <div class="spec-group-options">
                             <?php foreach ($dim['values'] as $val): ?>
-                            <button type="button" class="spec-btn spec-dim-btn"
-                                    data-dim-id="<?= $dim['id'] ?>"
-                                    data-value-id="<?= $val['id'] ?>"><?= htmlspecialchars($val['name']) ?></button>
+                            <div class="spec-item">
+                                <div class="spec-item-tags" style="display:none;"></div>
+                                <button type="button" class="spec-btn spec-dim-btn"
+                                        data-dim-id="<?= $dim['id'] ?>"
+                                        data-value-id="<?= $val['id'] ?>"><?= htmlspecialchars($val['name']) ?></button>
+                            </div>
                             <?php endforeach; ?>
                         </div>
                     </div>
                     <?php endforeach; ?>
                     <?php else: ?>
+                    <!-- 单维度：按钮和规格行一一对应，tags 直接静态贴在按钮上方 -->
                     <div class="spec-group">
                         <div class="spec-group-label"><i class="fa fa-th-list"></i> 规格</div>
                         <div class="spec-group-options">
                             <?php foreach ($specs as $s): ?>
                             <?php $outOfStock = ((int) ($s['stock'] ?? 0)) <= 0; ?>
-                            <button type="button" class="spec-btn spec-single-btn<?= $s['is_default'] ? ' active' : '' ?><?= $outOfStock ? ' disabled' : '' ?>"
-                                    data-spec-id="<?= $s['id'] ?>"
-                                    <?= $outOfStock ? 'disabled' : '' ?>><?= htmlspecialchars($s['name']) ?></button>
+                            <div class="spec-item">
+                                <?php if (!empty($s['tags'])): ?>
+                                <div class="spec-item-tags">
+                                    <?php foreach ($s['tags'] as $t): ?>
+                                    <span class="spec-tag"><?= htmlspecialchars((string) $t) ?></span>
+                                    <?php endforeach; ?>
+                                </div>
+                                <?php endif; ?>
+                                <button type="button" class="spec-btn spec-single-btn<?= $s['is_default'] ? ' active' : '' ?><?= $outOfStock ? ' disabled' : '' ?>"
+                                        data-spec-id="<?= $s['id'] ?>"
+                                        <?= $outOfStock ? 'disabled' : '' ?>><?= htmlspecialchars($s['name']) ?></button>
+                            </div>
                             <?php endforeach; ?>
                         </div>
                     </div>

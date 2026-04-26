@@ -110,7 +110,7 @@ if (Request::isPost()) {
                 $fields = [
                     'site_enabled',
                     'sitename', 'site_url', 'site_keywords', 'site_description',
-                    'site_logo', 'site_logo_type', 'site_icp', 'site_copyright', 'site_statistical_code',
+                    'site_logo', 'site_logo_type', 'site_icp', 'site_statistical_code',
                     'site_rewrite', 'site_timezone', 'homepage_mode',
                 ];
                 foreach ($fields as $field) {
@@ -164,6 +164,18 @@ if (Request::isPost()) {
 
                 // ③ 基础商城字段
                 Config::set('shop_order_expire_minutes', (string) Input::post('shop_order_expire_minutes', '30'));
+                $saved++;
+
+                // ④ 店铺公告（富文本 HTML，无长度截断 —— 支持长公告 / 嵌入图片）
+                Config::set('shop_announcement', (string) Input::post('shop_announcement', ''));
+                $saved++;
+
+                // ⑤ 公告显示位置：checkbox group → 逗号分隔；只放白名单值进 DB
+                $rawPositions = $_POST['shop_announcement_positions'] ?? [];
+                if (!is_array($rawPositions)) $rawPositions = [];
+                $allowedPositions = ['home', 'goods_list'];
+                $positions = array_values(array_intersect($allowedPositions, array_map('strval', $rawPositions)));
+                Config::set('shop_announcement_positions', implode(',', $positions));
                 $saved++;
                 break;
 
