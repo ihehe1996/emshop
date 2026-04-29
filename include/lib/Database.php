@@ -386,13 +386,18 @@ final class Database
 
         mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
         $mysqli = mysqli_init();
-        $mysqli->real_connect(
-            (string) $config['host'],
-            (string) $config['username'],
-            (string) $config['password'],
-            $database,
-            (int) $config['port']
-        );
+        try{
+            $mysqli->real_connect(
+                (string) $config['host'],
+                (string) $config['username'],
+                (string) $config['password'],
+                $database,
+                (int) $config['port']
+            );
+        } catch (Throwable $e) {
+            Emmsg::error('数据库连接失败', $e, true);
+        }
+
         $mysqli->set_charset((string) $config['charset']);
 
         return $mysqli;
