@@ -9,11 +9,23 @@ class Emmsg
     /**
      * 输出友好错误页面并终止程序
      * @param string $msg 自定义错误提示
-     * @param \Exception|null $e 异常对象
+     * @param \Exception|string|null $e 异常对象或错误详情字符串
      */
-    public static function error(string $msg, ?\Exception $e = null): void
+    public static function error(string $msg, $e = null): void
     {
         http_response_code(500);
+        
+        // 统一处理 $e 参数：转换为 Exception 对象或 null
+        $exception = null;
+        $detailMessage = '';
+        
+        if ($e instanceof \Exception) {
+            $exception = $e;
+            $detailMessage = $e->getMessage();
+        } elseif (is_string($e) && $e !== '') {
+            $detailMessage = $e;
+        }
+        
         ?>
         <!DOCTYPE html>
         <html lang="zh-CN">
@@ -148,36 +160,6 @@ class Emmsg
                     padding: 0 10px;
                 }
                 
-                .error-detail-toggle {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 8px;
-                    padding: 10px 20px;
-                    background: #f7fafc;
-                    border: 1px solid #e2e8f0;
-                    border-radius: 8px;
-                    color: #4C7D71;
-                    font-size: 13px;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    margin-bottom: 20px;
-                }
-                
-                .error-detail-toggle:hover {
-                    background: #edf2f1;
-                    border-color: #4C7D71;
-                    transform: translateY(-1px);
-                    box-shadow: 0 2px 8px rgba(76, 125, 113, 0.1);
-                }
-                
-                .error-detail-toggle i {
-                    transition: transform 0.3s ease;
-                }
-                
-                .error-detail-toggle.active i {
-                    transform: rotate(180deg);
-                }
-                
                 .error-detail {
                     background: #f7fafc;
                     border: 1px solid #e2e8f0;
@@ -188,26 +170,10 @@ class Emmsg
                     text-align: left;
                     word-break: break-all;
                     line-height: 1.7;
-                    max-height: 300px;
+                    max-height: 400px;
                     overflow-y: auto;
                     margin-top: 16px;
                     font-family: 'Consolas', 'Monaco', monospace;
-                }
-                
-                .error-detail.show {
-                    display: block;
-                    animation: fadeIn 0.3s ease;
-                }
-                
-                @keyframes fadeIn {
-                    from {
-                        opacity: 0;
-                        transform: translateY(-10px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
                 }
                 
                 .error-actions {
@@ -324,10 +290,15 @@ class Emmsg
                     <?php echo htmlspecialchars($msg); ?>
                 </div>
                 
-                <?php if ($e): ?>
-
-                    <div class="error-detail" id="errorDetail">
-                        <?php echo nl2br(htmlspecialchars($e->getMessage())); ?>
+                <?php if ($detailMessage !== ''): ?>
+                    <div class="error-detail">
+                        <?php echo nl2br(htmlspecialchars($detailMessage)); ?>
+                        <?php if ($exception && $exception->getFile()): ?>
+                            <br><br>
+                            <strong>文件：</strong><?php echo htmlspecialchars($exception->getFile()); ?>
+                            <br>
+                            <strong>行号：</strong><?php echo $exception->getLine(); ?>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
                 
@@ -347,9 +318,6 @@ class Emmsg
                 </div>
             </div>
         </div>
-        
-        <script>
-        </script>
         </body>
         </html>
         <?php

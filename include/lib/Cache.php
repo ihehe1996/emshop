@@ -108,6 +108,11 @@ final class Cache
             $expires
         );
 
+        $dir = dirname($file);
+        if (!is_dir($dir) || !is_writable($dir)) {
+            Emmsg::error('缓存目录无写入权限为755', '请设置目录权限：' . $dir);
+        }
+
         $result = file_put_contents($file, $content, LOCK_EX) !== false;
 
         if ($result && $group !== '') {
