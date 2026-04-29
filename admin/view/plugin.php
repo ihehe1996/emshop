@@ -133,10 +133,8 @@ if (!defined('EM_ROOT')) {
     <!-- 分类筛选（em-tabs + em-tabs__count，动态填数字） -->
     <div class="em-tabs" id="pluginTabs">
         <a class="em-tabs__item is-active" data-filter="all"><i class="fa fa-puzzle-piece"></i>我的插件<em class="em-tabs__count" id="countAll"></em></a>
-        <a class="em-tabs__item" data-filter="installed"><i class="fa fa-check"></i>已安装<em class="em-tabs__count" id="countInstalled"></em></a>
         <a class="em-tabs__item" data-filter="enabled"><i class="fa fa-bolt"></i>已启用<em class="em-tabs__count" id="countEnabled"></em></a>
         <a class="em-tabs__item" data-filter="disabled"><i class="fa fa-ban"></i>已禁用<em class="em-tabs__count" id="countDisabled"></em></a>
-        <a class="em-tabs__item" data-filter="new"><i class="fa fa-download"></i>未安装<em class="em-tabs__count" id="countNew"></em></a>
     </div>
 
     <!-- 骨架屏 -->
@@ -182,21 +180,35 @@ $(function(){
     // ===== 渲染统计（em-tabs__count 空值时自动隐藏，所以 0 时不填数字）=====
     function renderStats(plugins) {
         var total = plugins.length;
-        var installed = 0, enabled = 0, disabled = 0, news = 0;
+        var enabled = 0, disabled = 0;
         plugins.forEach(function(p) {
-            if (p.is_installed) {
-                installed++;
-                if (p.is_enabled) enabled++;
-                else disabled++;
-            } else {
-                news++;
-            }
+            if (p.is_enabled) enabled++;
+            else disabled++;
         });
         $('#countAll').text(total || '');
-        $('#countInstalled').text(installed || '');
         $('#countEnabled').text(enabled || '');
         $('#countDisabled').text(disabled || '');
-        $('#countNew').text(news || '');
+    }
+
+    // ===== 启停后只刷新本卡片状态 + 内存 + 计数(不重拉列表) =====
+    function applyToggleState(name, isEnabled) {
+        var $card = $('.plugin-card[data-name="' + name + '"]');
+        $card.toggleClass('plugin-card--enabled', isEnabled);
+        var $status = $card.find('.plugin-card__status');
+        if ($status.length) {
+            $status
+                .removeClass('plugin-card__status--enabled plugin-card__status--disabled')
+                .addClass(isEnabled ? 'plugin-card__status--enabled' : 'plugin-card__status--disabled')
+                .text(isEnabled ? '生效中' : '未启用');
+        }
+        // 同步内存数组,保证切 filter / 后续重渲染时状态正确
+        for (var i = 0; i < allPlugins.length; i++) {
+            if (allPlugins[i].name === name) {
+                allPlugins[i].is_enabled = isEnabled;
+                break;
+            }
+        }
+        renderStats(allPlugins);
     }
 
     // ===== 渲染插件卡片 =====
@@ -225,10 +237,8 @@ $(function(){
     function filterPlugins(plugins) {
         return plugins.filter(function(p) {
             return (currentFilter === 'all') ||
-                (currentFilter === 'installed' && p.is_installed) ||
-                (currentFilter === 'enabled' && p.is_installed && p.is_enabled) ||
-                (currentFilter === 'disabled' && p.is_installed && !p.is_enabled) ||
-                (currentFilter === 'new' && !p.is_installed);
+                (currentFilter === 'enabled' && p.is_enabled) ||
+                (currentFilter === 'disabled' && !p.is_enabled);
         });
     }
 
@@ -298,7 +308,7 @@ $(function(){
                         (isInstalled
                             ? '<button class="plugin-card__more-item" data-action="uninstall" data-name="' + escHtml(p.name) + '"><i class="fa fa-trash"></i> 卸载</button>'
                               + (p.has_update ? '<button class="plugin-card__more-item" data-action="upgrade" data-name="' + escHtml(p.name) + '"><i class="fa fa-arrow-up"></i> 升级</button>' : '')
-                            : '<button class="plugin-card__more-item" data-action="delete" data-name="' + escHtml(p.name) + '"><i class="fa fa-trash"></i> 删除</button>'
+                            : ''
                         ) +
                     '</div>' +
                 '</div>' +
@@ -364,26 +374,10 @@ $(function(){
             }
             layui.use('layer', function(){
                 var layer = layui.layer;
-                layer.confirm('确定要卸载插件「' + pluginTitle + '」吗？',
+                layer.confirm('卸载将清除插件「' + pluginTitle + '」的配置数据并删除磁盘文件，无法恢复。确认卸载？',
                     {icon: 3, title: '卸载确认', skin: 'admin-modal'},
                     function(idx){
                         doRequest(action, name, {clear_data: false}, function(){ layer.close(idx); });
-                    });
-            });
-            return;
-        }
-
-        if (action === 'delete') {
-            var delTitle = name;
-            for (var j = 0; j < allPlugins.length; j++) {
-                if (allPlugins[j].name === name) { delTitle = allPlugins[j].title || name; break; }
-            }
-            layui.use('layer', function(){
-                var layer = layui.layer;
-                layer.confirm('删除后将移除插件「' + delTitle + '」的所有磁盘文件，且无法恢复。确认继续？',
-                    {icon: 3, title: '删除确认', skin: 'admin-modal'},
-                    function(idx){
-                        doRequest(action, name, {}, function(){ layer.close(idx); });
                     });
             });
             return;
@@ -404,7 +398,13 @@ $(function(){
                 if (res.code === 0 || res.code === 200) {
                     csrfToken = (res.data && res.data.csrf_token) ? res.data.csrf_token : csrfToken;
                     layui.layer.msg(res.msg || '操作成功');
-                    loadPlugins();
+                    // 启停只局部刷新当前卡片 + 计数,不重拉列表(避免页面闪动)
+                    // 其它操作(uninstall / delete / install / upgrade)涉及结构性变化,仍走全量刷新
+                    if (action === 'enable' || action === 'disable') {
+                        applyToggleState(name, action === 'enable');
+                    } else {
+                        loadPlugins();
+                    }
                     if (callback) callback();
                 } else {
                     layui.layer.msg(res.msg || '操作失败');

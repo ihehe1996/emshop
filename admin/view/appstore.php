@@ -4,7 +4,7 @@ if (!defined('EM_ROOT')) {
 }
 
 // 应用收费由中心服务端统一以人民币结算，这里固定用 ¥ 不读站点主货币
-// 分类 / 列表全部由 JS 走 /admin/appstore.php?_action=categories / list 异步加载
+// 分类 tabs 由 PHP 直接渲染(基于 PluginModel::MAIN_PLUGIN_CATEGORIES);列表仍走 /admin/appstore.php?_action=list 异步加载
 
 // 应用图片（封面 / 内容图）统一基于 license_urls 第 0 个线路拼接 —— 永远是第一个，
 // 不跟随用户切换的线路；以此保证资源 URL 在全站稳定、可被浏览器缓存
@@ -109,7 +109,7 @@ $csrfToken = $csrfToken ?? Csrf::token();
     min-width: 0;
 }
 .appstore-title__name {
-    font-weight: 600; color: #0f172a;
+    color: #0f172a;
     line-height: 1.35;
     flex: 1; min-width: 0;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
@@ -154,16 +154,95 @@ $csrfToken = $csrfToken ?? Csrf::token();
     border: 1px dashed #e5e7eb;
     font-weight: 400;
 }
+
+/* ===== 主站 / 分站 应用商店切换器(挂在标题下方) ===== */
+.appstore-tab-switch {
+    display: inline-flex;
+    gap: 0;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.appstore-tab-switch__item {
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: #64748b;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    user-select: none;
+    text-decoration: none;
+    position: relative;
+    border-right: 1px solid #e2e8f0;
+}
+.appstore-tab-switch__item:last-child {
+    border-right: none;
+}
+.appstore-tab-switch__item:hover {
+    color: #4C7D71;
+    background: rgba(76, 125, 113, 0.04);
+}
+.appstore-tab-switch__item.is-active {
+    background: linear-gradient(135deg, #4C7D71 0%, #5a9486 100%);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.appstore-tab-switch__item.is-active:hover {
+    background: linear-gradient(135deg, #427065 0%, #4C7D71 100%);
+}
+.appstore-tab-switch__item .fa {
+    font-size: 13px;
+    transition: transform 0.2s ease;
+}
+.appstore-tab-switch__item:hover .fa {
+    transform: scale(1.1);
+}
+
+/* ===== 分站货架专用列样式 ===== */
+.appstore-stock { font-weight: 600; font-family: Menlo,Consolas,monospace; }
+.appstore-stock--ok   { color: #059669; }
+.appstore-stock--warn { color: #d97706; }
+.appstore-stock--out  { color: #dc2626; }
+.appstore-listed-tag {
+    display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 4px;
+}
+.appstore-listed-tag--on  { background: #d1fae5; color: #065f46; }
+.appstore-listed-tag--off { background: #fee2e2; color: #991b1b; }
 </style>
 
 <div class="admin-page admin-page-appstore">
     <h1 class="admin-page__title">应用商店</h1>
 
-    <!-- 分类选项卡（em-tabs 同款，内容由 JS 异步渲染，计数填到 em-tabs__count） -->
+    <!-- 主站 / 分站 切换:跳转两个独立 view(本文件 = 主站) -->
+    <div class="appstore-tab-switch" id="appstoreTabSwitch">
+        <a class="appstore-tab-switch__item is-active" href="/admin/appstore.php">
+            <i class="fa fa-server"></i>主站应用商店
+        </a>
+        <a class="appstore-tab-switch__item" href="/admin/appstore.php?tab=merchant">
+            <i class="fa fa-cubes"></i>分站应用商店
+        </a>
+    </div>
+
+    <!-- 分类选项卡：服务端直接渲染（"全部" + "模板主题" + PluginModel::MAIN_PLUGIN_CATEGORIES），不再走异步接口 -->
     <div class="em-tabs" id="appstoreTabs">
         <a class="em-tabs__item is-active" data-filter='{"type":"all","id":0}'>
-            <i class="fa fa-th-large"></i>全部<em class="em-tabs__count">…</em>
+            <i class="fa fa-th-large"></i>全部<em class="em-tabs__count"></em>
         </a>
+        <a class="em-tabs__item" data-filter='{"type":"template","id":0}'>
+            <i class="fa fa-paint-brush"></i>模板主题<em class="em-tabs__count"></em>
+        </a>
+        <?php foreach (PluginModel::MAIN_PLUGIN_CATEGORIES as $__cid => $__cname): ?>
+        <a class="em-tabs__item" data-filter='<?= htmlspecialchars(json_encode(['type' => '', 'id' => (int) $__cid]), ENT_QUOTES, 'UTF-8') ?>'>
+            <i class="fa fa-folder-o"></i><?= htmlspecialchars((string) $__cname, ENT_QUOTES, 'UTF-8') ?><em class="em-tabs__count"></em>
+        </a>
+        <?php endforeach; ?>
     </div>
 
     <!-- 工具条：右侧快捷搜索 -->
@@ -228,26 +307,30 @@ $csrfToken = $csrfToken ?? Csrf::token();
 </script>
 
 <!--
-    操作按钮分支：
-    - 已装 · 同版本       灰色"已安装"
-    - 已装 · 有新版       橙色"更新 v{远端}"
-    - 未装 · 未激活 · 付费   紫色"先激活授权"
-    - 未装 · 免费          蓝色"安装"
-    - 未装 · 付费          红色"购买 ¥my_price"
+    操作按钮分支(tab=main / tab=merchant 共用模板,文案按 window.APPSTORE_TAB 切换):
+    - 已装(主站)                         → 灰色"已安装"(主站不在此处更新,后续在模板/插件管理页做)
+    - 已上架(分站)                       → 橙色"补货"(配额补充,走 _action=update tab=merchant)
+    - 未装 · 未激活 · 付费                → 紫色"先激活授权"
+    - 未装 · 免费                         → 蓝色"安装" / "采购上架"
+    - 未装 · 付费                         → 红色"购买 ¥my_price" / "采购 ¥my_price"
 -->
 <script type="text/html" id="appstoreActionTpl">
-    {{# if(d.is_installed == 1){ }}
-        {{# if(d.installed_version && d.version && d.installed_version !== d.version){ }}
-            <a class="em-btn em-sm-btn" style="background:#f59e0b;color:#fff;" lay-event="update"><i class="fa fa-cloud-download"></i>更新 v{{ d.version }}</a>
+    {{# var tab = window.APPSTORE_TAB || 'main';
+       var L = tab === 'merchant'
+           ? { installed: '已上架', install: '采购上架', buy: '采购' }
+           : { installed: '已安装', install: '安装',     buy: '购买' }; }}
+    {{# if (d.is_installed == 1) { }}
+        {{# if (tab === 'merchant') { }}
+            <a class="em-btn em-sm-btn" style="background:#f59e0b;color:#fff;" lay-event="update"><i class="fa fa-plus-circle"></i>补货</a>
         {{# } else { }}
-            <a class="em-btn em-sm-btn em-reset-btn em-disabled-btn"><i class="fa fa-check"></i>已安装</a>
+            <a class="em-btn em-sm-btn em-reset-btn em-disabled-btn"><i class="fa fa-check"></i>{{ L.installed }}</a>
         {{# } }}
-    {{# } else if(d.is_free == 1){ }}
-        <a class="em-btn em-sm-btn em-save-btn" lay-event="install"><i class="fa fa-download"></i>安装</a>
-    {{# } else if(!window.APPSTORE_LICENSED){ }}
-        <a class="em-btn em-sm-btn em-purple-btn" lay-event="needLicense"><i class="fa fa-shield"></i>先激活授权</a>
+    {{# } else if (d.is_free == 1) { }}
+        <a class="em-btn em-sm-btn em-save-btn" lay-event="install"><i class="fa fa-download"></i>{{ L.install }}</a>
+    {{# } else if (!window.APPSTORE_LICENSED) { }}
+        <a class="em-btn em-sm-btn em-purple-btn" lay-event="needLicense"><i class="fa fa-shield"></i>限授权用户安装</a>
     {{# } else { }}
-        <a class="em-btn em-sm-btn em-red-btn" lay-event="buy"><i class="fa fa-shopping-cart"></i>购买 ¥{{ parseFloat(d.my_price || 0).toFixed(2) }}</a>
+        <a class="em-btn em-sm-btn em-red-btn" lay-event="buy"><i class="fa fa-shopping-cart"></i>{{ L.buy }} ¥{{ parseFloat(d.my_price || 0).toFixed(2) }}</a>
     {{# } }}
 </script>
 
@@ -258,6 +341,9 @@ var APPSTORE_ASSET_HOST = <?= json_encode($appstoreAssetHost, JSON_UNESCAPED_SLA
 window.APPSTORE_LICENSED = <?= $appstoreLicensed ? 'true' : 'false' ?>;
 // CSRF token（安装/更新 action 校验）
 var APPSTORE_CSRF = <?= json_encode($csrfToken) ?>;
+// 当前 tab(main / merchant):决定调服务端哪个货架接口、装到主站本地还是落分站市场
+// templet 通过 window.APPSTORE_TAB 读取以切换按钮文案
+window.APPSTORE_TAB = 'main';
 
 function appstoreAbsUrl(url) {
     if (!url) return '';
@@ -279,7 +365,10 @@ $(function () {
         }
         function buildWhere() {
             var f = currentFilter();
-            var where = { keyword: ($('#appstoreSearch').val() || '').trim() };
+            var where = {
+                keyword: ($('#appstoreSearch').val() || '').trim(),
+                tab:     window.APPSTORE_TAB || 'main'
+            };
             if (f.type && f.type !== 'all') where.type = f.type;
             if (!f.type && f.id > 0)        where.category_id = f.id;
             return where;
@@ -385,7 +474,12 @@ $(function () {
                 name:       d.name_en,
                 type:       d.type === 'template' ? 'template' : 'plugin',
                 file_path:  d.file_path || '',
-                version:    d.version || ''
+                version:    d.version || '',
+                // tab=merchant 时后端会走 MainAppPurchaseService 落 em_app_market
+                tab:           window.APPSTORE_TAB || 'main',
+                cost_per_unit: Math.round((parseFloat(d.my_price || 0)) * 1000000),
+                remote_app_id: d.id || 0,
+                qty:           1
             }).done(function (res) {
                 layer.close(loadingIdx);
                 if (res && (res.code === 200 || res.code === 0)) {
@@ -417,7 +511,7 @@ $(function () {
                 area: [window.innerWidth >= 640 ? '600px' : '94%', window.innerHeight >= 720 ? '520px' : '88%'],
                 shadeClose: true,
                 maxmin: false,
-                content: '/admin/appstore_buy.php?id=' + id
+                content: '/admin/appstore_buy.php?id=' + id + '&tab=' + (window.APPSTORE_TAB || 'main')
             });
         }
 
@@ -436,49 +530,15 @@ $(function () {
             }
         });
 
-        // ---------- 异步拉取分类列表并渲染 em-tabs ----------
-        function escapeHtml(s) {
-            return String(s || '').replace(/[&<>"']/g, function (c) {
-                return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
-            });
-        }
-        function iconFor(cat) {
-            // 主分类 + 明确类型的用不同图标
-            if (cat.type === 'all')      return 'fa-th-large';
-            if (cat.type === 'template') return 'fa-paint-brush';
-            if (cat.type === 'plugin')   return 'fa-puzzle-piece';
-            return 'fa-folder-o';
-        }
-        function renderTabs(list) {
-            $tabs.empty();
-            var html = '';
-            list.forEach(function (c, idx) {
-                var filter = { type: c.type || '', id: c.id || 0 };
-                var cls = idx === 0 ? 'em-tabs__item is-active' : 'em-tabs__item';
-                var icon = iconFor(c);
-                html += '<a class="' + cls + '" data-filter="' + escapeHtml(JSON.stringify(filter)) + '">'
-                     +      '<i class="fa ' + icon + '"></i>'
-                     +      escapeHtml(c.name)
-                     +      '<em class="em-tabs__count">' + (c.count != null ? c.count : '') + '</em>'
-                     + '</a>';
-            });
-            $tabs.html(html);
-        }
-
-        // 拉取前遮一层 loading，避免分类未到位时用户看到空 Tab
-        var catLoadingIdx = layer.load(2, { shade: [0.3, '#000'] });
-        $.ajax({
-            url: '/admin/appstore.php',
-            method: 'GET',
-            data: { _action: 'categories', _t: Date.now() },
-            dataType: 'json',
-            timeout: 15000
-        }).done(function (resp) {
-            if (resp && resp.code === 200 && resp.data && resp.data.list && resp.data.list.length > 0) {
-                renderTabs(resp.data.list);
-            }
-        }).always(function () {
-            layer.close(catLoadingIdx);
+        // ---------- 主站 / 分站 应用商店切换 ----------
+        // 物理拆分两个 view 后,切换走 PJAX 跳转(失败回退整页跳转);本 view 是主站
+        $('#appstoreTabSwitch').on('click', '.appstore-tab-switch__item', function (e) {
+            e.preventDefault();
+            var $item = $(this);
+            if ($item.hasClass('is-active')) return;
+            var url = $item.attr('href');
+            if ($.pjax) $.pjax({ url: url, container: '#adminContent' });
+            else        location.href = url;
         });
     });
 });

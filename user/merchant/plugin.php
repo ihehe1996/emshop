@@ -5,28 +5,35 @@ declare(strict_types=1);
 require_once __DIR__ . '/global.php';
 
 /**
- * 商户后台 - 插件管理。
+ * 商户后台 · 插件管理(瘦身后版本)。
  *
- * 与主站 admin/plugin.php 结构对齐，关键差异：
- *   - 身份：merchantRequireLogin + 当前商户上下文
- *   - scope：'merchant_{id}'，独立于主站 'main'
- *   - AppLicenseGuard::filter(scope=2, type=plugin) 先按"服务端注册 + 已购"裁剪磁盘扫描结果
- *   - 物理文件全站共享一份；install 只在本 scope 写一条 DB 记录
+ * 业务边界(详见 .claude/docs/应用商店重构方案.md):
+ *   - 不再扫描磁盘 / 不再调 LicenseClient / 不再调 AppLicenseGuard
+ *   - 不能 install / uninstall / upgrade / delete(这些动作由主站后台统一负责)
+ *   - 只能 enable / disable / save_config 自己已购的插件
+ *
+ * 列表来源:
+ *   - 自身已购:em_app_purchase where merchant_id = {id} AND type = 'plugin'
+ *   - 自身启用:em_merchant.enabled_plugins(逗号分隔 slug)
+ *   - 主站继承:em_config.enabled_plugins ∩ category 命中 PluginModel::SYSTEM_PLUGINS
+ *               这部分对商户只读(支付/商品类型/对接商品 由主站统管,商户不能启停)
+ *
+ * 弹窗模式(?_popup=1)沿用:渲染 plugin 自带的 *_setting.php 视图,save_config 仍走本控制器。
  */
 merchantRequireLogin();
 
-$merchantId = (int) ($currentMerchant['id'] ?? 0);
-$scope      = 'merchant_' . $merchantId;
-$memberCode = AppLicenseGuard::memberCodeForMerchant($currentMerchant);
-$model      = new PluginModel();
+$csrfToken    = Csrf::token();
+$merchantId   = (int) ($currentMerchant['id'] ?? 0);
+$scope        = 'merchant_' . $merchantId;
+$pluginModel  = new PluginModel();
 
 // ============================================================
-// POST 处理：install / uninstall / enable / disable / save_config
+// POST 处理:enable / disable / save_config
 // ============================================================
 if (Request::isPost()) {
     try {
         if (!Csrf::validate((string) Input::post('csrf_token', ''))) {
-            Response::error('请求已失效，请刷新页面后重试');
+            Response::error('请求已失效,请刷新页面后重试');
         }
 
         $action = (string) Input::post('_action', '');
@@ -35,84 +42,28 @@ if (Request::isPost()) {
             Response::error('非法插件名');
         }
 
+        // 商户只能操作自己 scope 下的记录;不允许触碰 scope='main' 的主站继承插件
+        if (!$pluginModel->isInstalled($name, $scope)) {
+            Response::error('该插件未在你的店铺中购买/启用,无法操作');
+        }
+
         switch ($action) {
-            case 'install': {
-                if ($model->isInstalled($name, $scope)) {
-                    Response::error('该插件已安装');
-                }
-
-                $pluginDir = EM_ROOT . '/content/plugin/' . $name;
-                if (!is_dir($pluginDir)) Response::error('插件目录不存在');
-                $mainFile = $pluginDir . '/' . $name . '.php';
-                if (!is_file($mainFile)) Response::error('插件主文件不存在');
-
-                $info = $model->parseHeader($mainFile);
-                if ($info === null) Response::error('无法解析插件信息，请检查插件头部注释');
-
-                // 这几个分类（支付 / 商品 / 商品增强）由主站统一管理，商户无权安装；
-                // init.php 已经按"主站启用"自动给商户站加载好这些插件
-                if (in_array((string) ($info['category'] ?? ''), PluginModel::MAIN_ONLY_CATEGORIES, true)) {
-                    Response::error('该分类的插件由主站统一管理，商户站无需安装');
-                }
-
-                $info['name']      = $name;
-                $info['main_file'] = $name . '.php';
-                if (is_file($pluginDir . '/' . $name . '_setting.php')) {
-                    $info['setting_file'] = $name . '_setting.php';
-                }
-                if (is_file($pluginDir . '/' . $name . '_show.php')) {
-                    $info['show_file'] = $name . '_show.php';
-                }
-                if (is_file($pluginDir . '/icon.png')) {
-                    $info['icon'] = '/content/plugin/' . $name . '/icon.png';
-                } elseif (is_file($pluginDir . '/icon.gif')) {
-                    $info['icon'] = '/content/plugin/' . $name . '/icon.gif';
-                }
-                if (is_file($pluginDir . '/preview.jpg')) {
-                    $info['preview'] = '/content/plugin/' . $name . '/preview.jpg';
-                }
-
-                // 仅当该插件在本 scope 下首次安装时才调 callback_init（避免重置其他 scope 的表/配置）
-                $callbackFile = $pluginDir . '/' . $name . '_callback.php';
-                if (is_file($callbackFile)) {
-                    include_once $callbackFile;
-                    if (function_exists('callback_init')) {
-                        call_user_func('callback_init');
-                    }
-                }
-
-                $id = $model->install($name, $info, $scope);
-                Response::success('插件安装成功', ['csrf_token' => Csrf::refresh(), 'id' => $id]);
-                break;
-            }
-
-            case 'uninstall': {
-                if (!$model->isInstalled($name, $scope)) Response::error('该插件未安装');
-                // callback_rm 在多 scope 场景会重置共享资源，这里不再触发；仅删本 scope 记录
-                $model->uninstall($name, $scope);
-                Response::success('插件卸载成功', ['csrf_token' => Csrf::refresh()]);
-                break;
-            }
-
             case 'enable': {
-                if (!$model->isInstalled($name, $scope)) Response::error('该插件未安装，请先安装');
-                if ($model->isEnabled($name, $scope))    Response::error('该插件已经是启用状态');
-                $model->enable($name, $scope);
+                if ($pluginModel->isEnabled($name, $scope)) Response::error('该插件已经是启用状态');
+                $pluginModel->enable($name, $scope);
                 Response::success('插件已启用', ['csrf_token' => Csrf::refresh()]);
                 break;
             }
 
             case 'disable': {
-                if (!$model->isInstalled($name, $scope)) Response::error('该插件未安装');
-                if (!$model->isEnabled($name, $scope))   Response::error('该插件已经是禁用状态');
-                $model->disable($name, $scope);
+                if (!$pluginModel->isEnabled($name, $scope)) Response::error('该插件已经是禁用状态');
+                $pluginModel->disable($name, $scope);
                 Response::success('插件已禁用', ['csrf_token' => Csrf::refresh()]);
                 break;
             }
 
             case 'save_config': {
-                if (!$model->isInstalled($name, $scope)) Response::error('该插件未安装');
-                // 插件自己有 setting 函数就交它处理（plugin_setting 会自行 Response 退出）
+                // 优先调插件自带的 plugin_setting()(它内部用 Storage 写并自行 Response)
                 $settingFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '_setting.php';
                 if (is_file($settingFile)) {
                     include_once $settingFile;
@@ -121,13 +72,13 @@ if (Request::isPost()) {
                         return;
                     }
                 }
-                // 否则通用收集 POST 字段写入 config
-                $config = [];
+                // 通用兜底:全部 POST 字段(除框架字段)逐个写 Storage
+                // Storage 实例的 scope 自动从 $GLOBALS['__em_current_scope'](merchant_X)读
+                $storage = Storage::getInstance($name);
                 foreach (Input::allPost() as $k => $v) {
                     if (in_array($k, ['_action', 'csrf_token', 'name'], true)) continue;
-                    $config[$k] = $v;
+                    $storage->setValue($k, $v);
                 }
-                $model->update($name, ['config' => $config], $scope);
                 Response::success('配置已保存', ['csrf_token' => Csrf::refresh()]);
                 break;
             }
@@ -138,20 +89,20 @@ if (Request::isPost()) {
     } catch (RuntimeException $e) {
         Response::error($e->getMessage());
     } catch (Throwable $e) {
-        Response::error('系统繁忙，请稍后再试');
+        Response::error('系统繁忙,请稍后再试');
     }
 }
 
 // ============================================================
-// 弹窗模式：渲染插件设置页
+// 弹窗模式:渲染插件设置页(沿用)
 // ============================================================
 if (Input::get('_popup', '') === '1') {
     $name = trim((string) Input::get('name', ''));
     if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) {
         exit('非法插件名');
     }
-    if (!$model->isInstalled($name, $scope)) {
-        exit('该插件未安装');
+    if (!$pluginModel->isInstalled($name, $scope)) {
+        exit('该插件未在你的店铺中购买/启用');
     }
     $settingFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '_setting.php';
     if (!is_file($settingFile)) {
@@ -159,9 +110,10 @@ if (Input::get('_popup', '') === '1') {
     }
 
     $csrfToken = Csrf::token();
-    $info = $model->findByName($name, $scope);
-    $pageTitle = '插件设置：' . htmlspecialchars((string) ($info['title'] ?? $name), ENT_QUOTES, 'UTF-8');
-    // 让插件 setting.php 里的 AJAX 把 save_config 提交到商户路径，而不是默认的 /admin/plugin.php
+    // 标题走磁盘 parseHeader,不再依赖 DB 行
+    $header    = $pluginModel->parseHeader(EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php');
+    $pageTitle = '插件设置:' . htmlspecialchars((string) ($header['title'] ?? $name), ENT_QUOTES, 'UTF-8');
+    // 让插件 setting.php 里的 AJAX 把 save_config 提交到商户路径,而不是默认的 /admin/plugin.php
     $popupPluginSaveUrl = '/user/merchant/plugin.php';
     include __DIR__ . '/../../admin/view/popup/header.php';
 
@@ -177,34 +129,43 @@ if (Input::get('_popup', '') === '1') {
 }
 
 // ============================================================
-// 普通页面：扫磁盘 → 授权过滤 → 叠加本 scope 的 is_installed / is_enabled
+// 普通页面:列表 = 自身已购(em_app_purchase)+ 主站继承(SYSTEM_PLUGINS 启用)
+//
+// 元数据全部来自 parseHeader(磁盘),DB 只查 is_enabled / 已购 / 主站启用
 // ============================================================
-$scanned = $model->scanPlugins();
-$licenseError = null;
-$availablePlugins = AppLicenseGuard::filter($scanned, $memberCode, 2, 'plugin', $licenseError);
-$licenseError = (string) ($licenseError ?? '');
+$disk          = $pluginModel->scanPlugins();                        // 磁盘所有插件 + parseHeader 元数据
+$purchaseModel = new AppPurchaseModel();
+$ownedCodes    = $purchaseModel->purchasedCodes($merchantId, 'plugin'); // 商户已购 app_code 列表
+$ownedSet      = array_flip($ownedCodes);
 
-// 过滤掉"主站统一管理"的分类（支付 / 商品 / 商品增强）—— 商户站完全看不到这些插件，
-// 也无从安装；它们由 init.php 按主站启用名单自动加载
-$availablePlugins = array_filter($availablePlugins, static function (array $info) {
-    return !in_array((string) ($info['category'] ?? ''), PluginModel::MAIN_ONLY_CATEGORIES, true);
-});
+// 主站继承:主站启用 ∩ category 命中 SYSTEM_PLUGINS
+$mainEnabled   = $pluginModel->getEnabledNames('main');
+$inheritedSet  = [];
+foreach ($mainEnabled as $n) {
+    $info = $disk[$n] ?? null;
+    if ($info !== null && in_array((string) ($info['category'] ?? ''), PluginModel::SYSTEM_PLUGINS, true)) {
+        $inheritedSet[$n] = true;
+    }
+}
 
-// 取本 scope 下的 DB 记录，合并到可用列表
-$installedMap = [];
-foreach ($model->getAllInstalled($scope) as $row) {
-    $installedMap[(string) $row['name']] = $row;
+// 商户自身 scope 的启用名单(从 em_merchant.enabled_plugins 解析得到)
+$selfEnabledSet = array_flip($pluginModel->getEnabledNames($scope));
+
+$plugins = [];
+foreach ($disk as $name => $info) {
+    $isOwned     = isset($ownedSet[$name]);
+    $isInherited = isset($inheritedSet[$name]) && !$isOwned;
+    if (!$isOwned && !$isInherited) continue;
+
+    $row = $info;
+    $row['is_inherited'] = $isInherited;
+    // 继承插件由主站启停,商户视图统一显示"已启用"语义不需要再查 selfEnabled
+    $row['is_enabled']   = !$isInherited && isset($selfEnabledSet[$name]);
+    $row['has_setting']  = !$isInherited && (string) ($info['setting_file'] ?? '') !== '';
+    $plugins[] = $row;
 }
-foreach ($availablePlugins as $name => &$info) {
-    $db = $installedMap[$name] ?? null;
-    $info['is_installed']   = $db !== null;
-    $info['is_enabled']     = $db !== null && (int) ($db['is_enabled'] ?? 0) === 1;
-    $info['has_setting']    = $db !== null && (string) ($db['setting_file'] ?? '') !== '';
-}
-unset($info);
 
 merchantRenderPage(__DIR__ . '/view/plugin.php', [
-    'availablePlugins' => $availablePlugins,
-    'licenseError'     => $licenseError,
-    'csrfToken'        => Csrf::token(),
+    'plugins'   => $plugins,
+    'csrfToken' => Csrf::token(),
 ]);

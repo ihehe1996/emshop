@@ -274,9 +274,7 @@ function buildCard(item) {
 
     var footerHtml = '';
     if (!item.is_installed) {
-        footerHtml = '<div class="template-card__actions-left template-card__actions-left--install">'
-            + '<button class="template-card__action template-card__action--install" data-action="install" data-name="' + escHtml(item.name) + '"><i class="fa fa-download"></i> 安装</button>'
-            + '</div>';
+        footerHtml = '';
     } else {
         var pcClass = item.is_active_pc ? ' is-active' : '';
         var mobileClass = item.is_active_mobile ? ' is-active' : '';
@@ -300,8 +298,6 @@ function buildCard(item) {
     html += '          <div class="template-card__more-dropdown">';
     if (item.is_installed) {
         html += '              <button class="template-card__more-item" data-action="uninstall" data-name="' + escHtml(item.name) + '"><i class="fa fa-trash"></i> 卸载</button>';
-    } else {
-        html += '              <button class="template-card__more-item template-card__more-item--danger" data-action="delete" data-name="' + escHtml(item.name) + '"><i class="fa fa-remove"></i> 删除模板</button>';
     }
     html += '          </div>';
     html += '      </div>';
@@ -330,11 +326,6 @@ function loadTemplates() {
         success: function (res) {
             if (res.code === 0 || res.code === 200) {
                 csrfToken = res.csrf_token || csrfToken;
-                // 中心服务不可达：_license_error 非空 → 顶部告警条 + 空列表
-                if (res._license_error) {
-                    $('#templateLicenseAlertMsg').text('无法连接中心服务：' + res._license_error + '。本地模板暂不可见，请稍后重试。');
-                    $('#templateLicenseAlert').show();
-                }
                 allTemplates = res.data || [];
                 renderTemplates(allTemplates);
             } else {
@@ -592,13 +583,7 @@ $(function () {
             var name = $(this).data('name');
             if (!action || !name) return;
             if (action === 'uninstall') {
-                layui.layer.confirm('确定要卸载该模板吗？', {icon: 3, title: '卸载确认', skin: 'admin-modal'}, function (idx) {
-                    doRequest(action, name, null, function () { layui.layer.close(idx); });
-                });
-                return;
-            }
-            if (action === 'delete') {
-                layui.layer.confirm('确定要删除该模板吗？此操作不可恢复。', {icon: 3, title: '删除确认', skin: 'admin-modal'}, function (idx) {
+                layui.layer.confirm('卸载将清除模板的配置数据并删除磁盘文件，无法恢复。确认卸载？', {icon: 3, title: '卸载确认', skin: 'admin-modal'}, function (idx) {
                     doRequest(action, name, null, function () { layui.layer.close(idx); });
                 });
                 return;

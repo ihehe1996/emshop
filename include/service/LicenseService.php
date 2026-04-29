@@ -190,10 +190,12 @@ final class LicenseService
     {
         $mainHost = (string) Config::get('license_main_host', '');
         $emkey = (string) Config::get('license_emkey', '');
-        if ($mainHost === '' || $emkey === '') return;
-
+        if ($mainHost === '' || $emkey === '') {
+            return;
+        }
         try {
             $result = LicenseClient::verify($emkey, $mainHost);
+
             $newLevel = (string) ($result['level'] ?? '');
             if ($newLevel !== '' && isset(self::LEVEL_TO_TYPE[$newLevel])) {
                 $cur = (int) Config::get('license_emkey_type', '0');

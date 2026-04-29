@@ -507,7 +507,7 @@ $calcRatio = static function (float $today, float $yesterday): array {
  * Dashboard 重设计 —— 现代 SaaS 风
  * 所有 class 前缀 .dash 避免与旧 .admin-* 样式冲突
  * ============================================================ */
-.admin-page { padding: 8px 4px 40px; background: unset; }
+.admin-page { background: unset; }
 
 /* ---------- 未授权引导 Hero（仅未授权时渲染） ---------- */
 .dash-hero {

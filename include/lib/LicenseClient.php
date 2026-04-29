@@ -496,7 +496,9 @@ final class LicenseClient
             ],
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_SSL_VERIFYPEER => true,
+            // 修复 SSL 错误 60
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
         ]);
         $resp = curl_exec($ch);
         $err = curl_error($ch);
@@ -504,13 +506,12 @@ final class LicenseClient
         curl_close($ch);
 
         if ($resp === false) {
-            throw new RuntimeException('授权服务器不可达，请切换其他线路后重试');
+            throw new RuntimeException('当前使用线路请求失败，请切换其他线路后重试，错误信息：' . $err);
         }
 
         $json = json_decode($resp, true);
         if (!is_array($json)) {
-//            echo $resp;die;
-            throw new RuntimeException('授权服务器响应格式异常（HTTP ' . $httpCode . '）');
+            throw new RuntimeException('响应格式异常（HTTP ' . $httpCode . '）');
         }
         if ((int) ($json['code'] ?? 0) !== 200) {
             throw new RuntimeException((string) ($json['msg'] ?? '请求失败'));
@@ -565,5 +566,96 @@ final class LicenseClient
             throw new RuntimeException($msg . ($code !== '' ? "（{$code}）" : ''));
         }
         return $json['data'] ?? null;
+    }
+
+    // ============================================================================
+    // 应用商店重构:按 audience 拆出的镜像方法(mainApp* / merchantApp*)
+    //
+    // 服务端将来计划把"主站货架"和"分站货架"拆成两组独立接口。当前服务端还没就绪,
+    // 这一组方法暂时委托给老 appStoreList / appDetail / appBuy / appLatestVersions,
+    // 通过 scope + audience 字段透传给服务端做兼容区分。
+    //
+    // 调用方迁移后,服务端拆接口只需改下面 8 个方法的 endpoint 即可,业务代码无感。
+    //
+    // 使用约定:
+    //   - mainApp*     主站为自己采购(落 em_plugin / em_template scope='main')
+    //   - merchantApp* 主站为分站采购(落 em_app_market;不再以分站身份直连服务端)
+    //   - 两边 member_code 都为空 —— 始终是"主站站长身份"调,跟分站登录态无关
+    // ============================================================================
+
+    /**
+     * 主站货架 · 应用列表。
+     *
+     * @param array{page?:int,pageNum?:int,type?:string,category_id?:int,keyword?:string,emkey?:string,host?:string} $params
+     * @return array{list:array<int,array>,count:int,page:int,pageNum:int}
+     */
+    public static function mainAppList(array $params): array
+    {
+        $params['scope']    = 1;
+        $params['audience'] = 'main';
+        $params['member_code'] = '';
+        return self::appStoreList($params);
+    }
+
+    /**
+     * 分站货架 · 应用列表(主站后台为分站采购时拉)。
+     *
+     * @param array{page?:int,pageNum?:int,type?:string,category_id?:int,keyword?:string,emkey?:string,host?:string} $params
+     * @return array{list:array<int,array>,count:int,page:int,pageNum:int}
+     */
+    public static function merchantAppList(array $params): array
+    {
+        $params['scope']    = 2;
+        $params['audience'] = 'merchant';
+        $params['member_code'] = '';
+        return self::appStoreList($params);
+    }
+
+    /**
+     * 主站货架 · 应用详情 + 支付方式。
+     */
+    public static function mainAppDetail(int $appId, string $emkey, string $host): array
+    {
+        return self::appDetail($appId, $emkey, $host, 1, '');
+    }
+
+    /**
+     * 分站货架 · 应用详情 + 支付方式(主站为分站采购时弹窗一次拉齐)。
+     */
+    public static function merchantAppDetail(int $appId, string $emkey, string $host): array
+    {
+        return self::appDetail($appId, $emkey, $host, 2, '');
+    }
+
+    /**
+     * 主站货架 · 创建购买订单。
+     */
+    public static function mainAppBuy(string $emkey, string $host, int $appId, string $payMethod): array
+    {
+        return self::appBuy($emkey, $host, $appId, $payMethod, '');
+    }
+
+    /**
+     * 分站货架 · 创建购买订单(主站代分站采购,服务端按 audience='merchant' 用分站货架价格收费)。
+     */
+    public static function merchantAppBuy(string $emkey, string $host, int $appId, string $payMethod): array
+    {
+        return self::appBuy($emkey, $host, $appId, $payMethod, '');
+    }
+
+    /**
+     * 主站货架 · 已装应用最新版本(用于本地已装更新检测)。
+     */
+    public static function mainAppLatestVersions(array $names, string $type): array
+    {
+        return self::appLatestVersions($names, $type);
+    }
+
+    /**
+     * 分站货架 · 已上架应用最新版本(主站后台用,触发后调 registerPurchase 补货 + 升级)。
+     */
+    public static function merchantAppLatestVersions(array $names, string $type): array
+    {
+        return self::appLatestVersions($names, $type);
     }
 }

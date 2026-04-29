@@ -79,7 +79,7 @@ function template_setting_view() {
             var $btn = $(this);
             $btn.prop('disabled', true).html('<i class="layui-icon layui-icon-loading layui-icon"></i> 保存中...');
 
-            // URL 由 popup header 注入到 iframe 自身 window（主站默认 /admin/template.php，商户覆盖为 /user/merchant/theme.php）
+            // URL 由 popup header 注入到 iframe 自身 window（主站默认 /admin/template.php，商户覆盖为 /user/merchant/template.php）
             var __saveUrl = window.TEMPLATE_SAVE_URL || '/admin/template.php';
             $.ajax({
                 type: 'POST',

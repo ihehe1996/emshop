@@ -20,6 +20,10 @@ $csrfToken = Csrf::token();
 // 应用 id；<=0 时页面内部会展示错误占位
 $appId = (int) Input::get('id', 0);
 
+// tab(main / merchant):决定 app_detail / app_buy 走主站货架还是分站货架
+$tab = (string) Input::get('tab', 'main');
+if (!in_array($tab, ['main', 'merchant'], true)) $tab = 'main';
+
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -36,6 +40,8 @@ $appId = (int) Input::get('id', 0);
     <script>
         // 当前应用 id（供 JS 调 app_detail 接口时带上）
         window.APPSTORE_BUY_ID = <?= (int) $appId ?>;
+        // 当前 tab(main/merchant):JS 调 app_detail / app_buy 时透传,后端按此分发
+        window.APPSTORE_BUY_TAB = <?= json_encode($tab) ?>;
         // 资源 host（应用封面拼接基地址，与列表页保持一致，永远取 license_urls[0]）
         <?php
             $__buyLines = LicenseClient::lines();

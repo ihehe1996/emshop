@@ -3,445 +3,372 @@
 declare(strict_types=1);
 
 /**
- * 插件数据模型。
+ * 插件数据模型(字符串启用列表版)。
  *
- * 负责插件的安装、卸载、启用、禁用等数据库操作，
- * 以及扫描插件目录、解析插件头信息等。
+ * 设计原则:磁盘是真理,启用列表是字符串。
+ *   - 元数据(title/version/author/category/icon/setting_file/...)全部 parseHeader 实时读
+ *   - 主站启用列表 → em_config.enabled_plugins(逗号分隔 slug)
+ *   - 商户启用列表 → em_merchant.enabled_plugins(每商户独立的逗号分隔 slug)
+ *   - 商户已购清单 → em_app_purchase(由 AppPurchaseModel 维护,与启用解耦)
+ *   - "已装"判定:主站 = 磁盘有目录;商户 = AppPurchaseModel::isPurchased
  *
- * scope 约定：
- *   'main'          → 主站作用域
- *   'merchant_{id}' → 商户 id 对应的独立作用域
- * 物理文件（content/plugin/xxx）在全站共享一份，DB 记录按 scope 隔离。
+ * scope 约定:
+ *   'main'          → 主站作用域(走 Config::get/set)
+ *   'merchant_{id}' → 商户 id 对应的独立作用域(走 em_merchant.enabled_plugins)
+ *
+ * 物理插件文件(content/plugin/xxx)在全站共享一份。
  */
 final class PluginModel
 {
     /**
-     * "全站统一走主站"分类清单。
-     *
-     * 这几个分类属于商城的底层能力：支付通道（钱归谁）/ 商品类型（卡密 / 实物 等核心行为）/
-     * 商品增强（库存模糊化等）。它们由主站统一管理、统一启停，**商户站不再独立装 / 启停**：
-     *
-     *   - init.php 加载插件时：商户 scope 跑这里命中的插件按主站启用名单加载
-     *   - 商户后台 appstore / plugin 页面：禁止装这些分类的插件
-     *
-     * 其它分类（系统扩展 / 系统插件 / 对接插件 等）保持按 scope 独立安装，给商户保留差异化扩展空间。
+     * 主站后台应用商店可见的所有分类(id => 名称)。
+     * 单一来源(SSOT):admin/appstore.php 引用本常量。
      */
-    public const MAIN_ONLY_CATEGORIES = ['支付插件', '商品类型', '商品增强'];
+    public const MAIN_PLUGIN_CATEGORIES = [
+        1  => '支付插件',
+        2  => '商品类型',
+        3  => '对接商品',
+        4  => '功能扩展',
+        5  => '消息通知',
+        6  => '系统美化',
+        99 => '未归类',
+    ];
 
-    private string $table;
+    /**
+     * 商户后台插件市场可见的分类(id => 名称)。
+     */
+    public const MERCHANT_PLUGIN_CATEGORIES = [
+        1  => '功能扩展',
+        2  => '消息通知',
+        3  => '系统美化',
+        99 => '未归类',
+    ];
+
+    /**
+     * 系统级插件分类(id => 名称)。
+     *
+     * 这几个分类属于商城底层能力(支付通道/商品类型/对接商品),由主站统一管理启停,
+     * 商户站不能独立装/启停 —— init.php 加载商户 scope 时,会按主站启用名单中
+     * category 命中本常量的部分自动注入,商户继承使用。
+     *
+     * id 与 MAIN_PLUGIN_CATEGORIES 的 category id 对齐。
+     */
+    public const SYSTEM_PLUGINS = [
+        1 => '支付插件',
+        2 => '商品类型',
+        3 => '对接商品',
+    ];
+
+    /** 主站启用列表的 config key */
+    private const MAIN_ENABLED_KEY = 'enabled_plugins';
+
+    private string $pluginRoot;
+    private string $merchantTable;
 
     public function __construct()
     {
-        $this->table = Database::prefix() . 'plugin';
+        $this->pluginRoot    = EM_ROOT . '/content/plugin';
+        $this->merchantTable = Database::prefix() . 'merchant';
     }
 
+    // -----------------------------------------------------------------
+    // 磁盘:扫描 / 解析头部 / 路径辅助
+    // -----------------------------------------------------------------
 
     /**
-     * 扫描插件目录，返回所有磁盘上的插件及其头信息。
+     * 扫描插件目录,返回磁盘上的所有插件 + parseHeader 元数据。
      *
-     * 磁盘文件是全站共享的，不按 scope 隔离；由 DB 记录决定"在哪个 scope 下生效"。
+     * 磁盘文件全站共享,不按 scope 隔离;由启用列表决定"在哪个 scope 下启用"。
      *
-     * @return array<string, array<string, mixed>>
+     * @return array<string, array<string, mixed>> 以 name 为 key
      */
     public function scanPlugins(): array
     {
         $plugins = [];
-        $pluginDir = EM_ROOT . '/content/plugin';
+        if (!is_dir($this->pluginRoot)) return $plugins;
 
-        if (!is_dir($pluginDir)) {
-            return $plugins;
-        }
-        $entries = scandir($pluginDir);
-
-
-
+        $entries = scandir($this->pluginRoot) ?: [];
         foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') continue;
+            $dir = $this->pluginRoot . '/' . $entry;
+            if (!is_dir($dir)) continue;
+            $mainFile = $dir . '/' . $entry . '.php';
+            if (!is_file($mainFile)) continue;
 
-            if ($entry === '.' || $entry === '..' || !is_dir($pluginDir . '/' . $entry)) {
-                continue;
-            }
+            $header = $this->parseHeader($mainFile);
+            if ($header === null) continue;
 
-
-            $pluginFile = $pluginDir . '/' . $entry . '/' . $entry . '.php';
-            if (!is_file($pluginFile)) {
-                continue;
-            }
-
-
-            $header = $this->parseHeader($pluginFile);
-
-            if ($header === null) {
-                continue;
-            }
+            $header['name']      = $entry;
+            $header['main_file'] = $entry . '.php';
+            // 顺手探测 setting/show/icon/preview(这些信息让调用方不必重复扫盘)
+            if (is_file($dir . '/' . $entry . '_setting.php')) $header['setting_file'] = $entry . '_setting.php';
+            if (is_file($dir . '/' . $entry . '_show.php'))    $header['show_file']    = $entry . '_show.php';
+            if (is_file($dir . '/icon.png'))                   $header['icon']         = '/content/plugin/' . $entry . '/icon.png';
+            elseif (is_file($dir . '/icon.gif'))               $header['icon']         = '/content/plugin/' . $entry . '/icon.gif';
+            if (is_file($dir . '/preview.jpg'))                $header['preview']      = '/content/plugin/' . $entry . '/preview.jpg';
 
             $plugins[$entry] = $header;
-            $plugins[$entry]['name'] = $entry;
-            $plugins[$entry]['main_file'] = $entry . '.php';
         }
-
         return $plugins;
     }
 
     /**
-     * 解析插件头信息。
+     * 解析插件主文件头部注释。
      *
      * @return array<string, mixed>|null
      */
     public function parseHeader(string $pluginFile): ?array
     {
-        if (!is_file($pluginFile) || !is_readable($pluginFile)) {
-            return null;
-        }
-
+        if (!is_file($pluginFile) || !is_readable($pluginFile)) return null;
         $fp = fopen($pluginFile, 'r');
-        if ($fp === false) {
-            return null;
-        }
+        if ($fp === false) return null;
 
         $header = [
-            'name' => '',
-            'title' => '',
-            'version' => '1.0.0',
-            'author' => '',
-            'author_url' => '',
-            'description' => '',
-            'category' => '',
-            'icon' => '',
-            'preview' => '',
-            // Swoole: true/yes/1/on  → 标记本插件会注册 swoole 钩子（如 swoole_timer_tick），
-            // 启用/禁用/安装/卸载本插件后需要触发 swoole worker 重载，否则旧代码继续跑
+            'name' => '', 'title' => '', 'version' => '1.0.0',
+            'author' => '', 'author_url' => '',
+            'description' => '', 'category' => '',
+            'icon' => '', 'preview' => '',
+            // Swoole: true/yes/1/on  → 标记本插件会注册 swoole 钩子,启停后需要 swoole worker 重载
             'swoole' => false,
+            'setting_file' => '', 'show_file' => '',
         ];
 
         $inComment = false;
         while (($line = fgets($fp)) !== false) {
             $line = rtrim($line);
-            // 检测注释块开始
-            if (preg_match('/^\s*\/\*\*\s*$/', $line)) {
-                $inComment = true;
-                continue;
-            }
+            if (preg_match('/^\s*\/\*\*\s*$/', $line)) { $inComment = true; continue; }
+            if ($inComment && preg_match('/^\s*\*\/\s*$/', $line)) { $inComment = false; continue; }
 
-
-
-            // 检测注释块结束
-            if ($inComment && preg_match('/^\s*\*\/\s*$/', $line)) {
-                $inComment = false;
-                continue;
-            }
-
-
-
-            // 解析注释行： * Plugin Name: xxx 或 * @xxx yyy
             if ($inComment) {
                 $line = preg_replace('/^\s*\*\s*/', '', $line);
                 $line = trim($line);
 
-                // 直接写法：Plugin Name: xxx
-                if (preg_match('/^Plugin\s+Name:\s*(.+)$/i', $line, $m)) {
-                    $header['title'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Version:\s*(.+)$/i', $line, $m)) {
-                    $header['version'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Plugin\s+URL:\s*(.+)$/i', $line, $m)) {
-                    $header['author_url'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Description:\s*(.+)$/i', $line, $m)) {
-                    $header['description'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Author:\s*(.+)$/i', $line, $m)) {
-                    $header['author'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Author\s+URL:\s*(.+)$/i', $line, $m)) {
-                    $header['author_url'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Category:\s*(.+)$/i', $line, $m)) {
-                    $header['category'] = trim($m[1]);
-                    continue;
-                }
+                if (preg_match('/^Plugin\s+Name:\s*(.+)$/i', $line, $m)) { $header['title'] = trim($m[1]); continue; }
+                if (preg_match('/^Version:\s*(.+)$/i', $line, $m))      { $header['version'] = trim($m[1]); continue; }
+                if (preg_match('/^Plugin\s+URL:\s*(.+)$/i', $line, $m)) { $header['author_url'] = trim($m[1]); continue; }
+                if (preg_match('/^Description:\s*(.+)$/i', $line, $m))  { $header['description'] = trim($m[1]); continue; }
+                if (preg_match('/^Author:\s*(.+)$/i', $line, $m))       { $header['author'] = trim($m[1]); continue; }
+                if (preg_match('/^Author\s+URL:\s*(.+)$/i', $line, $m)) { $header['author_url'] = trim($m[1]); continue; }
+                if (preg_match('/^Category:\s*(.+)$/i', $line, $m))     { $header['category'] = trim($m[1]); continue; }
                 if (preg_match('/^Swoole:\s*(.+)$/i', $line, $m)) {
-                    // 兼容 true/yes/1/on/y 这几种"开"的写法，其它一律视为 false
                     $v = strtolower(trim($m[1]));
                     $header['swoole'] = in_array($v, ['true', 'yes', '1', 'on', 'y'], true);
                     continue;
                 }
-
-                // @标签写法：@PluginName xxx 或 @Version xxx
+                // @标签写法兼容
                 if (preg_match('/^@(?:PluginName|Title)\s+(.+)$/i', $line, $m)) {
-                    if ($header['title'] === '') {
-                        $header['title'] = trim($m[1]);
-                    }
-                    continue;
+                    if ($header['title'] === '') $header['title'] = trim($m[1]); continue;
                 }
-                if (preg_match('/^@Version\s+(.+)$/i', $line, $m)) {
-                    $header['version'] = trim($m[1]);
-                    continue;
-                }
+                if (preg_match('/^@Version\s+(.+)$/i', $line, $m))     { $header['version'] = trim($m[1]); continue; }
                 if (preg_match('/^@Author(?:URL)?\s+(.+)$/i', $line, $m)) {
-                    if (stripos($line, '@AuthorURL') === 0) {
-                        $header['author_url'] = trim($m[1]);
-                    } else {
-                        $header['author'] = trim($m[1]);
-                    }
+                    if (stripos($line, '@AuthorURL') === 0) $header['author_url'] = trim($m[1]);
+                    else                                    $header['author']     = trim($m[1]);
                     continue;
                 }
-                if (preg_match('/^@Description\s+(.+)$/i', $line, $m)) {
-                    $header['description'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^@Category\s+(.+)$/i', $line, $m)) {
-                    $header['category'] = trim($m[1]);
-                    continue;
-                }
+                if (preg_match('/^@Description\s+(.+)$/i', $line, $m)) { $header['description'] = trim($m[1]); continue; }
+                if (preg_match('/^@Category\s+(.+)$/i', $line, $m))    { $header['category'] = trim($m[1]); continue; }
             }
 
-            // 如果遇到非注释的 PHP 代码（通常是 define 或 function），停止解析
-            if (!$inComment && preg_match('/^\s*<\?php\s/', $line)) {
-                break;
-            }
+            if (!$inComment && preg_match('/^\s*<\?php\s/', $line)) break;
         }
-
         fclose($fp);
 
-        if ($header['title'] === '' && $header['name'] === '') {
-            return null;
-        }
-
+        if ($header['title'] === '' && $header['name'] === '') return null;
         return $header;
     }
 
     /**
-     * 获取指定 scope 下所有已安装的插件（包含数据库信息）。
-     *
-     * @return array<int, array<string, mixed>>
+     * 磁盘上是否存在该插件目录 + 主文件。
      */
-    public function getAllInstalled(string $scope): array
+    public function existsOnDisk(string $name): bool
     {
-        $sql = sprintf(
-            'SELECT * FROM `%s` WHERE `scope` = ? ORDER BY `id` ASC',
-            $this->table
-        );
-        return Database::query($sql, [$scope]);
+        if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) return false;
+        $dir = $this->pluginRoot . '/' . $name;
+        return is_dir($dir) && is_file($dir . '/' . $name . '.php');
     }
 
-    /**
-     * 按名称 + scope 查找插件。
-     *
-     * @return array<string, mixed>|null
-     */
-    public function findByName(string $name, string $scope): ?array
-    {
-        $sql = sprintf(
-            'SELECT * FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table
-        );
-        return Database::fetchOne($sql, [$name, $scope]);
-    }
+    // -----------------------------------------------------------------
+    // 启用列表存取(scope 维度)
+    // -----------------------------------------------------------------
 
     /**
-     * 按 ID 查找插件（id 全局唯一，无需 scope）。
-     *
-     * @return array<string, mixed>|null
-     */
-    public function findById(int $id): ?array
-    {
-        $sql = sprintf(
-            'SELECT * FROM `%s` WHERE `id` = ? LIMIT 1',
-            $this->table
-        );
-        return Database::fetchOne($sql, [$id]);
-    }
-
-    /**
-     * 安装插件到指定 scope（写入数据库）。
-     *
-     * @param array<string, mixed> $info 从 parseHeader 解析出的信息
-     */
-    public function install(string $name, array $info, string $scope): int
-    {
-        $fields = [
-            'name', 'title', 'version', 'author', 'author_url',
-            'description', 'category', 'icon', 'preview',
-            'main_file', 'setting_file', 'show_file', 'is_enabled',
-        ];
-
-        $cols = [];
-        $placeholders = [];
-        $params = [];
-
-        foreach ($fields as $field) {
-            $cols[] = '`' . $field . '`';
-            $placeholders[] = '?';
-            if ($field === 'is_enabled') {
-                $params[] = '0';
-            } else {
-                $params[] = (string) ($info[$field] ?? '');
-            }
-        }
-
-        // scope 字段单独追加
-        $cols[] = '`scope`';
-        $placeholders[] = '?';
-        $params[] = $scope;
-
-        $cols[] = '`installed_at`';
-        $placeholders[] = 'NOW()';
-        $cols[] = '`updated_at`';
-        $placeholders[] = 'NOW()';
-
-        // 覆盖 name 字段
-        $keyName = array_search('`name`', $cols, true);
-        if ($keyName !== false) {
-            $params[$keyName] = $name;
-        }
-
-        $sql = sprintf(
-            'INSERT INTO `%s` (%s) VALUES (%s)',
-            $this->table,
-            implode(', ', $cols),
-            implode(', ', $placeholders)
-        );
-
-        Database::execute($sql, $params);
-        return (int) Database::fetchOne('SELECT LAST_INSERT_ID() as id', [])['id'];
-    }
-
-    /**
-     * 卸载插件（只删当前 scope 下的记录，其它 scope 不受影响）。
-     */
-    public function uninstall(string $name, string $scope): bool
-    {
-        $sql = sprintf(
-            'DELETE FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table
-        );
-        return Database::execute($sql, [$name, $scope]) > 0;
-    }
-
-    /**
-     * 启用插件（仅当前 scope）。
-     */
-    public function enable(string $name, string $scope): bool
-    {
-        $sql = sprintf(
-            'UPDATE `%s` SET `is_enabled` = 1, `updated_at` = NOW() WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table
-        );
-        return Database::execute($sql, [$name, $scope]) > 0;
-    }
-
-    /**
-     * 禁用插件（仅当前 scope）。
-     */
-    public function disable(string $name, string $scope): bool
-    {
-        $sql = sprintf(
-            'UPDATE `%s` SET `is_enabled` = 0, `updated_at` = NOW() WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table
-        );
-        return Database::execute($sql, [$name, $scope]) > 0;
-    }
-
-    /**
-     * 该插件是否在主文件 header 注释里声明了 `Swoole: true`。
-     *
-     * 用途：插件启用/禁用/安装/卸载时，仅当此方法返回 true 才需要 bump swoole 代码版本号
-     * 触发 swoole worker reload —— 避免每次操作"前端 / UI 类"无关插件也白白 reload。
-     */
-    public function isSwoolePlugin(string $name, string $scope): bool
-    {
-        $mainFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php';
-        $header = $this->parseHeader($mainFile);
-        if ($header === null) return false;
-        return !empty($header['swoole']);
-    }
-
-    /**
-     * 推进 swoole 代码版本号。swoole worker 在 timer tick 前对比此值，
-     * 发现变了就 $server->reload() 自我重启，加载新插件代码。
-     *
-     * 调用时机：任何"会改变 swoole worker 内部代码"的动作完成之后 ——
-     * 启用/禁用/安装/卸载带 Swoole:true 的插件、覆盖式更新插件文件等。
-     */
-    public static function bumpSwooleCodeVersion(): void
-    {
-        // 用毫秒+随机后缀避免同一秒内连续两次操作版本号相同
-        $version = sprintf('%d.%04d', time(), random_int(0, 9999));
-        Config::set('swoole_code_version', $version);
-    }
-
-    /**
-     * 更新插件信息（仅当前 scope）。
-     *
-     * @param array<string, mixed> $data
-     */
-    public function update(string $name, array $data, string $scope): bool
-    {
-        $fields = ['title', 'version', 'author', 'author_url', 'description', 'category', 'setting_file', 'show_file', 'config'];
-
-        $sets = [];
-        $params = [];
-
-        foreach ($fields as $field) {
-            if (array_key_exists($field, $data)) {
-                $sets[] = '`' . $field . '` = ?';
-                $val = $data[$field];
-                if (is_array($val)) {
-                    $val = json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                }
-                $params[] = (string) $val;
-            }
-        }
-
-        if ($sets === []) {
-            return false;
-        }
-
-        $sets[] = '`updated_at` = NOW()';
-        $params[] = $name;
-        $params[] = $scope;
-
-        $sql = sprintf(
-            'UPDATE `%s` SET %s WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table,
-            implode(', ', $sets)
-        );
-
-        return Database::execute($sql, $params) > 0;
-    }
-
-    /**
-     * 获取指定 scope 下已启用的插件名列表。
+     * 取指定 scope 下已启用的插件名列表。
      *
      * @return array<int, string>
      */
     public function getEnabledNames(string $scope): array
     {
-        $sql = sprintf(
-            'SELECT `name` FROM `%s` WHERE `is_enabled` = 1 AND `scope` = ?',
-            $this->table
-        );
-        $rows = Database::query($sql, [$scope]);
-        $names = [];
-        foreach ($rows as $row) {
-            $names[] = (string) $row['name'];
-        }
-        return $names;
+        $raw = $this->readEnabledRaw($scope);
+        if ($raw === '') return [];
+        $names = array_map('trim', explode(',', $raw));
+        return array_values(array_filter($names, static fn ($n) => $n !== ''));
     }
 
     /**
-     * 取插件运行时加载名单 —— init.php 用它决定 include 哪些主文件。
+     * 读启用列表的原始字符串(给内部用)。
+     */
+    private function readEnabledRaw(string $scope): string
+    {
+        if ($scope === 'main') {
+            return (string) Config::get(self::MAIN_ENABLED_KEY, '');
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) return '';
+        $row = Database::fetchOne(
+            'SELECT `enabled_plugins` FROM `' . $this->merchantTable . '` WHERE `id` = ? LIMIT 1',
+            [$merchantId]
+        );
+        return $row !== null ? (string) ($row['enabled_plugins'] ?? '') : '';
+    }
+
+    /**
+     * 写启用列表。自动去重,保持插入顺序,排除空字符串。
      *
-     * 规则：
-     *   - 主站 scope：返回 main 启用的所有插件名（与 getEnabledNames 一致）
-     *   - 商户 scope：MAIN_ONLY_CATEGORIES 的强制从 main 取启用名；其它分类从商户自身 scope 取
+     * @param array<int, string> $names
+     */
+    private function writeEnabledNames(string $scope, array $names): void
+    {
+        // 去重并清白
+        $clean = [];
+        foreach ($names as $n) {
+            $n = trim((string) $n);
+            if ($n === '') continue;
+            $clean[$n] = true;
+        }
+        $value = implode(',', array_keys($clean));
+
+        if ($scope === 'main') {
+            Config::set(self::MAIN_ENABLED_KEY, $value);
+            return;
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) {
+            throw new InvalidArgumentException('非法 scope: ' . $scope);
+        }
+        Database::execute(
+            'UPDATE `' . $this->merchantTable . '` SET `enabled_plugins` = ? WHERE `id` = ? LIMIT 1',
+            [$value, $merchantId]
+        );
+    }
+
+    /**
+     * 'merchant_42' → 42;非商户 scope 返回 0。
+     */
+    private function parseMerchantScope(string $scope): int
+    {
+        if (strncmp($scope, 'merchant_', 9) !== 0) return 0;
+        $id = (int) substr($scope, 9);
+        return $id > 0 ? $id : 0;
+    }
+
+    // -----------------------------------------------------------------
+    // 启停 / 状态
+    // -----------------------------------------------------------------
+
+    /**
+     * 启用插件:加入 scope 的 enabled 列表(已启用则 no-op)。
+     *
+     * 主站:磁盘有就能启用(lazy);
+     * 商户:调用方要先确保商户已购(AppPurchaseModel::isPurchased),本方法不再校验,
+     *       磁盘缺失才返回 false。
+     */
+    public function enable(string $name, string $scope): bool
+    {
+        if (!$this->existsOnDisk($name)) return false;
+
+        $names = $this->getEnabledNames($scope);
+        if (in_array($name, $names, true)) return true; // 已启用,no-op
+        $names[] = $name;
+        $this->writeEnabledNames($scope, $names);
+        return true;
+    }
+
+    /**
+     * 禁用插件:从 scope 的 enabled 列表剔除(本来就不在则 no-op)。
+     */
+    public function disable(string $name, string $scope): bool
+    {
+        $names = $this->getEnabledNames($scope);
+        if (!in_array($name, $names, true)) return true; // 本来就不在
+        $names = array_values(array_filter($names, static fn ($n) => $n !== $name));
+        $this->writeEnabledNames($scope, $names);
+        return true;
+    }
+
+    /**
+     * 卸载插件:语义上等同于 disable —— 把 slug 从 enabled 列表剔除。
+     *
+     * 与 disable 的区别在调用方上下文:
+     *   - disable:暂停使用,callback_rm 不跑、Storage 不清,随时可再启用
+     *   - uninstall:调用方在前后会调插件 callback_rm + 清 Storage,清理插件私有数据
+     *
+     * 本方法只负责修改启用列表;callback_rm / Storage 清理由 admin/plugin.php 处理。
+     */
+    public function uninstall(string $name, string $scope): bool
+    {
+        return $this->disable($name, $scope);
+    }
+
+    /**
+     * 该插件在指定 scope 下是否启用(在 enabled 列表里)。
+     */
+    public function isEnabled(string $name, string $scope): bool
+    {
+        return in_array($name, $this->getEnabledNames($scope), true);
+    }
+
+    /**
+     * 该插件在指定 scope 下是否"已安装"。
+     *
+     * 主站:磁盘有目录视为已装;
+     * 商户:em_app_purchase 有 (merchant_id, name, 'plugin') 记录视为已装。
+     */
+    public function isInstalled(string $name, string $scope): bool
+    {
+        if ($scope === 'main') {
+            return $this->existsOnDisk($name);
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) return false;
+        return (new AppPurchaseModel())->isPurchased($merchantId, $name, 'plugin');
+    }
+
+    // -----------------------------------------------------------------
+    // 列表 API
+    // -----------------------------------------------------------------
+
+    /**
+     * 列表 API:扫磁盘 + 标注启用状态(给 admin/plugin.php 用)。
+     *
+     * 返回每条 = 磁盘 header + is_enabled。
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function scanWithStatus(string $scope): array
+    {
+        $disk = $this->scanPlugins();
+        if ($disk === []) return [];
+
+        $enabledSet = array_flip($this->getEnabledNames($scope));
+        foreach ($disk as $name => &$info) {
+            $info['is_enabled'] = isset($enabledSet[$name]);
+        }
+        unset($info);
+        return $disk;
+    }
+
+    // -----------------------------------------------------------------
+    // 启用名单 / runtime / 按分类筛(走 parseHeader)
+    // -----------------------------------------------------------------
+
+    /**
+     * init.php 用的运行时加载名单。
+     *
+     * 主站:返回 scope='main' 启用的所有插件
+     * 商户:返回 scope='merchant_X' 启用的 + 主站启用且 header.category 命中 SYSTEM_PLUGINS 的
+     *
+     * SYSTEM_PLUGINS 过滤靠 parseHeader(磁盘元数据);
+     * SYSTEM_PLUGINS 插件通常仅 3-5 个,parseHeader 开销可忽略。
      *
      * @return array<int, string>
      */
@@ -451,103 +378,63 @@ final class PluginModel
             return $this->getEnabledNames('main');
         }
 
-        $cats = self::MAIN_ONLY_CATEGORIES;
-        $placeholders = implode(',', array_fill(0, count($cats), '?'));
-
-        // 主站强制类
-        $sqlMain = sprintf(
-            'SELECT `name` FROM `%s`
-              WHERE `scope` = ? AND `is_enabled` = 1 AND `category` IN (' . $placeholders . ')',
-            $this->table
-        );
-        $mainRows = Database::query($sqlMain, array_merge(['main'], $cats));
-
-        // 商户自身的非强制类
-        $sqlSelf = sprintf(
-            'SELECT `name` FROM `%s`
-              WHERE `scope` = ? AND `is_enabled` = 1 AND `category` NOT IN (' . $placeholders . ')',
-            $this->table
-        );
-        $selfRows = Database::query($sqlSelf, array_merge([$scope], $cats));
-
-        $names = array_unique(array_merge(
-            array_column($mainRows, 'name'),
-            array_column($selfRows, 'name')
-        ));
-        return array_values($names);
+        $merchantEnabled = $this->getEnabledNames($scope);
+        $mainEnabled     = $this->getEnabledNames('main');
+        $systemInherited = [];
+        foreach ($mainEnabled as $n) {
+            $header = $this->parseHeader($this->pluginRoot . '/' . $n . '/' . $n . '.php');
+            // 主站启用的插件中,category 命中 SYSTEM_PLUGINS 的部分由商户继承使用
+            if ($header && in_array((string) ($header['category'] ?? ''), self::SYSTEM_PLUGINS, true)) {
+                $systemInherited[] = $n;
+            }
+        }
+        return array_values(array_unique(array_merge($merchantEnabled, $systemInherited)));
     }
 
     /**
-     * 取指定 scope 下、属于某个分类的已启用插件（含 main_file）。
+     * 取指定 scope + 指定分类下的启用插件(给 PaymentService 等用)。
      *
-     * 用途：PaymentService 取"主站启用的支付插件"时不能依赖 init.php 已加载的钩子
-     * （init.php 只会按当前 scope 加载），需要按需读 DB + include 主文件再触发钩子。
+     * 不依赖 DB.category(已删),改为 PHP 侧过滤 parseHeader 的 category 字段。
      *
      * @return array<int, array{name:string, main_file:string}>
      */
     public function getEnabledByCategory(string $category, string $scope): array
     {
-        $sql = sprintf(
-            'SELECT `name`, `main_file` FROM `%s`
-               WHERE `category` = ? AND `scope` = ? AND `is_enabled` = 1
-               ORDER BY `id` ASC',
-            $this->table
-        );
-        $rows = Database::query($sql, [$category, $scope]);
-        $out = [];
-        foreach ($rows as $row) {
-            $out[] = [
-                'name'      => (string) $row['name'],
-                'main_file' => (string) ($row['main_file'] ?: ($row['name'] . '.php')),
-            ];
+        $enabled = $this->getEnabledNames($scope);
+        $result = [];
+        foreach ($enabled as $n) {
+            $header = $this->parseHeader($this->pluginRoot . '/' . $n . '/' . $n . '.php');
+            if ($header && (string) ($header['category'] ?? '') === $category) {
+                $result[] = ['name' => $n, 'main_file' => $n . '.php'];
+            }
         }
-        return $out;
+        return $result;
+    }
+
+    // -----------------------------------------------------------------
+    // Swoole 相关
+    // -----------------------------------------------------------------
+
+    /**
+     * 该插件是否在主文件 header 注释里声明了 `Swoole: true`。
+     *
+     * 用途:启停/装卸操作完成时,仅当此方法返回 true 才需要 bumpSwooleCodeVersion()
+     * 触发 swoole worker reload,避免每次操作"前端/UI 类"无关插件也白白 reload。
+     */
+    public function isSwoolePlugin(string $name, string $scope): bool
+    {
+        $header = $this->parseHeader($this->pluginRoot . '/' . $name . '/' . $name . '.php');
+        return $header !== null && !empty($header['swoole']);
     }
 
     /**
-     * 检查插件在指定 scope 下是否已安装。
+     * 推进 swoole 代码版本号。swoole worker 在 timer tick 前对比此值,
+     * 发现变了就 $server->reload() 自我重启,加载新插件代码。
      */
-    public function isInstalled(string $name, string $scope): bool
+    public static function bumpSwooleCodeVersion(): void
     {
-        $sql = sprintf(
-            'SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1',
-            $this->table
-        );
-        $row = Database::fetchOne($sql, [$name, $scope]);
-        return $row !== null && (int) $row['cnt'] > 0;
-    }
-
-    /**
-     * 检查插件在指定 scope 下是否已启用。
-     */
-    public function isEnabled(string $name, string $scope): bool
-    {
-        $sql = sprintf(
-            'SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? AND `scope` = ? AND `is_enabled` = 1 LIMIT 1',
-            $this->table
-        );
-        $row = Database::fetchOne($sql, [$name, $scope]);
-        return $row !== null && (int) $row['cnt'] > 0;
-    }
-
-    /**
-     * 统计指定 scope 下已安装插件数量。
-     */
-    public function countInstalled(string $scope): int
-    {
-        $sql = sprintf('SELECT COUNT(*) AS cnt FROM `%s` WHERE `scope` = ?', $this->table);
-        $row = Database::fetchOne($sql, [$scope]);
-        return $row !== null ? (int) $row['cnt'] : 0;
-    }
-
-    /**
-     * 检查某个 name 对应的物理插件目录是否已被任何 scope 安装（用于判断磁盘是否被占用）。
-     * install 流程靠它决定"是否还需要下载 zip"——文件已在其他 scope 装过就不用重复下载。
-     */
-    public function existsInAnyScope(string $name): bool
-    {
-        $sql = sprintf('SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? LIMIT 1', $this->table);
-        $row = Database::fetchOne($sql, [$name]);
-        return $row !== null && (int) $row['cnt'] > 0;
+        // 用毫秒+随机后缀避免同一秒内连续两次操作版本号相同
+        $version = sprintf('%d.%04d', time(), random_int(0, 9999));
+        Config::set('swoole_code_version', $version);
     }
 }

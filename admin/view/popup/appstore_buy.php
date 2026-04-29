@@ -280,7 +280,7 @@ $(function () {
         method: 'GET',
         dataType: 'json',
         timeout: 12000,
-        data: { _action: 'app_detail', id: appId }
+        data: { _action: 'app_detail', id: appId, tab: window.APPSTORE_BUY_TAB || 'main' }
     }).done(function (resp) {
         if (!resp || resp.code !== 200 || !resp.data || !resp.data.app) {
             renderState('fa-exclamation-circle', (resp && resp.msg) || '加载失败',
@@ -397,6 +397,7 @@ $(function () {
                     _action:    'app_buy',
                     app_id:     app.id,
                     pay_method: code,
+                    tab:        window.APPSTORE_BUY_TAB || 'main',
                     csrf_token: window.adminCsrfToken || ''
                 }
             }).done(function (resp) {

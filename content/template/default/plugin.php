@@ -8,7 +8,7 @@
 defined('EM_ROOT') || exit('access denied!');
 
 // 为下载链接添加按钮样式
-function add_download_style($logData, &$result)
+function add_download_style_default($logData, &$result)
 {
     // 优化正则表达式以匹配多种下载链接格式
     $pattern = '/<a\s+([^>]*href="[^"]*(?:\?resource_alias=[^&"]*(?:&resource_filename=[^"]*)?|\.(?:zip|rar|7z|gz|bz2|tar|exe|dmg|pkg|deb|rpm))(?:[^"]*)?"[^>]*)>/i';
@@ -19,7 +19,7 @@ function add_download_style($logData, &$result)
 addAction('article_content_echo', 'add_download_style');
 
 // 定义下载按钮样式
-function render_download_btn()
+function render_download_btn_default()
 {
     echo <<<EOT
 <style>

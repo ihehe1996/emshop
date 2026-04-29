@@ -1,202 +1,211 @@
 <?php
-/** @var array<string, mixed> $currentMerchant */
-/** @var array<string, array<string, mixed>> $availablePlugins */
-/** @var string $licenseError */
-/** @var string $csrfToken */
+if (!defined('EM_ROOT')) {
+    exit('Access Denied');
+}
+$plugins   = isset($plugins)   && is_array($plugins) ? $plugins : [];
+$csrfToken = $csrfToken ?? Csrf::token();
 ?>
 <style>
-/* 插件卡片按钮组 */
-.mc-plugin-actions {
-    display: flex; gap: 6px; flex-wrap: wrap;
-    margin-top: 12px;
-}
-.mc-plugin-btn {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 5px 12px;
-    font-size: 12px; font-weight: 500;
-    border: 1px solid #e5e7eb; border-radius: 5px;
-    background: #fff; color: #374151;
-    cursor: pointer;
-    transition: all .15s ease;
-}
-.mc-plugin-btn:hover { background: #f9fafb; border-color: #d1d5db; }
-.mc-plugin-btn i { font-size: 11px; }
-.mc-plugin-btn--primary  { background: #4e6ef2; color: #fff; border-color: #4e6ef2; }
-.mc-plugin-btn--primary:hover  { background: #3c58d9; color: #fff; }
-.mc-plugin-btn--success  { background: #10b981; color: #fff; border-color: #10b981; }
-.mc-plugin-btn--success:hover  { background: #059669; color: #fff; }
-.mc-plugin-btn--warning  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-.mc-plugin-btn--warning:hover  { background: #fde68a; }
-.mc-plugin-btn--danger   { background: #fff; color: #dc2626; border-color: #fecaca; }
-.mc-plugin-btn--danger:hover   { background: #fef2f2; border-color: #fca5a5; }
+.mp-page { padding: 8px 4px 40px; background: unset; }
 
-.mc-plugin-status {
-    display: inline-flex; align-items: center; gap: 3px;
-    padding: 1px 8px;
-    font-size: 10px; font-weight: 500;
-    border-radius: 3px;
-    margin-left: 6px;
+.mp-toolbar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 16px;
 }
-.mc-plugin-status--enabled  { background: #d1fae5; color: #047857; }
-.mc-plugin-status--disabled { background: #f3f4f6; color: #6b7280; }
-.mc-plugin-status--uninstalled { background: #fef3c7; color: #92400e; }
+.mp-hint {
+    margin-left: auto;
+    font-size: 13px; color: #6b7280;
+}
+.mp-hint a { color: #6366f1; font-weight: 500; }
+
+.mp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+}
+
+.mp-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px;
+    display: flex; gap: 14px; align-items: flex-start;
+    transition: border-color .15s, box-shadow .15s;
+}
+.mp-card:hover { border-color: #c7d2fe; box-shadow: 0 4px 12px rgba(15,23,42,.06); }
+
+.mp-card__icon {
+    flex: 0 0 56px;
+    width: 56px; height: 56px;
+    border-radius: 12px;
+    background: #f3f4f6;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+}
+.mp-card__icon img { width: 100%; height: 100%; object-fit: cover; }
+.mp-card__icon i   { color: #9ca3af; font-size: 22px; }
+
+.mp-card__body { flex: 1; min-width: 0; }
+.mp-card__head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 6px;
+}
+.mp-card__title { font-weight: 600; color: #0f172a; font-size: 14px; }
+.mp-card__ver   { color: #94a3b8; font-size: 12px; font-family: Menlo,Consolas,monospace; }
+.mp-card__desc {
+    color: #6b7280; font-size: 12px; line-height: 1.55;
+    margin-bottom: 10px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.mp-card__meta {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.mp-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; font-size: 11px;
+    border-radius: 4px; line-height: 18px;
+}
+.mp-tag--cat       { background: #f5f3ff; color: #7c3aed; }
+.mp-tag--inherited { background: #fef3c7; color: #92400e; }
+.mp-tag--enabled   { background: #d1fae5; color: #065f46; }
+.mp-tag--disabled  { background: #fee2e2; color: #991b1b; }
+
+.mp-card__actions {
+    display: flex; gap: 6px;
+}
+.mp-card__actions .layui-btn {
+    height: 28px; line-height: 20px; padding: 4px 12px;
+    font-size: 12px; border-radius: 6px;
+}
+
+.mp-empty {
+    background: #fff; border: 1px dashed #e5e7eb; border-radius: 12px;
+    padding: 60px 20px; text-align: center;
+    color: #9ca3af;
+}
+.mp-empty i { font-size: 36px; margin-bottom: 12px; display: block; }
+.mp-empty a { color: #6366f1; font-weight: 500; }
 </style>
 
-<div class="mc-page">
-    <div class="mc-page-header">
-        <h2 class="mc-page-title">插件管理</h2>
-        <p class="mc-page-desc">仅展示本店已从应用商店购买的插件；可在此启用、禁用或卸载</p>
+<div class="mp-page">
+    <div class="mp-toolbar">
+        <h1 class="admin-page__title" style="margin:0;">插件管理</h1>
     </div>
 
-    <?php if ($licenseError !== ''): ?>
-    <div style="padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:6px;margin-bottom:16px;font-size:13px;">
-        <i class="fa fa-exclamation-triangle"></i>
-        无法连接中心服务：<?= htmlspecialchars($licenseError) ?>。插件列表暂不可见，请稍后重试。
-    </div>
-    <?php endif; ?>
-
-    <div class="mc-section">
-        <div class="mc-section-title">
-            本店已购插件
-            <span style="font-size:12px;font-weight:normal;color:#9ca3af;">共 <?= count($availablePlugins) ?> 个</span>
+    <?php if (count($plugins) === 0): ?>
+        <div class="mp-empty">
+            <i class="fa fa-puzzle-piece"></i>
+            <div>你还没有任何已购买/继承的插件</div>
         </div>
-        <?php if ($licenseError === '' && empty($availablePlugins)): ?>
-        <div class="mc-placeholder" style="padding:40px 20px;text-align:center;color:#9ca3af;">
-            <i class="fa fa-plug" style="font-size:32px;display:block;margin-bottom:8px;color:#d1d5db;"></i>
-            <div>本店尚未购买任何插件</div>
-            <div style="margin-top:8px;font-size:12px;">
-                可在<a href="/user/merchant/appstore.php" data-pjax="#merchantContent" style="color:#4e6ef2;">应用商店</a>购买后回到此页启用
-            </div>
-        </div>
-        <?php elseif (!empty($availablePlugins)): ?>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">
-            <?php foreach ($availablePlugins as $name => $info): ?>
-            <?php
-                $isInstalled = !empty($info['is_installed']);
-                $isEnabled   = !empty($info['is_enabled']);
-                $hasSetting  = !empty($info['has_setting']);
-                $statusClass = !$isInstalled ? 'uninstalled' : ($isEnabled ? 'enabled' : 'disabled');
-                $statusText  = !$isInstalled ? '未安装' : ($isEnabled ? '已启用' : '已停用');
+    <?php else: ?>
+        <div class="mp-grid">
+            <?php foreach ($plugins as $p):
+                $isInherited = !empty($p['is_inherited']);
+                $isEnabled   = (int) ($p['is_enabled'] ?? 0) === 1;
+                $hasSetting  = !empty($p['has_setting']);
+                $name        = (string) ($p['name'] ?? '');
+                $title       = (string) ($p['title'] ?? $name);
+                $version     = (string) ($p['version'] ?? '');
+                $category    = (string) ($p['category'] ?? '');
+                $description = (string) ($p['description'] ?? '');
+                $icon        = (string) ($p['icon'] ?? '');
             ?>
-            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-                    <?php if (!empty($info['icon'])): ?>
-                    <img src="<?= htmlspecialchars($info['icon']) ?>" style="width:36px;height:36px;border-radius:6px;object-fit:contain;background:#f3f4f6;flex-shrink:0;">
-                    <?php else: ?>
-                    <span style="width:36px;height:36px;border-radius:6px;background:#eef2ff;color:#4e6ef2;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="fa fa-plug"></i></span>
-                    <?php endif; ?>
-                    <div style="flex:1;min-width:0;">
-                        <div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:14px;">
-                            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($info['title'] ?: $name) ?></span>
-                            <span class="mc-plugin-status mc-plugin-status--<?= $statusClass ?>"><?= $statusText ?></span>
+                <div class="mp-card" data-name="<?= htmlspecialchars($name, ENT_QUOTES) ?>">
+                    <div class="mp-card__icon">
+                        <?php if ($icon !== ''): ?>
+                            <img src="<?= htmlspecialchars($icon, ENT_QUOTES) ?>" alt="">
+                        <?php else: ?>
+                            <i class="fa fa-puzzle-piece"></i>
+                        <?php endif; ?>
+                    </div>
+                    <div class="mp-card__body">
+                        <div class="mp-card__head">
+                            <span class="mp-card__title"><?= htmlspecialchars($title, ENT_QUOTES) ?></span>
+                            <span class="mp-card__ver">v<?= htmlspecialchars($version ?: '1.0.0', ENT_QUOTES) ?></span>
                         </div>
-                        <div style="color:#9ca3af;font-size:11px;margin-top:2px;">
-                            v<?= htmlspecialchars($info['version'] ?? '1.0.0') ?>
-                            <?php if (!empty($info['category'])): ?> · <?= htmlspecialchars($info['category']) ?><?php endif; ?>
+                        <div class="mp-card__desc"><?= htmlspecialchars($description ?: '该插件未配置描述', ENT_QUOTES) ?></div>
+                        <div class="mp-card__meta">
+                            <?php if ($category !== ''): ?>
+                                <span class="mp-tag mp-tag--cat"><i class="fa fa-tag"></i><?= htmlspecialchars($category, ENT_QUOTES) ?></span>
+                            <?php endif; ?>
+                            <?php if ($isInherited): ?>
+                                <span class="mp-tag mp-tag--inherited"><i class="fa fa-link"></i>主站统管</span>
+                            <?php elseif ($isEnabled): ?>
+                                <span class="mp-tag mp-tag--enabled"><i class="fa fa-check-circle"></i>已启用</span>
+                            <?php else: ?>
+                                <span class="mp-tag mp-tag--disabled"><i class="fa fa-pause-circle"></i>已禁用</span>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="mp-card__actions">
+                            <?php if ($isInherited): ?>
+                                <button class="layui-btn layui-btn-disabled" disabled>主站统一管理</button>
+                            <?php else: ?>
+                                <?php if ($isEnabled): ?>
+                                    <button class="layui-btn layui-btn-warm" data-act="disable">禁用</button>
+                                <?php else: ?>
+                                    <button class="layui-btn layui-btn-normal" data-act="enable">启用</button>
+                                <?php endif; ?>
+                                <?php if ($hasSetting): ?>
+                                    <button class="layui-btn layui-btn-primary" data-act="setting">配置</button>
+                                <?php endif; ?>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
-                <div style="color:#6b7280;font-size:12px;line-height:1.6;min-height:36px;">
-                    <?= htmlspecialchars($info['description'] ?? '') ?>
-                </div>
-
-                <div class="mc-plugin-actions">
-                    <?php if (!$isInstalled): ?>
-                        <button class="mc-plugin-btn mc-plugin-btn--primary" data-action="install" data-name="<?= htmlspecialchars($name) ?>" type="button">
-                            <i class="fa fa-download"></i> 安装
-                        </button>
-                    <?php else: ?>
-                        <?php if ($isEnabled): ?>
-                            <button class="mc-plugin-btn mc-plugin-btn--warning" data-action="disable" data-name="<?= htmlspecialchars($name) ?>" type="button">
-                                <i class="fa fa-pause"></i> 停用
-                            </button>
-                        <?php else: ?>
-                            <button class="mc-plugin-btn mc-plugin-btn--success" data-action="enable" data-name="<?= htmlspecialchars($name) ?>" type="button">
-                                <i class="fa fa-play"></i> 启用
-                            </button>
-                        <?php endif; ?>
-                        <?php if ($hasSetting): ?>
-                            <button class="mc-plugin-btn" data-action="settings" data-name="<?= htmlspecialchars($name) ?>" type="button">
-                                <i class="fa fa-gear"></i> 配置
-                            </button>
-                        <?php endif; ?>
-                        <button class="mc-plugin-btn mc-plugin-btn--danger" data-action="uninstall" data-name="<?= htmlspecialchars($name) ?>" type="button">
-                            <i class="fa fa-trash"></i> 卸载
-                        </button>
-                    <?php endif; ?>
-                </div>
-            </div>
             <?php endforeach; ?>
         </div>
-        <?php endif; ?>
-    </div>
+    <?php endif; ?>
 </div>
 
 <script>
-(function () {
-    'use strict';
-    // 脚本幂等：PJAX 来回切换时只绑一次事件
-    var csrfToken = <?= json_encode($csrfToken) ?>;
-    var lock = false;
+window.MP_CSRF = <?= json_encode($csrfToken) ?>;
+layui.use(['layer'], function () {
+    var $ = layui.jquery, layer = layui.layer;
 
-    function doRequest(action, name, onDone) {
-        if (lock) return;
-        lock = true;
-        var loadingIdx = layui.layer.load(2, { shade: [0.3, '#000'] });
-        $.ajax({
-            url: '/user/merchant/plugin.php',
-            type: 'POST',
-            dataType: 'json',
-            data: { csrf_token: csrfToken, _action: action, name: name }
+    function postAction(action, name, cb) {
+        $.post('/user/merchant/plugin.php', {
+            _action:    action,
+            csrf_token: window.MP_CSRF,
+            name:       name
         }).done(function (res) {
-            layui.layer.close(loadingIdx);
-            if (res && (res.code === 200 || res.code === 0)) {
-                if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
-                layui.layer.msg(res.msg || '操作成功');
-                // PJAX 重载本页
-                if ($.pjax) {
-                    $.pjax({ url: '/user/merchant/plugin.php', container: '#merchantContent' });
-                } else {
-                    location.reload();
-                }
+            if (res.code === 200) {
+                if (res.data && res.data.csrf_token) window.MP_CSRF = res.data.csrf_token;
+                cb && cb(true, res);
             } else {
-                layui.layer.msg((res && res.msg) || '操作失败');
+                layer.msg(res.msg || '操作失败', { icon: 2 });
+                cb && cb(false, res);
             }
-            if (onDone) onDone();
         }).fail(function () {
-            layui.layer.close(loadingIdx);
-            layui.layer.msg('网络异常');
-            if (onDone) onDone();
-        }).always(function () {
-            lock = false;
+            layer.msg('网络异常', { icon: 2 });
+            cb && cb(false);
         });
     }
 
-    function openSettings(name) {
-        layui.layer.open({
-            type: 2,
-            title: '插件设置',
-            skin: 'admin-modal',
-            area: [window.innerWidth >= 800 ? '720px' : '94%', window.innerHeight >= 640 ? '80%' : '88%'],
-            maxmin: true,
-            shadeClose: false,
-            content: '/user/merchant/plugin.php?_popup=1&name=' + encodeURIComponent(name)
-        });
-    }
+    $(document).on('click', '.mp-card__actions [data-act]', function () {
+        var $btn = $(this), act = $btn.data('act');
+        var name = $btn.closest('.mp-card').data('name');
+        if (!name) return;
 
-    $(document).off('click.mcPluginBtn').on('click.mcPluginBtn', '.mc-plugin-btn[data-action]', function () {
-        var action = $(this).data('action');
-        var name   = $(this).data('name');
-        if (!action || !name) return;
-        if (action === 'settings') { openSettings(name); return; }
-        if (action === 'uninstall') {
-            layui.layer.confirm('确定卸载该插件吗？仅清除本店的记录，磁盘文件不受影响。', { icon: 3, title: '卸载确认' }, function (idx) {
-                layui.layer.close(idx);
-                doRequest('uninstall', name);
+        if (act === 'enable' || act === 'disable') {
+            postAction(act, name, function (ok) {
+                if (ok) {
+                    layer.msg(act === 'enable' ? '已启用' : '已禁用', { icon: 1 });
+                    setTimeout(function () { location.reload(); }, 600);
+                }
             });
-            return;
+        } else if (act === 'setting') {
+            layer.open({
+                type: 2,
+                title: '插件设置',
+                area: [window.innerWidth >= 760 ? '720px' : '94%', window.innerHeight >= 720 ? '600px' : '88%'],
+                shadeClose: true,
+                content: '/user/merchant/plugin.php?_popup=1&name=' + encodeURIComponent(name)
+            });
         }
-        doRequest(action, name);
     });
-})();
+});
 </script>

@@ -3,138 +3,85 @@
 declare(strict_types=1);
 
 /**
- * 模板数据模型。
+ * 模板数据模型(配置启用版)。
  *
- * 负责模板扫描、头信息解析、安装记录和 PC / 手机端启用状态维护。
+ * 设计原则:磁盘是真理,启用状态是配置值。
+ *   - 元数据(title/version/author/template_url/description/preview/...)从 parseHeader 实时读
+ *   - 主站 PC/Mobile 启用 → em_config.active_template_pc / active_template_mobile
+ *   - 商户 PC/Mobile 启用 → em_merchant.active_template_pc / active_template_mobile
+ *   - 模板配置 → TemplateStorage(em_options 表,与插件 Storage 同表不同 type)
+ *   - "已装"判定:主站 = 磁盘有目录;商户 = AppPurchaseModel::isPurchased
  *
- * scope 约定：
+ * scope 约定:
  *   'main'          → 主站作用域
  *   'merchant_{id}' → 商户 id 对应的独立作用域
- * 物理文件（content/template/xxx）在全站共享一份，DB 记录按 scope 隔离。
+ * 物理文件(content/template/xxx)在全站共享一份,启用状态按 scope 隔离。
  */
 final class TemplateModel
 {
-    private string $table;
+    /** 主站启用模板 config key */
+    private const MAIN_ACTIVE_PC_KEY     = 'active_template_pc';
+    private const MAIN_ACTIVE_MOBILE_KEY = 'active_template_mobile';
+
+    private string $templateRoot;
+    private string $merchantTable;
 
     public function __construct()
     {
-        $this->table = Database::prefix() . 'template';
+        $this->templateRoot  = EM_ROOT . '/content/template';
+        $this->merchantTable = Database::prefix() . 'merchant';
     }
 
-    /**
-     * 确保模板表存在。
-     */
-    public function ensureTable(): void
-    {
-        try {
-            $table = $this->table;
-            Database::statement(
-                "CREATE TABLE IF NOT EXISTS `{$table}` (
-                    `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                    `name` VARCHAR(64) NOT NULL COMMENT '模板目录名/标识',
-                    `scope` VARCHAR(64) NOT NULL DEFAULT 'main' COMMENT '作用域：main=主站 / merchant_{id}=商户独立安装',
-                    `title` VARCHAR(128) NOT NULL COMMENT '模板显示名称',
-                    `version` VARCHAR(32) NOT NULL DEFAULT '1.0.0' COMMENT '模板版本',
-                    `author` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '模板作者',
-                    `author_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '作者主页',
-                    `template_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '模板主页',
-                    `description` TEXT NOT NULL COMMENT '模板描述',
-                    `preview` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '预览图',
-                    `header_file` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '模板头文件',
-                    `callback_file` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '回调文件',
-                    `plugin_file` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '系统挂载文件',
-                    `is_active_pc` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为PC端启用模板',
-                    `is_active_mobile` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为手机端启用模板',
-                    `config` TEXT NOT NULL COMMENT '模板配置',
-                    `installed_at` DATETIME NULL COMMENT '安装时间',
-                    `updated_at` DATETIME NULL COMMENT '更新时间',
-                    PRIMARY KEY (`id`),
-                    UNIQUE KEY `uk_name_scope` (`name`, `scope`),
-                    KEY `idx_is_active_pc` (`is_active_pc`),
-                    KEY `idx_is_active_mobile` (`is_active_mobile`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE='utf8mb4_unicode_ci' COMMENT='模板表'"
-            );
-        } catch (Throwable $e) {
-            // ignore
-        }
-    }
+    // -----------------------------------------------------------------
+    // 磁盘:扫描 / 解析头部 / 路径辅助
+    // -----------------------------------------------------------------
 
     /**
-     * 扫描 content/template 目录，返回磁盘上的模板信息。
-     *
-     * 磁盘文件全站共享，不按 scope 隔离；由 DB 记录决定"在哪个 scope 下生效"。
+     * 扫 content/template 目录,返回磁盘上的模板 + parseHeader 元数据。
      *
      * @return array<string, array<string, mixed>>
      */
     public function scanTemplates(): array
     {
         $templates = [];
-        $templateDir = EM_ROOT . '/content/template';
-        if (!is_dir($templateDir)) {
-            return $templates;
-        }
+        if (!is_dir($this->templateRoot)) return $templates;
 
-        $entries = scandir($templateDir);
-        if ($entries === false) {
-            return $templates;
-        }
-
+        $entries = scandir($this->templateRoot) ?: [];
         foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..') {
-                continue;
-            }
-
-            $entryDir = $templateDir . '/' . $entry;
-            if (!is_dir($entryDir)) {
-                continue;
-            }
-
-            $headerFile = $entryDir . '/header.php';
-            if (!is_file($headerFile)) {
-                continue;
-            }
+            if ($entry === '.' || $entry === '..') continue;
+            $dir = $this->templateRoot . '/' . $entry;
+            if (!is_dir($dir)) continue;
+            $headerFile = $dir . '/header.php';
+            if (!is_file($headerFile)) continue;
 
             $header = $this->parseHeader($headerFile);
-            if ($header === null) {
-                continue;
-            }
+            if ($header === null) continue;
 
-            $header['name'] = $entry;
-            $header['header_file'] = 'header.php';
-            $header['callback_file'] = is_file($entryDir . '/callback.php') ? 'callback.php' : '';
-            $header['plugin_file'] = is_file($entryDir . '/plugin.php') ? 'plugin.php' : '';
-            $header['preview'] = is_file($entryDir . '/preview.jpg') ? '/content/template/' . $entry . '/preview.jpg' : '';
-
+            $header['name']          = $entry;
+            $header['header_file']   = 'header.php';
+            $header['callback_file'] = is_file($dir . '/callback.php') ? 'callback.php' : '';
+            $header['plugin_file']   = is_file($dir . '/plugin.php') ? 'plugin.php' : '';
+            $header['preview']       = is_file($dir . '/preview.jpg') ? '/content/template/' . $entry . '/preview.jpg' : '';
             $templates[$entry] = $header;
         }
-
         return $templates;
     }
 
     /**
-     * 解析模板 header.php 中的头信息。
+     * 解析模板 header.php 中的头注释。
      *
      * @return array<string, mixed>|null
      */
     public function parseHeader(string $headerFile): ?array
     {
-        if (!is_file($headerFile) || !is_readable($headerFile)) {
-            return null;
-        }
-
+        if (!is_file($headerFile) || !is_readable($headerFile)) return null;
         $fp = fopen($headerFile, 'r');
-        if ($fp === false) {
-            return null;
-        }
+        if ($fp === false) return null;
 
         $header = [
-            'name' => '',
-            'title' => '',
-            'version' => '1.0.0',
-            'author' => '',
-            'author_url' => '',
-            'template_url' => '',
-            'description' => '',
+            'name' => '', 'title' => '', 'version' => '1.0.0',
+            'author' => '', 'author_url' => '',
+            'template_url' => '', 'description' => '',
             'preview' => '',
         ];
 
@@ -142,302 +89,207 @@ final class TemplateModel
         while (($line = fgets($fp)) !== false) {
             $line = rtrim($line);
             if (preg_match('/^\s*\/\*\s*$/', $line) || preg_match('/^\s*\/\*\*\s*$/', $line)) {
-                $inComment = true;
-                continue;
+                $inComment = true; continue;
             }
-
-            if ($inComment && preg_match('/^\s*\*\/\s*$/', $line)) {
-                $inComment = false;
-                continue;
-            }
+            if ($inComment && preg_match('/^\s*\*\/\s*$/', $line)) { $inComment = false; continue; }
 
             if ($inComment) {
                 $line = preg_replace('/^\s*\*\s*/', '', $line);
                 $line = trim((string) $line);
 
-                if (preg_match('/^Template\s+Name:\s*(.+)$/i', $line, $m)) {
-                    $header['title'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Version:\s*(.+)$/i', $line, $m)) {
-                    $header['version'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Template\s+Url:\s*(.+)$/i', $line, $m)) {
-                    $header['template_url'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Description:\s*(.+)$/i', $line, $m)) {
-                    $header['description'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Author:\s*(.+)$/i', $line, $m)) {
-                    $header['author'] = trim($m[1]);
-                    continue;
-                }
-                if (preg_match('/^Author\s+Url:\s*(.+)$/i', $line, $m)) {
-                    $header['author_url'] = trim($m[1]);
-                    continue;
-                }
-            }
-
-            if (!$inComment && preg_match('/^\s*<\?php\s*/', $line)) {
-                continue;
+                if (preg_match('/^Template\s+Name:\s*(.+)$/i', $line, $m)) { $header['title'] = trim($m[1]); continue; }
+                if (preg_match('/^Version:\s*(.+)$/i', $line, $m))         { $header['version'] = trim($m[1]); continue; }
+                if (preg_match('/^Template\s+Url:\s*(.+)$/i', $line, $m))  { $header['template_url'] = trim($m[1]); continue; }
+                if (preg_match('/^Description:\s*(.+)$/i', $line, $m))     { $header['description'] = trim($m[1]); continue; }
+                if (preg_match('/^Author:\s*(.+)$/i', $line, $m))          { $header['author'] = trim($m[1]); continue; }
+                if (preg_match('/^Author\s+Url:\s*(.+)$/i', $line, $m))    { $header['author_url'] = trim($m[1]); continue; }
             }
         }
-
         fclose($fp);
 
-        if ($header['title'] === '') {
-            return null;
-        }
-
+        if ($header['title'] === '') return null;
         return $header;
     }
 
     /**
-     * 获取指定 scope 下所有已安装模板记录。
-     *
-     * @return array<int, array<string, mixed>>
+     * 磁盘上是否存在该模板目录 + header.php。
      */
-    public function getAllInstalled(string $scope): array
+    public function existsOnDisk(string $name): bool
     {
-        $sql = sprintf('SELECT * FROM `%s` WHERE `scope` = ? ORDER BY `id` ASC', $this->table);
-        return Database::query($sql, [$scope]);
+        if ($name === '' || !preg_match('/^[A-Za-z0-9_\-]+$/', $name)) return false;
+        $dir = $this->templateRoot . '/' . $name;
+        return is_dir($dir) && is_file($dir . '/header.php');
     }
 
-    /**
-     * 按模板名称 + scope 查询安装记录。
-     *
-     * @return array<string, mixed>|null
-     */
-    public function findByName(string $name, string $scope): ?array
-    {
-        $sql = sprintf('SELECT * FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1', $this->table);
-        return Database::fetchOne($sql, [$name, $scope]);
-    }
+    // -----------------------------------------------------------------
+    // 列表 API
+    // -----------------------------------------------------------------
 
     /**
-     * 判断模板是否已在指定 scope 下安装。
+     * 列表 API:扫磁盘 + 标注启用状态(给 admin/template.php 用)。
+     *
+     * 返回每条 = 磁盘 header + is_active_pc / is_active_mobile / has_setting。
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function scanWithStatus(string $scope): array
+    {
+        $disk = $this->scanTemplates();
+        if ($disk === []) return [];
+
+        // 一次取出当前 scope 的 PC/Mobile 启用名,避免每张卡单独查
+        $activePc     = $this->getActiveTheme('pc', $scope);
+        $activeMobile = $this->getActiveTheme('mobile', $scope);
+
+        foreach ($disk as $name => &$info) {
+            $info['is_active_pc']     = ($activePc !== '' && $activePc === $name);
+            $info['is_active_mobile'] = ($activeMobile !== '' && $activeMobile === $name);
+            $info['has_setting']      = $this->hasSettingFile($name);
+        }
+        unset($info);
+        return $disk;
+    }
+
+    // -----------------------------------------------------------------
+    // 状态判断
+    // -----------------------------------------------------------------
+
+    /**
+     * 该模板在指定 scope 下是否"已安装"。
+     *
+     * 主站:磁盘有目录视为已装;
+     * 商户:em_app_purchase 有 (merchant_id, name, 'template') 记录视为已装。
      */
     public function isInstalled(string $name, string $scope): bool
     {
-        $sql = sprintf('SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1', $this->table);
-        $row = Database::fetchOne($sql, [$name, $scope]);
-        return $row !== null && (int) $row['cnt'] > 0;
+        if ($scope === 'main') {
+            return $this->existsOnDisk($name);
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) return false;
+        return (new AppPurchaseModel())->isPurchased($merchantId, $name, 'template');
     }
 
-    /**
-     * 安装模板到指定 scope 并写入数据库。
-     *
-     * @param array<string, mixed> $info
-     */
-    public function install(string $name, array $info, string $scope): int
-    {
-        $fields = [
-            'name', 'title', 'version', 'author', 'author_url', 'template_url',
-            'description', 'preview', 'header_file', 'callback_file',
-            'plugin_file', 'is_active_pc', 'is_active_mobile', 'config',
-        ];
-
-        $cols = [];
-        $placeholders = [];
-        $params = [];
-
-        foreach ($fields as $field) {
-            $cols[] = '`' . $field . '`';
-            $placeholders[] = '?';
-            if ($field === 'config') {
-                $params[] = '{}';
-            } elseif ($field === 'is_active_pc') {
-                $params[] = '0';
-            } elseif ($field === 'is_active_mobile') {
-                $params[] = '0';
-            } else {
-                $params[] = (string) ($info[$field] ?? '');
-            }
-        }
-
-        // scope 字段单独追加
-        $cols[] = '`scope`';
-        $placeholders[] = '?';
-        $params[] = $scope;
-
-        $cols[] = '`installed_at`';
-        $placeholders[] = 'NOW()';
-        $cols[] = '`updated_at`';
-        $placeholders[] = 'NOW()';
-
-        $keyName = array_search('`name`', $cols, true);
-        if ($keyName !== false) {
-            $params[$keyName] = $name;
-        }
-
-        $sql = sprintf(
-            'INSERT INTO `%s` (%s) VALUES (%s)',
-            $this->table,
-            implode(', ', $cols),
-            implode(', ', $placeholders)
-        );
-
-        Database::execute($sql, $params);
-        return (int) Database::fetchOne('SELECT LAST_INSERT_ID() AS id', [])['id'];
-    }
+    // -----------------------------------------------------------------
+    // 启用 / 切换(PC / 手机端)
+    // -----------------------------------------------------------------
 
     /**
-     * 卸载模板记录（仅当前 scope，其它 scope 不受影响）。
-     */
-    public function uninstall(string $name, string $scope): bool
-    {
-        $sql = sprintf('DELETE FROM `%s` WHERE `name` = ? AND `scope` = ? LIMIT 1', $this->table);
-        return Database::execute($sql, [$name, $scope]) > 0;
-    }
-
-    /**
-     * 更新模板元数据或配置（仅当前 scope）。
-     */
-    public function update(string $name, array $data, string $scope): bool
-    {
-        $fields = ['title', 'version', 'author', 'author_url', 'template_url', 'description', 'preview', 'callback_file', 'plugin_file', 'config'];
-        $sets = [];
-        $params = [];
-
-        foreach ($fields as $field) {
-            if (!array_key_exists($field, $data)) {
-                continue;
-            }
-            $sets[] = '`' . $field . '` = ?';
-            $val = $data[$field];
-            if (is_array($val)) {
-                $val = json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-            }
-            $params[] = (string) $val;
-        }
-
-        if ($sets === []) {
-            return false;
-        }
-
-        $sets[] = '`updated_at` = NOW()';
-        $params[] = $name;
-        $params[] = $scope;
-
-        $sql = sprintf('UPDATE `%s` SET %s WHERE `name` = ? AND `scope` = ? LIMIT 1', $this->table, implode(', ', $sets));
-        return Database::execute($sql, $params) > 0;
-    }
-
-    /**
-     * 获取指定 scope + 终端当前启用的模板名。
+     * 取指定 scope + 终端当前启用的模板名(没启用返回空字符串)。
      */
     public function getActiveTheme(string $client, string $scope): string
     {
-        $column = $this->getActiveColumn($client);
-        $sql = sprintf('SELECT `name` FROM `%s` WHERE `%s` = 1 AND `scope` = ? LIMIT 1', $this->table, $column);
-        $row = Database::fetchOne($sql, [$scope]);
-        return $row !== null ? (string) $row['name'] : '';
+        if ($scope === 'main') {
+            return (string) Config::get($this->getConfigKeyFor($client), '');
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) return '';
+        $col = $this->getMerchantColumnFor($client);
+        $row = Database::fetchOne(
+            'SELECT `' . $col . '` AS v FROM `' . $this->merchantTable . '` WHERE `id` = ? LIMIT 1',
+            [$merchantId]
+        );
+        return $row !== null ? (string) ($row['v'] ?? '') : '';
     }
 
     /**
-     * 将模板设为指定 scope + 终端的当前启用模板。
-     * 切换时只会清该 scope 下的旧启用态，不会影响其它 scope。
+     * 把模板设为该 scope + 终端的当前启用模板。同终端只允许一个启用,赋值即覆盖。
      */
     public function setActiveTheme(string $client, string $name, string $scope): bool
     {
-        $column = $this->getActiveColumn($client);
-        Database::execute(sprintf('UPDATE `%s` SET `%s` = 0 WHERE `scope` = ?', $this->table, $column), [$scope]);
-        $affected = Database::execute(
-            sprintf('UPDATE `%s` SET `%s` = 1, `updated_at` = NOW() WHERE `name` = ? AND `scope` = ? LIMIT 1', $this->table, $column),
-            [$name, $scope]
+        if ($scope === 'main') {
+            Config::set($this->getConfigKeyFor($client), $name);
+            return true;
+        }
+        $merchantId = $this->parseMerchantScope($scope);
+        if ($merchantId <= 0) return false;
+        $col = $this->getMerchantColumnFor($client);
+        Database::execute(
+            'UPDATE `' . $this->merchantTable . '` SET `' . $col . '` = ? WHERE `id` = ? LIMIT 1',
+            [$name, $merchantId]
         );
-        return $affected > 0;
+        return true;
     }
 
     /**
-     * 取消指定 scope + 终端的当前启用模板。
+     * 清除该 scope + 终端的启用状态(写入空字符串,等同"未启用任何模板")。
      */
     public function clearActiveTheme(string $client, string $scope): bool
     {
-        $column = $this->getActiveColumn($client);
-        $affected = Database::execute(
-            sprintf('UPDATE `%s` SET `%s` = 0, `updated_at` = NOW() WHERE `%s` = 1 AND `scope` = ?', $this->table, $column, $column),
-            [$scope]
-        );
-        return $affected > 0;
+        return $this->setActiveTheme($client, '', $scope);
     }
 
     /**
-     * 判断模板是否已在指定 scope + 终端启用。
+     * 该模板是否在指定 scope + 终端启用。
      */
     public function isActive(string $name, string $client, string $scope): bool
     {
-        $column = $this->getActiveColumn($client);
-        $sql = sprintf('SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? AND `scope` = ? AND `%s` = 1 LIMIT 1', $this->table, $column);
-        $row = Database::fetchOne($sql, [$name, $scope]);
-        return $row !== null && (int) $row['cnt'] > 0;
+        $active = $this->getActiveTheme($client, $scope);
+        return $active !== '' && $active === $name;
     }
 
-    /**
-     * 检查某个 name 对应的物理模板目录是否已被任何 scope 安装（用于判断磁盘是否被占用）。
-     * install 流程靠它决定"是否还需要下载 zip"——文件已在其他 scope 装过就不用重复下载。
-     */
-    public function existsInAnyScope(string $name): bool
-    {
-        $sql = sprintf('SELECT COUNT(*) AS cnt FROM `%s` WHERE `name` = ? LIMIT 1', $this->table);
-        $row = Database::fetchOne($sql, [$name]);
-        return $row !== null && (int) $row['cnt'] > 0;
-    }
+    // -----------------------------------------------------------------
+    // 文件路径辅助
+    // -----------------------------------------------------------------
 
-    /**
-     * 判断模板是否提供设置页。
-     */
     public function hasSettingFile(string $name): bool
     {
-        return is_file(EM_ROOT . '/content/template/' . $name . '/setting.php');
+        return is_file($this->templateRoot . '/' . $name . '/setting.php');
     }
 
-    /**
-     * 获取模板设置页绝对路径。
-     */
     public function getSettingFilePath(string $name): string
     {
-        return EM_ROOT . '/content/template/' . $name . '/setting.php';
+        return $this->templateRoot . '/' . $name . '/setting.php';
     }
 
-    /**
-     * 获取模板生命周期回调文件绝对路径。
-     */
     public function getCallbackFilePath(string $name): string
     {
-        return EM_ROOT . '/content/template/' . $name . '/callback.php';
+        return $this->templateRoot . '/' . $name . '/callback.php';
     }
 
-    /**
-     * 获取模板挂载文件绝对路径。
-     */
     public function getPluginFilePath(string $name): string
     {
-        return EM_ROOT . '/content/template/' . $name . '/plugin.php';
+        return $this->templateRoot . '/' . $name . '/plugin.php';
     }
 
-    /**
-     * 获取模板预览图 URL。
-     */
     public function getPreviewUrl(string $name): string
     {
-        return is_file(EM_ROOT . '/content/template/' . $name . '/preview.jpg') ? '/content/template/' . $name . '/preview.jpg' : '';
+        return is_file($this->templateRoot . '/' . $name . '/preview.jpg')
+            ? '/content/template/' . $name . '/preview.jpg'
+            : '';
+    }
+
+    // -----------------------------------------------------------------
+    // 内部辅助
+    // -----------------------------------------------------------------
+
+    /**
+     * 'merchant_42' → 42;非商户 scope 返回 0。
+     */
+    private function parseMerchantScope(string $scope): int
+    {
+        if (strncmp($scope, 'merchant_', 9) !== 0) return 0;
+        $id = (int) substr($scope, 9);
+        return $id > 0 ? $id : 0;
     }
 
     /**
-     * 将终端标识映射为数据库字段名。
+     * client → 主站 config key。
      */
-    private function getActiveColumn(string $client): string
+    private function getConfigKeyFor(string $client): string
     {
-        if ($client === 'pc') {
-            return 'is_active_pc';
-        }
-        if ($client === 'mobile') {
-            return 'is_active_mobile';
-        }
-        throw new RuntimeException('未知终端类型');
+        if ($client === 'pc')     return self::MAIN_ACTIVE_PC_KEY;
+        if ($client === 'mobile') return self::MAIN_ACTIVE_MOBILE_KEY;
+        throw new RuntimeException('未知终端类型: ' . $client);
+    }
+
+    /**
+     * client → em_merchant 列名。
+     */
+    private function getMerchantColumnFor(string $client): string
+    {
+        if ($client === 'pc')     return 'active_template_pc';
+        if ($client === 'mobile') return 'active_template_mobile';
+        throw new RuntimeException('未知终端类型: ' . $client);
     }
 }
