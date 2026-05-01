@@ -12,7 +12,7 @@ require_once __DIR__ . '/global.php';
  *   - 启用列表存于 em_config.enabled_plugins(逗号分隔 slug)
  *   - 元数据(title/version/category/icon/setting_file/...)走 parseHeader 实时读
  *
- * 保留 actions:enable / disable / uninstall(=清数据+删磁盘) / save_config
+ * 保留 actions:enable / disable / uninstall / save_config
  * 删除 actions:install(磁盘=装) / delete(已并入 uninstall)
  */
 adminRequireLogin();
@@ -33,6 +33,60 @@ if (Request::isPost()) {
         }
 
         $action = (string) Input::post('_action', '');
+
+        if ($action === 'set_merchant_price') {
+            $marketId = (int) Input::post('market_id', 0);
+            if (Input::post('retail_price_micro', null) !== null) {
+                $price = max(0, (int) Input::post('retail_price_micro', 0));
+            } else {
+                $yuan  = (string) Input::post('retail_price', '0');
+                $price = (int) round(((float) $yuan) * 1000000);
+                if ($price < 0) $price = 0;
+            }
+            if ($marketId <= 0) {
+                Response::error('market_id 非法');
+            }
+
+            $marketModel = new AppMarketModel();
+            $market = $marketModel->findById($marketId);
+            if ($market === null || (string) ($market['type'] ?? '') !== 'plugin') {
+                Response::error('分站插件不存在');
+            }
+
+            $service = new MainAppPurchaseService();
+            $ok = $service->updateRetailPrice($marketId, $price);
+            if (!$ok) {
+                Response::error('价格未改动或目标不存在');
+            }
+            Response::success('售价已更新', ['csrf_token' => Csrf::refresh()]);
+        }
+
+        if ($action === 'set_merchant_listed') {
+            $marketId = (int) Input::post('market_id', 0);
+            $listed   = (int) Input::post('is_listed', 0) === 1;
+            if ($marketId <= 0) {
+                Response::error('market_id 非法');
+            }
+
+            $marketModel = new AppMarketModel();
+            $market = $marketModel->findById($marketId);
+            if ($market === null || (string) ($market['type'] ?? '') !== 'plugin') {
+                Response::error('分站插件不存在');
+            }
+            $appCode = (string) ($market['app_code'] ?? '');
+            $name = trim((string) Input::post('name', ''));
+            if ($name !== '' && $appCode !== '' && $name !== $appCode) {
+                Response::error('参数不匹配,请刷新页面后重试');
+            }
+
+            $service = new MainAppPurchaseService();
+            $ok = $service->setListed($marketId, $listed);
+            if (!$ok) {
+                Response::error('状态未改动或目标不存在');
+            }
+            Response::success($listed ? '已上架' : '已下架', ['csrf_token' => Csrf::refresh()]);
+        }
+
         $name   = trim((string) Input::post('name', ''));
         if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) {
             Response::error('非法插件名');
@@ -63,9 +117,39 @@ if (Request::isPost()) {
                 break;
             }
 
-            // 卸载 —— callback_rm 清插件私有数据 + 清 Storage 配置 + 递归删磁盘目录(=彻底移除)
-            // 启用中的插件必须先禁用,避免 callback_rm 清掉数据后插件还在 runtime 工作产生脏状态
+            // 卸载:
+            //   1) 主站插件:callback_rm 清私有数据 + 清 Storage 配置 + 递归删磁盘目录
+            //   2) 分站插件(传 market_id):删除 em_app_market 记录(含流水),从分站货架彻底移除
+            // 启用中的主站插件必须先禁用,避免 callback_rm 清掉数据后插件还在 runtime 工作产生脏状态
             case 'uninstall': {
+                $marketId = (int) Input::post('market_id', 0);
+                if ($marketId > 0) {
+                    $marketModel = new AppMarketModel();
+                    $market = $marketModel->findById($marketId);
+                    if ($market === null || (string) ($market['type'] ?? '') !== 'plugin') {
+                        Response::error('分站插件不存在');
+                    }
+                    $appCode = (string) ($market['app_code'] ?? '');
+                    if ($appCode !== '' && $appCode !== $name) {
+                        Response::error('参数不匹配,请刷新页面后重试');
+                    }
+
+                    // 已售出(有购买记录/已扣配额)不允许卸载,避免已购分站数据悬空
+                    $soldCount = (new AppPurchaseModel())->countByMarket($marketId);
+                    $consumedQuota = (int) ($market['consumed_quota'] ?? 0);
+                    if ($soldCount > 0 || $consumedQuota > 0) {
+                        Response::error('该分站插件已有分站购买记录,请改为下架');
+                    }
+
+                    $ok = $marketModel->deleteById($marketId, true);
+                    if (!$ok) {
+                        Response::error('分站插件不存在或已卸载');
+                    }
+
+                    Response::success('分站插件已卸载', ['csrf_token' => Csrf::refresh()]);
+                    break;
+                }
+
                 if (!$model->existsOnDisk($name)) Response::error('磁盘上未找到该插件');
                 if ($model->isEnabled($name, $scope)) Response::error('该插件正在启用中,请先禁用再卸载');
                 $isSwoole = $model->isSwoolePlugin($name, $scope);
@@ -141,6 +225,84 @@ if (Request::isPost()) {
 if (!$isPopup && Input::get('_action', '') === 'list') {
     header('Content-Type: application/json; charset=utf-8');
 
+    $merchantCodeSet = [];
+    try {
+        $rows = Database::query(
+            'SELECT `app_code` FROM `' . Database::prefix() . 'app_market` WHERE `type` = ?',
+            ['plugin']
+        );
+        foreach ($rows as $r) {
+            $code = trim((string) ($r['app_code'] ?? ''));
+            if ($code !== '') $merchantCodeSet[$code] = true;
+        }
+    } catch (Throwable $e) {
+        $merchantCodeSet = [];
+    }
+
+    $listScope = (string) Input::get('scope', 'main');
+    if (!in_array($listScope, ['main', 'merchant'], true)) $listScope = 'main';
+
+    $merchantCount = 0;
+    try {
+        $row = Database::fetchOne(
+            'SELECT COUNT(*) AS c FROM `' . Database::prefix() . 'app_market` WHERE `type` = ?',
+            ['plugin']
+        );
+        $merchantCount = (int) ($row['c'] ?? 0);
+    } catch (Throwable $e) {
+        $merchantCount = 0;
+    }
+
+    if ($listScope === 'merchant') {
+        try {
+            $result = (new AppMarketModel())->paginate([
+                'type'      => 'plugin',
+                'page'      => 1,
+                'page_size' => 100,
+            ]);
+        } catch (Throwable $e) {
+            $result = ['data' => [], 'total' => 0];
+        }
+
+        $data = [];
+        foreach ($result['data'] as $row) {
+            $appCode = (string) ($row['app_code'] ?? '');
+            $data[] = [
+                'name'         => $appCode,
+                'title'        => (string) ($row['title'] ?: $appCode),
+                'version'      => (string) ($row['version'] ?? '1.0.0'),
+                'author'       => '',
+                'author_url'   => '',
+                'description'  => (string) ($row['description'] ?? ''),
+                'category'     => (string) ($row['category'] ?? ''),
+                'icon'         => (string) ($row['cover'] ?? ''),
+                'preview'      => (string) ($row['cover'] ?? ''),
+                'setting_file' => '',
+                'show_file'    => '',
+                'is_installed' => 1,
+                'is_enabled'   => ((int) ($row['is_listed'] ?? 0) === 1),
+                'id'           => (int) ($row['id'] ?? 0),
+                'market_id'    => (int) ($row['id'] ?? 0),
+                'retail_price' => (int) ($row['retail_price'] ?? 0),
+                'cost_price'   => (int) ($row['cost_price'] ?? 0),
+                'is_listed'    => (int) ($row['is_listed'] ?? 0),
+                'is_merchant'  => 1,
+                'config'       => '{}',
+            ];
+        }
+
+        echo json_encode([
+            'code'           => 0,
+            'msg'            => '',
+            'count'          => count($data),
+            'data'           => $data,
+            'csrf_token'     => Csrf::token(),
+            'merchant_count' => $result['total'],
+            '_license_error' => '',
+        ], JSON_UNESCAPED_UNICODE);
+        return;
+    }
+
     $scanned = $model->scanWithStatus($scope);
 
     // 授权过滤:服务端注册过 ∩ 已购买 → 才保留;系统内置直通
@@ -149,6 +311,8 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
 
     $data = [];
     foreach ($scanned as $name => $info) {
+        // 主站插件列表排除"分站货架插件"(它们单独展示在 merchant 选项卡)
+        if (isset($merchantCodeSet[$name])) continue;
         $data[] = [
             'name'         => $name,
             'title'        => (string) ($info['title']       ?? $name),
@@ -174,6 +338,7 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
         'count'          => count($data),
         'data'           => $data,
         'csrf_token'     => Csrf::token(),
+        'merchant_count' => $merchantCount,
         '_license_error' => $licenseError,
     ], JSON_UNESCAPED_UNICODE);
     return;

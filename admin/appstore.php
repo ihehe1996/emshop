@@ -26,7 +26,7 @@ $merchant_plugin_category = PluginModel::MERCHANT_PLUGIN_CATEGORIES;
 
 // 分类清单不再走服务端 —— 由 view 直接渲染(基于 PluginModel::MAIN_PLUGIN_CATEGORIES 常量 + 硬编码 "全部" / "模板主题")
 
-// AJAX：拉取已启用的支付方式（/api/pay_methods.php）。购买弹窗用来渲染可选支付通道
+// AJAX：拉取已启用的支付方式（/api/pay_methods.php）。兼容旧购买弹窗
 if ((string) Input::get('_action', '') === 'pay_methods') {
     try {
         Response::success('', ['list' => LicenseClient::payMethods()]);
@@ -35,33 +35,40 @@ if ((string) Input::get('_action', '') === 'pay_methods') {
     }
 }
 
-// AJAX：为指定应用创建购买订单（/api/app_buy.php），成功返回 pay_url 供前端顶层跳转
-// 用 POST + CSRF 校验（和 install/update 一致），避免 CSRF 伪造
+// AJAX：为指定应用创建订单（/api/app_create_order.php）
+// 当前重构阶段仅传 emkey + app_id；前端先提示“订单已创建”
 if (Request::isPost() && (string) Input::post('_action', '') === 'app_buy') {
     if (!Csrf::validate((string) Input::post('csrf_token', ''))) {
         Response::error('请求已失效，请刷新页面后重试');
     }
-    $appId     = (int) Input::post('app_id', 0);
-    $payMethod = trim((string) Input::post('pay_method', ''));
-    if ($appId <= 0)       Response::error('应用ID不能为空');
-    if ($payMethod === '') Response::error('请选择支付方式');
+    $appId = (int) Input::post('app_id', 0);
+    if ($appId <= 0) Response::error('应用ID不能为空');
 
-    // emkey + host 从当前激活状态取；未激活直接拦截，防止服务端兜底报错
+    // emkey 从当前激活状态取；未激活直接拦截，防止服务端兜底报错
     $licenseRow = LicenseService::currentLicense();
     $emkey = $licenseRow ? (string) ($licenseRow['license_code'] ?? '') : '';
     if ($emkey === '') {
         Response::error('请先激活正版授权');
     }
-    $host = LicenseService::effectiveHost();
     $tab = (string) Input::post('tab', 'main');
     if (!in_array($tab, ['main', 'merchant'], true)) $tab = 'main';
     try {
-        // 阶段 8:走拆分后的 mainAppBuy / merchantAppBuy(member_code 由方法内部固定为空)
-        // tab=merchant 表示"主站为分站采购"——服务端将来按 audience='merchant' 用分站货架价格收费
+        // tab=merchant 仍保留分支，便于后续在服务端做差异化策略
         $data = $tab === 'merchant'
-            ? LicenseClient::merchantAppBuy($emkey, $host, $appId, $payMethod)
-            : LicenseClient::mainAppBuy($emkey, $host, $appId, $payMethod);
-        Response::success('', $data + ['csrf_token' => Csrf::refresh(), 'tab' => $tab]);
+            ? LicenseClient::merchantAppCreateOrder($emkey, $appId)
+            : LicenseClient::mainAppCreateOrder($emkey, $appId);
+        $outTradeNo = trim((string) ($data['out_trade_no'] ?? ''));
+        if ($outTradeNo === '') {
+            Response::error('订单创建失败：未返回订单号');
+        }
+        Response::success('订单已创建', [
+            'out_trade_no' => $outTradeNo,
+            'amount'       => (string) ($data['amount'] ?? ''),
+            'subject'      => (string) ($data['subject'] ?? ''),
+            'payment'      => (string) ($data['payment'] ?? ''),
+            'csrf_token'   => Csrf::refresh(),
+            'tab'          => $tab,
+        ]);
     } catch (Throwable $e) {
         Response::error($e->getMessage());
     }
@@ -93,11 +100,11 @@ if ((string) Input::get('_action', '') === 'app_detail') {
 // AJAX：拉取应用列表（/api/app_store.php）。由 layui table 分页驱动；失败返回空列表不挂页
 //
 // tab=main     → 拉服务端"主站货架"(scope=1),主站自己用,合并 em_plugin/em_template 已装状态
-// tab=merchant → 拉服务端"分站货架"(scope=2),主站为分站采购,合并 em_app_market 已上架/库存
+// tab=merchant → 拉服务端"分站货架"(scope=2),主站为分站采购,合并 em_app_market 已上架状态
 if ((string) Input::get('_action', '') === 'list') {
     LicenseService::revalidateCurrent(); // 获取最新授权状态
     // 取当前激活码和域名用于服务端计算 my_price（未激活时 emkey 为空，服务端会按 VIP 价返回）
-//    $licenseRow = LicenseService::currentLicense();
+    $licenseRow = LicenseService::currentLicense();
     $emkey = $licenseRow ? (string) ($licenseRow['license_code'] ?? '') : '';
     // 有绑定过主授权域名就用它，否则回退当前 HTTP_HOST（适配未激活场景）
     $host  = LicenseService::effectiveHost();
@@ -130,7 +137,7 @@ if ((string) Input::get('_action', '') === 'list') {
             foreach ((new TemplateModel())->scanTemplates() as $slug => $info) {
                 $installedThemes[$slug] = (string) ($info['version'] ?? '');
             }
-            // 主站应用商店不再做"更新检测",所以 installed_version 不再注入;is_installed 仅用于显示"已安装"灰按钮
+            // 主站应用商店只标记是否已安装;installed_version 不再注入,is_installed 仅用于显示"已安装"灰按钮
             foreach ($result['list'] as &$app) {
                 $slug = (string) ($app['name_en'] ?? '');
                 $type = (string) ($app['type'] ?? '');
@@ -139,31 +146,13 @@ if ((string) Input::get('_action', '') === 'list') {
             }
             unset($app);
         } else {
-            // tab=merchant:主站为分站采购,合并 em_app_market 已上架/库存/分站售价
+            // tab=merchant:主站为分站采购,应用商店只需要合并是否已上架
             $marketModel = new AppMarketModel();
             foreach ($result['list'] as &$app) {
                 $slug = (string) ($app['name_en'] ?? '');
                 $type = (string) ($app['type'] ?? '');
                 $market = $slug !== '' ? $marketModel->findByAppCode($slug, $type) : null;
-                if ($market !== null) {
-                    $app['market_id']        = (int) $market['id'];
-                    $app['is_in_market']     = 1;
-                    $app['retail_price']     = (int) $market['retail_price'];
-                    $app['total_quota']      = (int) $market['total_quota'];
-                    $app['consumed_quota']   = (int) $market['consumed_quota'];
-                    $app['remaining']        = max(0, (int) $market['total_quota'] - (int) $market['consumed_quota']);
-                    $app['is_listed']        = (int) $market['is_listed'];
-                    $app['installed_version'] = (string) ($market['version'] ?? '');
-                } else {
-                    $app['market_id']        = 0;
-                    $app['is_in_market']     = 0;
-                    $app['retail_price']     = 0;
-                    $app['total_quota']      = 0;
-                    $app['consumed_quota']   = 0;
-                    $app['remaining']        = 0;
-                    $app['is_listed']        = 0;
-                    $app['installed_version'] = '';
-                }
+                $app['is_in_market'] = $market !== null ? 1 : 0;
                 // 兼容前端 is_installed 字段:tab=merchant 下 is_installed=1 表示"已上架"
                 $app['is_installed'] = $app['is_in_market'];
             }
@@ -176,8 +165,8 @@ if ((string) Input::get('_action', '') === 'list') {
     }
 }
 
-// 安装 / 更新 应用：下载远端 zip → 解压到 content/plugin|template/{name}/ → 注册到 em_plugin|em_template
-if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install', 'update'], true)) {
+// 安装应用：下载远端 zip → 解压到 content/plugin|template/{name}/ → 注册到本地
+if (Request::isPost() && (string) Input::post('_action', '') === 'install') {
     try {
         if (!Csrf::validate((string) Input::post('csrf_token', ''))) {
             Response::error('请求已失效，请刷新页面后重试');
@@ -186,18 +175,10 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
         $name    = trim((string) Input::post('name', ''));
         $type    = (string) Input::post('type', 'plugin');
         $filePath = trim((string) Input::post('file_path', ''));
-        $isUpdate = (string) Input::post('_action', '') === 'update';
         // tab=main      → 主站自用,装到 content/plugin|template/{name}/(磁盘=装,无 DB 行)
         // tab=merchant  → 主站为分站采购,下载解压共用,注册落 em_app_market(走 MainAppPurchaseService)
-        //                 isUpdate 在 tab=merchant 下表示"补货"(再加 qty 配额),不重新下载
         $tab = (string) Input::post('tab', 'main');
         if (!in_array($tab, ['main', 'merchant'], true)) $tab = 'main';
-        $scope = 'main'; // 仅 tab=main 用
-
-        // 主站应用商店暂不提供"更新"动作 —— 后续主站应用更新会做到模板 / 插件管理页里
-        if ($isUpdate && $tab === 'main') {
-            Response::error('主站应用商店暂不支持更新,请到模板/插件管理页处理');
-        }
 
         if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) {
             Response::error('非法应用名');
@@ -212,11 +193,9 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
         // 本地快捷安装：目录已在磁盘上 → 跳过下载，直接走注册流程。
         //   路线 B 后磁盘文件全站共享一份：别的 scope 先装过就会命中这条分支；
         //   当前 scope 此时只在 DB 里新增一行记录即可，不碰物理文件。
-        //   更新动作不走这条分支（更新必须重新下载新版文件；此举会让所有持有该应用的 scope
-        //   同时拿到新文件，但 DB 版本字段仅更新当前 scope 那行，其它 scope 不同步——可接受）。
-        $localAlreadyExists = !$isUpdate && is_dir($targetDir);
+        $localAlreadyExists = is_dir($targetDir);
 
-        // 非本地快捷安装时才要求 file_path（更新 + 首装都需要下载）
+        // 非本地快捷安装时才要求 file_path
         if (!$localAlreadyExists && $filePath === '') {
             Response::error('缺少下载地址');
         }
@@ -288,7 +267,7 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
         }
         $topList = array_keys($topLevel);
 
-        // 更新时先清空旧目录
+        // 删除临时目录时复用
         $rmTree = static function (string $path) use (&$rmTree): bool {
             if (!file_exists($path)) return true;
             if (!is_dir($path)) return @unlink($path);
@@ -298,9 +277,6 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
             }
             return @rmdir($path);
         };
-        if ($isUpdate && is_dir($targetDir)) {
-            $rmTree($targetDir);
-        }
         if (!is_dir($targetRoot)) @mkdir($targetRoot, 0755, true);
 
         if (count($topList) === 1 && strpos($topList[0], '.') === false) {
@@ -349,9 +325,15 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
 
         // 注册到本地数据库
         if ($tab === 'merchant') {
+            // 已上架的应用不允许再次安装
+            $existingMarket = (new AppMarketModel())->findByAppCode($name, $type);
+            if ($existingMarket !== null) {
+                Response::error('应用已安装，无需重复安装');
+            }
+
             // tab=merchant:主站为分站采购 → 落 em_app_market + 写流水(走 MainAppPurchaseService)
             // 元数据从磁盘 header 读(物理文件主站采购时已经下好/解压好);售价默认等于成本价,主站可在
-            // 分站市场管理页(/admin/merchant_market.php)修改;qty 默认 1,后续服务端支持后由前端弹窗指定
+            // 分站市场管理页(/admin/merchant_market.php)修改
             $title = $name; $version = ''; $category = ''; $cover = ''; $description = '';
             if ($type === 'plugin') {
                 $mainFile = $targetDir . '/' . $name . '.php';
@@ -380,7 +362,6 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
             $result = $service->registerPurchase([
                 'app_code'        => $name,
                 'type'            => $type,
-                'qty'             => max(1, (int) Input::post('qty', 1)),
                 'cost_per_unit'   => $costPerUnit,
                 'remote_app_id'   => ((int) Input::post('remote_app_id', 0)) ?: null,
                 'title'           => $title,
@@ -388,13 +369,13 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
                 'category'        => $category,
                 'cover'           => $cover,
                 'description'     => $description,
-                // upsert 时 retail_price 仅在"新建 market 行"时生效;补货不会改已有售价(由 upsert 内部决定)
+                // upsert 时 retail_price 仅在"新建 market 行"时生效
                 'retail_price'    => $costPerUnit,
                 'remote_order_no' => (string) Input::post('remote_order_no', ''),
-                'remark'          => $isUpdate ? '主站补货' : '主站首次采购',
+                'remark'          => '主站首次采购',
             ]);
             Response::success(
-                $isUpdate ? '已为分站补充配额' : '已为分站采购上架',
+                '已为分站采购上架',
                 ['csrf_token' => Csrf::refresh(), 'market_id' => $result['market_id'], 'log_id' => $result['log_id']]
             );
         } elseif ($type === 'plugin') {
@@ -404,7 +385,7 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
                 Response::error('插件主文件缺失：' . $name . '.php');
             }
             Response::success(
-                $isUpdate ? '插件已更新' : '插件已安装,请到插件管理页启用',
+                '插件已安装,请到插件管理页启用',
                 ['csrf_token' => Csrf::refresh()]
             );
         } else {
@@ -413,7 +394,7 @@ if (Request::isPost() && in_array((string) Input::post('_action', ''), ['install
                 Response::error('模板 header.php 缺失');
             }
             Response::success(
-                $isUpdate ? '模板已更新' : '模板已安装,请到模板管理页启用',
+                '模板已安装,请到模板管理页启用',
                 ['csrf_token' => Csrf::refresh()]
             );
         }
