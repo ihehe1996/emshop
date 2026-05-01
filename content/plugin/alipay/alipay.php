@@ -327,11 +327,6 @@ function alipay_post_gateway(array $params): array
         CURLOPT_SSL_VERIFYHOST => 0,
     ];
 
-    $caInfo = alipay_resolve_ca_bundle();
-    if ($caInfo !== '') {
-        $opts[CURLOPT_CAINFO] = $caInfo;
-    }
-
     curl_setopt_array($ch, $opts);
 
     $response = curl_exec($ch);
@@ -340,14 +335,7 @@ function alipay_post_gateway(array $params): array
     curl_close($ch);
 
     if ($response === false || $response === '') {
-        $msg = '支付宝接口请求失败：' . ($error ?: 'empty response');
-        if (stripos((string) $error, 'SSL certificate problem') !== false) {
-            $msg .= '。检测到服务器缺少/无法识别 CA 根证书链，请安装系统 ca-certificates 或在 php.ini 配置 curl.cainfo/openssl.cafile';
-            if ($caInfo !== '') {
-                $msg .= '（当前 CA 路径：' . $caInfo . '）';
-            }
-        }
-        return ['ok' => false, 'msg' => $msg];
+        return ['ok' => false, 'msg' => '支付宝接口请求失败：' . ($error ?: 'empty response')];
     }
     if ($httpCode !== 200) {
         return ['ok' => false, 'msg' => '支付宝接口状态异常：HTTP ' . $httpCode];
@@ -371,47 +359,6 @@ function alipay_post_gateway(array $params): array
     }
 
     return ['ok' => true, 'data' => $bizResp];
-}
-
-function alipay_resolve_ca_bundle(): string
-{
-    $candidates = [];
-
-    $iniCurl = trim((string) ini_get('curl.cainfo'));
-    if ($iniCurl !== '') {
-        $candidates[] = $iniCurl;
-    }
-
-    $iniOpenSsl = trim((string) ini_get('openssl.cafile'));
-    if ($iniOpenSsl !== '') {
-        $candidates[] = $iniOpenSsl;
-    }
-
-    $envSsl = trim((string) getenv('SSL_CERT_FILE'));
-    if ($envSsl !== '') {
-        $candidates[] = $envSsl;
-    }
-
-    $candidates = array_merge($candidates, [
-        EM_ROOT . '/cacert.pem',
-        EM_ROOT . '/content/cacert.pem',
-        __DIR__ . '/cacert.pem',
-        '/etc/ssl/certs/ca-certificates.crt',      // Debian/Ubuntu
-        '/etc/pki/tls/certs/ca-bundle.crt',        // CentOS/RHEL
-        '/etc/ssl/ca-bundle.pem',                  // SUSE
-        '/usr/local/etc/openssl/cert.pem',         // macOS/Homebrew
-        'C:\\Windows\\System32\\curl-ca-bundle.crt',
-        'C:\\Windows\\curl-ca-bundle.crt',
-    ]);
-
-    foreach ($candidates as $p) {
-        $path = trim((string) $p);
-        if ($path !== '' && is_file($path) && is_readable($path)) {
-            return $path;
-        }
-    }
-
-    return '';
 }
 
 function alipay_create_face_pay_url(array $cfg, string $orderNo, string $amount, string $subject): string
