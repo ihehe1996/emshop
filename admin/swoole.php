@@ -246,9 +246,27 @@ function swooleApiCandidates(string $configured): array
     };
 
     $urls = [];
-    $add($urls, $configured);
-    $add($urls, 'http://127.0.0.1:9601');
-    $add($urls, 'http://localhost:9601');
+    $configured = trim($configured);
+    if ($configured !== '') {
+        $add($urls, $configured);
+        $parts = @parse_url($configured);
+        if (is_array($parts)) {
+            $scheme = strtolower((string) ($parts['scheme'] ?? 'http'));
+            if ($scheme !== 'https') {
+                $scheme = 'http';
+            }
+            $port = (int) ($parts['port'] ?? 0);
+            if ($port < 1 || $port > 65535) {
+                $port = 9601;
+            }
+            // 同端口多地址回退：只在当前站点配置端口内切换，避免串到同机其它站点实例。
+            $add($urls, $scheme . '://127.0.0.1:' . $port);
+            $add($urls, $scheme . '://localhost:' . $port);
+        }
+    } else {
+        $add($urls, 'http://127.0.0.1:9601');
+        $add($urls, 'http://localhost:9601');
+    }
     return $urls;
 }
 
