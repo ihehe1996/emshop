@@ -110,6 +110,51 @@ class PaymentService
     }
 
     /**
+     * 在回调 URL 未携带 plugin 参数时，根据订单号反查对应支付插件。
+     *
+     * 适配场景：
+     * - 部分支付渠道会忽略 notify_url / return_url 的 query 参数
+     * - 回调仍会带 out_trade_no/order_no，可据此反查订单支付插件
+     *
+     * @param array<string, mixed> $data 回调参数（GET+POST）
+     */
+    public static function detectPluginFromCallback(array $data): string
+    {
+        $orderNo = self::extractCallbackOrderNo($data);
+        if ($orderNo === '') {
+            return '';
+        }
+
+        // 充值订单号约定以 R 开头，走 user_recharge
+        if (strncmp($orderNo, 'R', 1) === 0) {
+            $recharge = (new UserRechargeModel())->findByOrderNo($orderNo);
+            $plugin = trim((string) ($recharge['payment_plugin'] ?? ''));
+            return preg_match('/^[a-zA-Z0-9_\-]+$/', $plugin) ? $plugin : '';
+        }
+
+        // 普通商品订单走 order 表
+        $order = OrderModel::getByOrderNo($orderNo);
+        $plugin = trim((string) ($order['payment_plugin'] ?? ''));
+        return preg_match('/^[a-zA-Z0-9_\-]+$/', $plugin) ? $plugin : '';
+    }
+
+    /**
+     * 从回调参数里提取订单号。
+     *
+     * @param array<string, mixed> $data
+     */
+    private static function extractCallbackOrderNo(array $data): string
+    {
+        foreach (['out_trade_no', 'order_no', 'merchant_order_no'] as $key) {
+            $val = trim((string) ($data[$key] ?? ''));
+            if ($val !== '') {
+                return $val;
+            }
+        }
+        return '';
+    }
+
+    /**
      * 公共的 scope 切换包装：把 $GLOBALS['__em_current_scope'] 临时设为 'main' 跑闭包，
      * finally 恢复原值（即便闭包抛异常也能恢复）。
      *
