@@ -199,9 +199,12 @@ class OrderController extends BaseController
                 ['goods_id' => $goodsId, 'spec_id' => $specId, 'quantity' => $quantity],
             ]);
 
-            // 余额支付直接扣款
+            // 0 元订单：直接标记已支付，不走任何支付插件
             $paidNow = false;
-            if ($paymentCode === 'balance' && $identity['user_id'] > 0) {
+            if ((int) $result['pay_amount'] <= 0) {
+                OrderModel::payFreeOrder((int) $result['order_id']);
+                $paidNow = true;
+            } elseif ($paymentCode === 'balance' && $identity['user_id'] > 0) {
                 OrderModel::payWithBalance($result['order_id'], $identity['user_id']);
                 $paidNow = true;
             }
@@ -404,9 +407,12 @@ class OrderController extends BaseController
             // 下单成功，清空购物车
             $cartModel->clearCart($userId, $guestToken);
 
-            // 余额支付直接扣款
+            // 0 元订单：直接标记已支付，不走任何支付插件
             $paidNow = false;
-            if ($paymentCode === 'balance' && $identity['user_id'] > 0) {
+            if ((int) $result['pay_amount'] <= 0) {
+                OrderModel::payFreeOrder((int) $result['order_id']);
+                $paidNow = true;
+            } elseif ($paymentCode === 'balance' && $identity['user_id'] > 0) {
                 OrderModel::payWithBalance($result['order_id'], $identity['user_id']);
                 $paidNow = true;
             }
