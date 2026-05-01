@@ -56,31 +56,70 @@ class UserRechargeModel
      */
     public function markPaid(int $id, string $tradeNo): bool
     {
-        $row = $this->findById($id);
-        if (!$row) return false;
-        if ($row['status'] === self::STATUS_PAID) return true;
-        if ($row['status'] !== self::STATUS_PENDING) return false;
-
         Database::begin();
         try {
-            $affected = Database::execute(
+            // 先锁充值单，保证并发回调幂等。
+            $row = Database::fetchOne(
+                "SELECT * FROM {$this->table} WHERE id = ? FOR UPDATE",
+                [$id]
+            );
+            if ($row === null) {
+                Database::rollBack();
+                return false;
+            }
+            if ((string) $row['status'] === self::STATUS_PAID) {
+                Database::rollBack();
+                return true;
+            }
+            if ((string) $row['status'] !== self::STATUS_PENDING) {
+                Database::rollBack();
+                return false;
+            }
+
+            // 锁用户余额并加钱。
+            $userTable = Database::prefix() . 'user';
+            $user = Database::fetchOne(
+                "SELECT money FROM `{$userTable}` WHERE id = ? FOR UPDATE",
+                [(int) $row['user_id']]
+            );
+            if ($user === null) {
+                throw new RuntimeException('充值用户不存在');
+            }
+
+            $before = (int) ($user['money'] ?? 0);
+            $amount = (int) ($row['amount'] ?? 0);
+            $after = $before + $amount;
+
+            Database::execute(
+                "UPDATE `{$userTable}` SET money = ? WHERE id = ?",
+                [$after, (int) $row['user_id']]
+            );
+
+            // 写余额日志（与充值状态变更保持同一事务）。
+            $logTable = Database::prefix() . 'user_balance_log';
+            Database::execute(
+                "INSERT INTO `{$logTable}`
+                 (user_id, type, amount, before_balance, after_balance, remark, operator_id, operator_name, ip)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (int) $row['user_id'],
+                    'increase',
+                    $amount,
+                    $before,
+                    $after,
+                    '钱包充值 #' . (string) ($row['order_no'] ?? ''),
+                    0,
+                    '',
+                    (string) ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'),
+                ]
+            );
+
+            // 最后把充值单置为已支付。
+            Database::execute(
                 "UPDATE {$this->table} SET status = ?, trade_no = ?, paid_at = NOW()
                  WHERE id = ? AND status = ?",
                 [self::STATUS_PAID, $tradeNo, $id, self::STATUS_PENDING]
             );
-            if ($affected === 0) {
-                // 并发场景：已被其他回调处理
-                Database::rollBack();
-                return true;
-            }
-
-            // 给用户 money 加钱（UserBalanceLogModel::increase 内部再开一层事务——同连接下嵌套会被压平，实际只开一次）
-            $ok = (new UserBalanceLogModel())->increase(
-                (int) $row['user_id'],
-                (int) $row['amount'],
-                '钱包充值 #' . $row['order_no']
-            );
-            if (!$ok) throw new RuntimeException('加余额失败');
 
             Database::commit();
             return true;

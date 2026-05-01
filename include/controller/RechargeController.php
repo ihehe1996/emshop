@@ -61,29 +61,37 @@ class RechargeController extends BaseController
         }
         if ($payment === null) Response::error('支付方式不可用');
 
-        // —— 创建 pending 充值单
-        $model = new UserRechargeModel();
-        $created = $model->create($userId, $amountRaw, $paymentCode, (string) $payment['plugin']);
+        try {
+            // —— 创建 pending 充值单
+            $model = new UserRechargeModel();
+            $created = $model->create($userId, $amountRaw, $paymentCode, (string) $payment['plugin']);
 
-        // —— 组装"伪订单"结构给 payment_create filter（字段与 em_order 同名，
-        //    插件里读的是 pay_amount / order_no / payment_code，能直接复用）
-        $pseudoOrder = [
-            'id'            => $created['id'],
-            'order_no'      => $created['order_no'],
-            'pay_amount'    => $amountRaw,
-            'payment_code'  => $paymentCode,
-            'user_id'       => $userId,
-            'trade_type'    => 'recharge',   // 标记这是充值单，插件可按需区分
-        ];
+            // —— 组装"伪订单"结构给 payment_create filter（字段与 em_order 同名，
+            //    插件里读的是 pay_amount / order_no / payment_code，能直接复用）
+            $pseudoOrder = [
+                'id'            => $created['id'],
+                'order_no'      => $created['order_no'],
+                'pay_amount'    => $amountRaw,
+                'payment_code'  => $paymentCode,
+                'user_id'       => $userId,
+                'trade_type'    => 'recharge',   // 标记这是充值单，插件可按需区分
+            ];
 
-        // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
-        // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
-        $payUrl = PaymentService::createPayment($pseudoOrder, $payment);
-        if ($payUrl === '') Response::error('支付方式未生成支付链接');
+            // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
+            // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
+            $payUrl = PaymentService::createPayment($pseudoOrder, $payment);
+            if ($payUrl === '') {
+                throw new RuntimeException('支付方式未生成支付链接');
+            }
 
-        Response::success('', [
-            'order_no' => $created['order_no'],
-            'pay_url'  => $payUrl,
-        ]);
+            Response::success('', [
+                'order_no' => $created['order_no'],
+                'pay_url'  => $payUrl,
+            ]);
+        } catch (RuntimeException $e) {
+            Response::error($e->getMessage());
+        } catch (Throwable $e) {
+            Response::error('创建充值订单失败，请稍后重试');
+        }
     }
 }

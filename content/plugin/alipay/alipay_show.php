@@ -659,7 +659,7 @@ foreach ($orderItems as $it) {
                 </div>
             <?php endif; ?>
 
-            <?php if ($orderItems !== [] || $createdAt !== ''): ?>
+            <?php if (!$isRecharge && ($orderItems !== [] || $createdAt !== '')): ?>
                 <div class="order-info">
                     <div class="order-info-head">
                         <h3 class="order-info-title">订单信息</h3>

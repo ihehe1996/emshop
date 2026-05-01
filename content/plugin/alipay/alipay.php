@@ -315,25 +315,78 @@ function alipay_post_gateway(array $params): array
         return ['ok' => false, 'msg' => '服务器未启用 cURL，无法调用支付宝接口'];
     }
 
-    $ch = curl_init(ALIPAY_PLUGIN_GATEWAY_URL);
+    $request = static function (bool $post) use ($payload): array {
+        $url = ALIPAY_PLUGIN_GATEWAY_URL;
+        if (!$post) {
+            $url .= '?' . $payload;
+        }
 
-    $opts = [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => 0,
-    ];
+        $ch = curl_init($url);
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_HTTPHEADER => [
+                'Accept: application/json,text/plain,*/*',
+                'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
+            ],
+            CURLOPT_USERAGENT => 'EMSHOP-AlipayPlugin/1.0',
+            CURLOPT_ENCODING => '',
+        ];
+        if ($post) {
+            $opts[CURLOPT_POST] = true;
+            $opts[CURLOPT_POSTFIELDS] = $payload;
+        } else {
+            $opts[CURLOPT_HTTPGET] = true;
+        }
 
-    curl_setopt_array($ch, $opts);
+        curl_setopt_array($ch, $opts);
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+        return ['response' => $response, 'error' => $error, 'http_code' => $httpCode];
+    };
 
+    $decodeJson = static function (string $raw): ?array {
+        $text = trim($raw);
+        if ($text === '') return null;
+
+        // 去掉 UTF-8 BOM，避免 json_decode 失败
+        if (strncmp($text, "\xEF\xBB\xBF", 3) === 0) {
+            $text = substr($text, 3);
+        }
+
+        $decoded = json_decode($text, true);
+        if (is_array($decoded)) return $decoded;
+
+        // 兼容返回体里夹杂了前后文本（极少数网关/代理会注入）
+        $l = strpos($text, '{');
+        $r = strrpos($text, '}');
+        if ($l !== false && $r !== false && $r > $l) {
+            $maybe = substr($text, $l, $r - $l + 1);
+            $decoded2 = json_decode($maybe, true);
+            if (is_array($decoded2)) return $decoded2;
+        }
+        return null;
+    };
+
+    $snippet = static function (string $raw): string {
+        $s = trim(preg_replace('/\s+/', ' ', $raw) ?? '');
+        if ($s === '') return '';
+        return function_exists('mb_substr')
+            ? mb_substr($s, 0, 180, 'UTF-8')
+            : substr($s, 0, 180);
+    };
+
+    // 先按官方 SDK 默认的 POST 请求；非 JSON 时再降级尝试 GET（兼容部分代理环境）
+    $first = $request(true);
+    $response = $first['response'];
+    $httpCode = (int) ($first['http_code'] ?? 0);
+    $error = (string) ($first['error'] ?? '');
     if ($response === false || $response === '') {
         return ['ok' => false, 'msg' => '支付宝接口请求失败：' . ($error ?: 'empty response')];
     }
@@ -341,9 +394,22 @@ function alipay_post_gateway(array $params): array
         return ['ok' => false, 'msg' => '支付宝接口状态异常：HTTP ' . $httpCode];
     }
 
-    $decoded = json_decode($response, true);
+    $decoded = $decodeJson((string) $response);
     if (!is_array($decoded)) {
-        return ['ok' => false, 'msg' => '支付宝接口返回非 JSON'];
+        $second = $request(false);
+        $response2 = $second['response'];
+        $httpCode2 = (int) ($second['http_code'] ?? 0);
+        if ($response2 !== false && $response2 !== '' && $httpCode2 === 200) {
+            $decoded2 = $decodeJson((string) $response2);
+            if (is_array($decoded2)) {
+                $decoded = $decoded2;
+            }
+        }
+    }
+    if (!is_array($decoded)) {
+        $raw = (string) $response;
+        alipay_log('gateway non-json response, http=' . $httpCode . ', body=' . $snippet($raw));
+        return ['ok' => false, 'msg' => '支付宝接口返回非 JSON（请检查服务器网络/网关访问）'];
     }
 
     $responseKey = str_replace('.', '_', (string) ($params['method'] ?? '')) . '_response';
