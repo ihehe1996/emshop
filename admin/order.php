@@ -218,6 +218,69 @@ if (Request::isPost()) {
                 ]);
                 break;
 
+            // 管理员手工标记已支付（仅待支付订单）
+            // 行为对齐正常支付回调：
+            //   1) pending -> paid
+            //   2) 写一条 order_payment 成功流水（manual）
+            //   3) 触发发货队列
+            case 'mark_paid': {
+                $orderId = (int) Input::post('id', 0);
+                if ($orderId <= 0) {
+                    Response::error('参数错误');
+                }
+
+                $order = OrderModel::getById($orderId);
+                if (!$order) {
+                    Response::error('订单不存在');
+                }
+                if ((string) ($order['status'] ?? '') !== 'pending') {
+                    Response::error('仅待付款订单可执行此操作');
+                }
+
+                Database::begin();
+                try {
+                    OrderModel::changeStatus($orderId, 'paid');
+
+                    $hasSuccessPayment = Database::fetchOne(
+                        "SELECT id FROM {$prefix}order_payment WHERE order_id = ? AND status = 'success' LIMIT 1",
+                        [$orderId]
+                    );
+                    if (!$hasSuccessPayment) {
+                        Database::execute(
+                            "INSERT INTO {$prefix}order_payment
+                             (order_id, payment_code, payment_plugin, trade_no, amount, status, paid_at, created_at)
+                             VALUES (?, ?, ?, ?, ?, 'success', NOW(), NOW())",
+                            [
+                                $orderId,
+                                (string) ($order['payment_code'] ?? 'manual'),
+                                (string) ($order['payment_plugin'] ?? 'manual'),
+                                'MANUAL-' . (string) ($order['order_no'] ?? (string) $orderId),
+                                (int) ($order['pay_amount'] ?? 0),
+                            ]
+                        );
+                    }
+
+                    Database::commit();
+                } catch (Throwable $e) {
+                    Database::rollBack();
+                    Response::error('标记失败：' . $e->getMessage());
+                }
+
+                try {
+                    OrderModel::triggerDelivery($orderId);
+                } catch (Throwable $e) {
+                    // 发货触发失败不影响"已支付"结果，提示管理员后续手工处理
+                    Response::success('订单已标记为已支付，但触发发货失败：' . $e->getMessage(), [
+                        'csrf_token' => Csrf::refresh(),
+                    ]);
+                }
+
+                Response::success('订单已标记为已支付', [
+                    'csrf_token' => Csrf::refresh(),
+                ]);
+                break;
+            }
+
             // 管理员手动发货：单条 order_goods
             //   - 调 goods_type_{type}_manual_delivery_submit filter 让插件准备 delivery_content / plugin_data
             //   - 插件返回字符串 = 校验失败消息；返回数组 = 成功 payload

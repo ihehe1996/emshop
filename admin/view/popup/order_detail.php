@@ -77,6 +77,17 @@ include __DIR__ . '/header.php';
 }
 .od-ship-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
 .od-ship-btn:active { transform: translateY(0); }
+.od-paid-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border: 0; border-radius: 6px;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.22);
+    transition: all 0.15s;
+}
+.od-paid-btn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.od-paid-btn:active { transform: translateY(0); }
+.od-paid-btn[disabled] { opacity: 0.6; cursor: not-allowed; transform: none; }
 .od-hero__amount-value {
     font-size: 28px; font-weight: 700; color: <?= $heroAccent ?>;
     font-feature-settings: 'tnum';
@@ -234,6 +245,7 @@ if ($canManualShip) {
     }
 }
 $showShipBtn = $canManualShip && $hasUnshipped;
+$showMarkPaidBtn = ((string) $order['status'] === 'pending');
 ?>
 <div class="popup-inner">
     <!-- ======== Hero：订单概览 ======== -->
@@ -254,6 +266,11 @@ $showShipBtn = $canManualShip && $hasUnshipped;
                     <div class="od-hero__amount-label">实付金额</div>
                     <div class="od-hero__amount-value"><small><?= $esc($cs) ?></small><?= $esc($order['pay_amount_fmt']) ?></div>
                 </div>
+                <?php if ($showMarkPaidBtn): ?>
+                    <button type="button" class="od-paid-btn" id="odMarkPaidBtn" data-order-id="<?= (int) $order['id'] ?>">
+                        <i class="fa fa-check-circle"></i>标记已支付
+                    </button>
+                <?php endif; ?>
                 <?php if ($showShipBtn): ?>
                     <button type="button" class="od-ship-btn" id="odShipBtn" data-order-id="<?= (int) $order['id'] ?>">
                         <i class="fa fa-paper-plane"></i>立即发货
@@ -425,6 +442,8 @@ $showShipBtn = $canManualShip && $hasUnshipped;
 
 <script>
 $(function () {
+    var csrfToken = <?= json_encode($csrfToken ?? Csrf::token()) ?>;
+
     // Tab 切换：data-idx ↔ data-panel 匹配联动，切换时面板淡入
     $('#orderDetailTabs').on('click', '.em-tabs__item', function (e) {
         e.preventDefault();
@@ -432,6 +451,48 @@ $(function () {
         $(this).addClass('is-active').siblings().removeClass('is-active');
         $('.od-panel').removeClass('is-active')
             .filter('[data-panel="' + idx + '"]').addClass('is-active');
+    });
+
+    // 手工标记已支付：仅待付款订单显示按钮
+    $('#odMarkPaidBtn').on('click', function () {
+        var $btn = $(this);
+        var orderId = $btn.data('order-id');
+        if (!orderId) return;
+
+        layer.confirm('确认将该订单手工标记为已支付吗？系统会立即触发发货流程。', function (idx) {
+            layer.close(idx);
+            $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> 处理中...');
+
+            $.ajax({
+                url: '/admin/order.php',
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    _action: 'mark_paid',
+                    id: orderId,
+                    csrf_token: csrfToken
+                },
+                success: function (res) {
+                    if (res.code === 200) {
+                        if (res.data && res.data.csrf_token) csrfToken = res.data.csrf_token;
+                        layer.msg(res.msg || '订单已标记为已支付');
+                        try {
+                            if (window.parent && window.parent.layui && window.parent.layui.table) {
+                                window.parent.layui.table.reload('orderTableId');
+                            }
+                        } catch (e) {}
+                        setTimeout(function () { location.reload(); }, 300);
+                    } else {
+                        layer.msg(res.msg || '操作失败');
+                        $btn.prop('disabled', false).html('<i class="fa fa-check-circle"></i> 标记已支付');
+                    }
+                },
+                error: function () {
+                    layer.msg('网络异常');
+                    $btn.prop('disabled', false).html('<i class="fa fa-check-circle"></i> 标记已支付');
+                }
+            });
+        });
     });
 
     // 立即发货：嵌套 iframe 打开发货页；关闭后如有成功发货，通知外层订单列表刷新
