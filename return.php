@@ -6,12 +6,12 @@ declare(strict_types=1);
  * 支付同步跳回入口。
  *
  * 流程：
- *   1. 根据 URL 参数 ?plugin=xxx 识别具体支付插件
+ *   1. 先从 URL 参数 ?plugin=xxx 识别支付插件；缺失时按订单号自动反查
  *   2. 分发到 doAction('payment_return_' . $plugin, $data)，$data = 合并的 GET+POST
  *   3. 插件一般会校验签名后 Response::redirect() 到订单详情页
  *
  * 约定：
- *   - 插件生成支付 URL 时，必须把本文件路径带上 ?plugin=<自身 slug> 作为 return_url
+ *   - 插件可传 ?plugin=<slug>，也可不传（核心会按订单号反查 payment_plugin）
  *   - 插件处理完成后应 exit（通常通过 Response::redirect 自动 exit）
  *   - 未被插件处理时兜底跳到用户订单列表页
  */
@@ -39,12 +39,14 @@ function payment_return_redirect_url(string $orderNo = ''): string
     return '/user/find_order.php';
 }
 
-$plugin = (string) Input::get('plugin', '');
+$data = array_merge($_GET, $_POST);
+$plugin = trim((string) Input::get('plugin', ''));
+if ($plugin === '') {
+    $plugin = PaymentService::detectPluginFromCallback($data);
+}
 if ($plugin === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $plugin)) {
     Response::redirect(payment_return_redirect_url());
 }
-
-$data = array_merge($_GET, $_POST);
 // 走 PaymentService 包装：商户站子域名打过来的回调，必须切到主站 scope 让插件读到正确凭证
 PaymentService::dispatchReturn($plugin, $data);
 
