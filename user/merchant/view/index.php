@@ -148,6 +148,9 @@ $showSelfGoods = (int) ($lv['allow_self_goods'] ?? 0) === 1;
             </a>
 
             <div class="uc-nav-title">扩展</div>
+            <a href="/user/merchant/appstore.php" data-pjax="#merchantContent" class="uc-nav-item">
+                <i class="fa fa-shopping-basket"></i><span>应用商店</span>
+            </a>
             <a href="/user/merchant/plugin.php" data-pjax="#merchantContent" class="uc-nav-item">
                 <i class="fa fa-plug"></i><span>插件管理</span>
             </a>

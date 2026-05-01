@@ -155,6 +155,9 @@ $csrfToken = $csrfToken ?? Csrf::token();
     font-weight: 400;
 }
 
+/* 刷新按钮（放在搜索框右侧） */
+.appstore-refresh-btn i { margin-right: 4px; }
+
 /* ===== 主站 / 分站 应用商店切换器(挂在标题下方) ===== */
 .appstore-tab-switch {
     display: inline-flex;
@@ -270,6 +273,9 @@ $csrfToken = $csrfToken ?? Csrf::token();
             <i class="fa fa-folder-o"></i><?= htmlspecialchars((string) $__cname, ENT_QUOTES, 'UTF-8') ?><em class="em-tabs__count"></em>
         </a>
         <?php endforeach; ?>
+        <a class="em-tabs__item" data-filter='{"type":"all","id":0,"list_mode":"purchased"}'>
+            <i class="fa fa-check-circle"></i>已购买<em class="em-tabs__count"></em>
+        </a>
     </div>
 
     <!-- 工具条：右侧快捷搜索 -->
@@ -281,6 +287,9 @@ $csrfToken = $csrfToken ?? Csrf::token();
                 <i class="fa fa-times"></i>
             </button>
         </div>
+        <button type="button" class="em-btn em-sm-btn em-reset-btn appstore-refresh-btn" id="appstoreRefreshBtn">
+            <i class="fa fa-refresh"></i>刷新
+        </button>
     </div>
 
     <table id="appstoreTable" lay-filter="appstoreTable"></table>
@@ -344,10 +353,11 @@ $csrfToken = $csrfToken ?? Csrf::token();
     {{# var tab = window.APPSTORE_TAB || 'main';
        var L = tab === 'merchant'
            ? { installed: '已安装', install: '安装', buy: '采购' }
-           : { installed: '已安装', install: '安装',     buy: '购买' }; }}
+           : { installed: '已安装', install: '安装',     buy: '购买' };
+       var effectiveFree = (d.is_free == 1) || (parseFloat(d.my_price || 0) <= 0); }}
     {{# if (d.is_installed == 1) { }}
         <a class="em-btn em-sm-btn em-reset-btn em-disabled-btn"><i class="fa fa-check"></i>{{ L.installed }}</a>
-    {{# } else if (d.is_free == 1) { }}
+    {{# } else if (effectiveFree) { }}
         <a class="em-btn em-sm-btn em-save-btn" lay-event="install"><i class="fa fa-download"></i>{{ L.install }}</a>
     {{# } else if (!window.APPSTORE_LICENSED) { }}
         <a class="em-btn em-sm-btn em-purple-btn" lay-event="needLicense"><i class="fa fa-shield"></i>先激活授权</a>
@@ -383,7 +393,7 @@ $(function () {
         // ---------- 当前 Tab 过滤参数 ----------
         function currentFilter() {
             var raw = $tabs.find('.em-tabs__item.is-active').attr('data-filter');
-            try { return JSON.parse(raw || '{}'); } catch (e) { return { type: 'all', id: 0 }; }
+            try { return JSON.parse(raw || '{}'); } catch (e) { return { type: 'all', id: 0, list_mode: '' }; }
         }
         function buildWhere() {
             var f = currentFilter();
@@ -391,6 +401,10 @@ $(function () {
                 keyword: ($('#appstoreSearch').val() || '').trim(),
                 tab:     window.APPSTORE_TAB || 'main'
             };
+            if (String(f.list_mode || '') === 'purchased') {
+                where.list_mode = 'purchased';
+                return where;
+            }
             if (f.type && f.type !== 'all') where.type = f.type;
             if (!f.type && f.id > 0)        where.category_id = f.id;
             return where;
@@ -445,6 +459,11 @@ $(function () {
                 page: { curr: 1 }
             });
         }
+        function refreshTable() {
+            table.reload('appstoreTableId', {
+                where: buildWhere()
+            });
+        }
 
         // ---------- em-tabs 切换 ----------
         $tabs.on('click', '.em-tabs__item', function () {
@@ -462,6 +481,9 @@ $(function () {
         });
         $('#appstoreSearchClear').on('click', function () {
             $('#appstoreSearch').val('').trigger('input').focus();
+        });
+        $('#appstoreRefreshBtn').on('click', function () {
+            refreshTable();
         });
 
         // ---------- 封面点击放大（Viewer.js，全局已加载） ----------

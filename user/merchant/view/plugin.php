@@ -98,12 +98,11 @@ $csrfToken = $csrfToken ?? Csrf::token();
     <?php if (count($plugins) === 0): ?>
         <div class="mp-empty">
             <i class="fa fa-puzzle-piece"></i>
-            <div>你还没有任何已购买/继承的插件</div>
+            <div>你还没有已购买的插件</div>
         </div>
     <?php else: ?>
         <div class="mp-grid">
             <?php foreach ($plugins as $p):
-                $isInherited = !empty($p['is_inherited']);
                 $isEnabled   = (int) ($p['is_enabled'] ?? 0) === 1;
                 $hasSetting  = !empty($p['has_setting']);
                 $name        = (string) ($p['name'] ?? '');
@@ -131,9 +130,7 @@ $csrfToken = $csrfToken ?? Csrf::token();
                             <?php if ($category !== ''): ?>
                                 <span class="mp-tag mp-tag--cat"><i class="fa fa-tag"></i><?= htmlspecialchars($category, ENT_QUOTES) ?></span>
                             <?php endif; ?>
-                            <?php if ($isInherited): ?>
-                                <span class="mp-tag mp-tag--inherited"><i class="fa fa-link"></i>主站统管</span>
-                            <?php elseif ($isEnabled): ?>
+                            <?php if ($isEnabled): ?>
                                 <span class="mp-tag mp-tag--enabled"><i class="fa fa-check-circle"></i>已启用</span>
                             <?php else: ?>
                                 <span class="mp-tag mp-tag--disabled"><i class="fa fa-pause-circle"></i>已禁用</span>
@@ -141,17 +138,13 @@ $csrfToken = $csrfToken ?? Csrf::token();
                         </div>
 
                         <div class="mp-card__actions">
-                            <?php if ($isInherited): ?>
-                                <button class="layui-btn layui-btn-disabled" disabled>主站统一管理</button>
+                            <?php if ($isEnabled): ?>
+                                <button class="layui-btn layui-btn-warm" data-act="disable">禁用</button>
                             <?php else: ?>
-                                <?php if ($isEnabled): ?>
-                                    <button class="layui-btn layui-btn-warm" data-act="disable">禁用</button>
-                                <?php else: ?>
-                                    <button class="layui-btn layui-btn-normal" data-act="enable">启用</button>
-                                <?php endif; ?>
-                                <?php if ($hasSetting): ?>
-                                    <button class="layui-btn layui-btn-primary" data-act="setting">配置</button>
-                                <?php endif; ?>
+                                <button class="layui-btn layui-btn-normal" data-act="enable">启用</button>
+                            <?php endif; ?>
+                            <?php if ($hasSetting): ?>
+                                <button class="layui-btn layui-btn-primary" data-act="setting">配置</button>
                             <?php endif; ?>
                         </div>
                     </div>
