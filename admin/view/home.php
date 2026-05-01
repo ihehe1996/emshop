@@ -50,18 +50,32 @@ try {
 
 // 系统信息
 $sysInfo = [
-    'php'      => PHP_VERSION,
-    'db'       => 'MySQL',
-    'server'   => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
-    'version'  => defined('EM_VERSION') ? EM_VERSION : 'dev',
-    'timezone' => date_default_timezone_get(),
-    'plugins'  => 0,
+    'php'              => PHP_VERSION,
+    'db'               => 'MySQL',
+    'server'           => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+    'version'          => defined('EM_VERSION') ? EM_VERSION : 'dev',
+    'timezone'         => date_default_timezone_get(),
+    'template_count'   => 0,
+    'main_plugin_count' => 0,
+    'merchant_plugin_count' => 0,
 ];
 try {
     $__r = Database::fetchOne('SELECT VERSION() AS v');
     if ($__r !== null) $sysInfo['db'] = 'MySQL ' . (string) ($__r['v'] ?? '-');
-    $__r = Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'plugin` WHERE `enabled` = ?', ['y']);
-    if ($__r !== null) $sysInfo['plugins'] = (int) $__r['c'];
+    $sysInfo['template_count'] = count((new TemplateModel())->scanTemplates());
+    $mainPlugins = (new PluginModel())->scanPlugins();
+    $merchantCodes = [];
+    $__rows = Database::query('SELECT `app_code` FROM `' . $__prefix . 'app_market` WHERE `type` = ?', ['plugin']);
+    foreach ($__rows as $__row) {
+        $__code = trim((string) ($__row['app_code'] ?? ''));
+        if ($__code !== '') $merchantCodes[$__code] = true;
+    }
+    foreach ($merchantCodes as $__code => $__yes) {
+        unset($mainPlugins[$__code]);
+    }
+    $sysInfo['main_plugin_count'] = count($mainPlugins);
+    $__r = Database::fetchOne('SELECT COUNT(*) AS c FROM `' . $__prefix . 'app_market` WHERE `type` = ?', ['plugin']);
+    if ($__r !== null) $sysInfo['merchant_plugin_count'] = (int) $__r['c'];
 } catch (Throwable $e) {
 }
 
@@ -496,7 +510,9 @@ $calcRatio = static function (float $today, float $yesterday): array {
                 <div class="dash-sys__row"><span class="dash-sys__label">Web 服务器</span><span class="dash-sys__value"><?= $esc((string) $sysInfo['server']) ?></span></div>
                 <div class="dash-sys__row"><span class="dash-sys__label">系统版本</span><span class="dash-sys__value">EMSHOP <?= $esc((string) $sysInfo['version']) ?></span></div>
                 <div class="dash-sys__row"><span class="dash-sys__label">时区</span><span class="dash-sys__value"><?= $esc((string) $sysInfo['timezone']) ?></span></div>
-                <div class="dash-sys__row"><span class="dash-sys__label">启用插件</span><span class="dash-sys__value"><?= (int) $sysInfo['plugins'] ?> 个</span></div>
+                <div class="dash-sys__row"><span class="dash-sys__label">模板主题</span><span class="dash-sys__value"><?= (int) $sysInfo['template_count'] ?> 个</span></div>
+                <div class="dash-sys__row"><span class="dash-sys__label">主站插件</span><span class="dash-sys__value"><?= (int) $sysInfo['main_plugin_count'] ?> 个</span></div>
+                <div class="dash-sys__row"><span class="dash-sys__label">分站插件</span><span class="dash-sys__value"><?= (int) $sysInfo['merchant_plugin_count'] ?> 个</span></div>
             </div>
         </div>
     </section>

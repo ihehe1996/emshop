@@ -111,7 +111,11 @@ if (!defined('EM_ROOT')) {
 .plugin-card__action--install:hover { background: rgba(99, 102, 241, 0.18); }
 .plugin-card__action--settings { background: rgba(59, 130, 246, 0.08); color: #2563eb; }
 .plugin-card__action--settings:hover { background: rgba(59, 130, 246, 0.15); }
+.plugin-card__action--price { background: rgba(245, 158, 11, 0.1); color: #d97706; }
+.plugin-card__action--price:hover { background: rgba(245, 158, 11, 0.18); }
 .plugin-card__action--disabled { background: rgba(0, 0, 0, 0.04) !important; color: #c9cdd4 !important; cursor: not-allowed !important; }
+.plugin-card__price { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:7px; padding:6px 9px; }
+.plugin-card__price i { font-size:11px; }
 
 /* ===== 空状态 ===== */
 .plugin-empty { text-align: center; padding: 80px 20px; }
@@ -135,6 +139,7 @@ if (!defined('EM_ROOT')) {
         <a class="em-tabs__item is-active" data-filter="all"><i class="fa fa-puzzle-piece"></i>我的插件<em class="em-tabs__count" id="countAll"></em></a>
         <a class="em-tabs__item" data-filter="enabled"><i class="fa fa-bolt"></i>已启用<em class="em-tabs__count" id="countEnabled"></em></a>
         <a class="em-tabs__item" data-filter="disabled"><i class="fa fa-ban"></i>已禁用<em class="em-tabs__count" id="countDisabled"></em></a>
+        <a class="em-tabs__item" data-filter="merchant"><i class="fa fa-cubes"></i>分站插件<em class="em-tabs__count" id="countMerchant"></em></a>
     </div>
 
     <!-- 骨架屏 -->
@@ -171,6 +176,9 @@ $(function(){
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
     var allPlugins = [];
+    var merchantPlugins = [];
+    var merchantCount = 0;
+    var merchantLoaded = false;
     var currentFilter = 'all';
     var loading = false;
 
@@ -178,16 +186,17 @@ $(function(){
     window.updateCsrf = updateCsrf;
 
     // ===== 渲染统计（em-tabs__count 空值时自动隐藏，所以 0 时不填数字）=====
-    function renderStats(plugins) {
-        var total = plugins.length;
+    function renderStats() {
+        var total = allPlugins.length;
         var enabled = 0, disabled = 0;
-        plugins.forEach(function(p) {
+        allPlugins.forEach(function(p) {
             if (p.is_enabled) enabled++;
             else disabled++;
         });
         $('#countAll').text(total || '');
         $('#countEnabled').text(enabled || '');
         $('#countDisabled').text(disabled || '');
+        $('#countMerchant').text(merchantCount || '');
     }
 
     // ===== 启停后只刷新本卡片状态 + 内存 + 计数(不重拉列表) =====
@@ -208,7 +217,7 @@ $(function(){
                 break;
             }
         }
-        renderStats(allPlugins);
+        renderStats();
     }
 
     // ===== 渲染插件卡片 =====
@@ -223,6 +232,13 @@ $(function(){
         var filtered = filterPlugins(plugins);
         if (filtered.length === 0) {
             $grid.hide();
+            if (currentFilter === 'merchant') {
+                $empty.find('.plugin-empty__text').text('暂未上架分站插件');
+                $empty.find('.plugin-empty__sub').html('请先前往 <code>应用商店 · 分站货架</code> 采购上架插件');
+            } else {
+                $empty.find('.plugin-empty__text').text('暂未检测到任何插件');
+                $empty.find('.plugin-empty__sub').html('请将插件包解压后放入 <code>content/plugin/</code> 目录');
+            }
             $empty.show();
             return;
         }
@@ -235,6 +251,7 @@ $(function(){
     }
 
     function filterPlugins(plugins) {
+        if (currentFilter === 'merchant') return plugins;
         return plugins.filter(function(p) {
             return (currentFilter === 'all') ||
                 (currentFilter === 'enabled' && p.is_enabled) ||
@@ -243,9 +260,11 @@ $(function(){
     }
 
     function buildCard(p) {
+        var isMerchant = !!p.is_merchant;
         var isInstalled = p.is_installed;
         var isEnabled = p.is_enabled;
-        var hasSettings = !!p.setting_file;
+        var hasSettings = !!p.setting_file && !isMerchant;
+        var marketId = parseInt(p.market_id || p.id || 0, 10) || 0;
 
         var cls = 'plugin-card';
         if (isInstalled && isEnabled) cls += ' plugin-card--enabled';
@@ -269,7 +288,9 @@ $(function(){
         }
 
         var statusHtml = '';
-        if (isInstalled) {
+        if (isMerchant) {
+            statusHtml = '<span class="plugin-card__status ' + (p.is_listed == 1 ? 'plugin-card__status--enabled' : 'plugin-card__status--disabled') + '">' + (p.is_listed == 1 ? '已上架' : '已下架') + '</span>';
+        } else if (isInstalled) {
             statusHtml = '<span class="plugin-card__status ' + (isEnabled ? 'plugin-card__status--enabled' : 'plugin-card__status--disabled') + '">' + (isEnabled ? '生效中' : '未启用') + '</span>';
         }
 
@@ -279,7 +300,9 @@ $(function(){
         }
 
         var actionHtml = '';
-        if (!isInstalled) {
+        if (isMerchant) {
+            actionHtml = '<button class="plugin-card__action plugin-card__action--price" data-action="merchantPrice" data-name="' + escHtml(p.name) + '" data-market-id="' + escHtml(marketId) + '"><i class="fa fa-cny"></i> 设置售价</button>';
+        } else if (!isInstalled) {
             actionHtml = '<button class="plugin-card__action plugin-card__action--install" data-action="install" data-name="' + escHtml(p.name) + '"><i class="fa fa-download"></i> 安装</button>';
         } else if (hasSettings) {
             actionHtml = '<button class="plugin-card__action plugin-card__action--settings" data-action="settings" data-name="' + escHtml(p.name) + '"><i class="fa fa-gear"></i> 配置</button>';
@@ -287,7 +310,37 @@ $(function(){
             actionHtml = '<button class="plugin-card__action plugin-card__action--settings plugin-card__action--disabled" data-tip="该插件无需配置"><i class="fa fa-gear"></i> 配置</button>';
         }
 
-        var toggleDisabled = !isInstalled ? ' disabled' : '';
+        var footerLeftHtml = isMerchant
+            ? '<span class="plugin-card__price"><i class="fa fa-cny"></i> ' + fmtMoney(p.retail_price) + '</span>'
+            : '<div class="plugin-toggle">' +
+                '<input type="checkbox" id="toggle_' + escHtml(p.name) + '"' + (!isInstalled ? ' disabled' : '') + (isEnabled ? ' checked' : '') + ' data-action="toggle" data-name="' + escHtml(p.name) + '">' +
+                '<label class="plugin-toggle__slider" for="toggle_' + escHtml(p.name) + '"' + (!isInstalled ? ' data-tip="插件未安装，该功能不可用"' : '') + '></label>' +
+              '</div>';
+
+        var moreHtml = '';
+        if (isMerchant) {
+            var nextListed = (parseInt(p.is_listed || 0, 10) === 1) ? 0 : 1;
+            var toggleText = nextListed === 1 ? '上架' : '下架';
+            var toggleIcon = nextListed === 1 ? 'fa-eye' : 'fa-eye-slash';
+            moreHtml = '<div class="plugin-card__more">' +
+                    '<button class="plugin-card__more-btn"><i class="fa fa-ellipsis-h"></i></button>' +
+                    '<div class="plugin-card__more-dropdown">' +
+                        '<button class="plugin-card__more-item" data-action="merchantToggleList" data-name="' + escHtml(p.name) + '" data-market-id="' + escHtml(marketId) + '" data-target-listed="' + escHtml(nextListed) + '"><i class="fa ' + toggleIcon + '"></i> ' + toggleText + '</button>' +
+                        '<button class="plugin-card__more-item plugin-card__more-item--danger" data-action="uninstall" data-name="' + escHtml(p.name) + '" data-market-id="' + escHtml(marketId) + '"><i class="fa fa-trash"></i> 卸载</button>' +
+                    '</div>' +
+                '</div>';
+        } else {
+            moreHtml = '<div class="plugin-card__more">' +
+                    '<button class="plugin-card__more-btn"><i class="fa fa-ellipsis-h"></i></button>' +
+                    '<div class="plugin-card__more-dropdown">' +
+                        (isInstalled
+                            ? '<button class="plugin-card__more-item plugin-card__more-item--danger" data-action="uninstall" data-name="' + escHtml(p.name) + '"><i class="fa fa-trash"></i> 卸载</button>'
+                              + (p.has_update ? '<button class="plugin-card__more-item" data-action="upgrade" data-name="' + escHtml(p.name) + '"><i class="fa fa-arrow-up"></i> 升级</button>' : '')
+                            : ''
+                        ) +
+                    '</div>' +
+                '</div>';
+        }
 
         var card = $('<div>', {class: cls, 'data-name': p.name});
         card.html('<div class="plugin-card__header">' +
@@ -302,26 +355,14 @@ $(function(){
                         statusHtml +
                     '</div>' +
                 '</div>' +
-                '<div class="plugin-card__more">' +
-                    '<button class="plugin-card__more-btn"><i class="fa fa-ellipsis-h"></i></button>' +
-                    '<div class="plugin-card__more-dropdown">' +
-                        (isInstalled
-                            ? '<button class="plugin-card__more-item" data-action="uninstall" data-name="' + escHtml(p.name) + '"><i class="fa fa-trash"></i> 卸载</button>'
-                              + (p.has_update ? '<button class="plugin-card__more-item" data-action="upgrade" data-name="' + escHtml(p.name) + '"><i class="fa fa-arrow-up"></i> 升级</button>' : '')
-                            : ''
-                        ) +
-                    '</div>' +
-                '</div>' +
+                moreHtml +
             '</div>' +
             '<div class="plugin-card__body">' +
                 (authorHtml ? '<div class="plugin-card__meta-row">' + authorHtml + '</div>' : '') +
                 '<div class="plugin-card__desc" data-tip="' + escHtml(p.description || '') + '">' + escHtml(p.description || '暂无描述') + '</div>' +
             '</div>' +
             '<div class="plugin-card__footer">' +
-                '<div class="plugin-toggle">' +
-                    '<input type="checkbox" id="toggle_' + escHtml(p.name) + '"' + toggleDisabled + (isEnabled ? ' checked' : '') + ' data-action="toggle" data-name="' + escHtml(p.name) + '">' +
-                    '<label class="plugin-toggle__slider" for="toggle_' + escHtml(p.name) + '"' + (!isInstalled ? ' data-tip="插件未安装，该功能不可用"' : '') + '></label>' +
-                '</div>' +
+                footerLeftHtml +
                 actionHtml +
             '</div>'
         );
@@ -333,23 +374,38 @@ $(function(){
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function fmtMoney(micro) {
+        var n = parseInt(micro || 0, 10);
+        if (isNaN(n) || n < 0) n = 0;
+        return (n / 1000000).toFixed(2);
+    }
+
     // ===== 加载插件列表 =====
     function loadPlugins() {
         if (loading) return;
         loading = true;
+        var listScope = currentFilter === 'merchant' ? 'merchant' : 'main';
         $('#pluginSkeleton').show();
         $('#pluginGrid, #pluginEmpty').hide();
 
         $.ajax({
-            url: '/admin/plugin.php?_action=list',
+            url: '/admin/plugin.php?_action=list&scope=' + listScope,
             type: 'GET',
             dataType: 'json',
             success: function(res) {
                 if (res.code === 0 || res.code === 200) {
                     csrfToken = res.csrf_token || csrfToken;
-                    allPlugins = res.data || [];
-                    renderStats(allPlugins);
-                    renderPlugins(allPlugins);
+                    merchantCount = parseInt(res.merchant_count || 0, 10) || 0;
+                    if (listScope === 'merchant') {
+                        merchantPlugins = res.data || [];
+                        merchantLoaded = true;
+                        renderStats();
+                        renderPlugins(merchantPlugins);
+                    } else {
+                        allPlugins = res.data || [];
+                        renderStats();
+                        renderPlugins(allPlugins);
+                    }
                 }
             },
             error: function() {
@@ -366,24 +422,132 @@ $(function(){
             action = $('#toggle_' + name).prop('checked') ? 'enable' : 'disable';
         }
         if (action === 'settings') { openSettings(name); return; }
+        if (action === 'merchantPrice') { openMerchantPrice(extraData && extraData.market_id); return; }
+        if (action === 'merchantToggleList') {
+            openMerchantToggleList(extraData && extraData.market_id, extraData && extraData.target_listed);
+            return;
+        }
 
         if (action === 'uninstall') {
-            var pluginTitle = name;
-            for (var i = 0; i < allPlugins.length; i++) {
-                if (allPlugins[i].name === name) { pluginTitle = allPlugins[i].title || name; break; }
+            var marketId = parseInt(extraData && extraData.market_id ? extraData.market_id : 0, 10) || 0;
+            var isMerchantUninstall = marketId > 0;
+            if (currentFilter === 'merchant' && !isMerchantUninstall) {
+                layui.layer.msg('market_id 非法，请刷新后重试');
+                return;
             }
+            var pluginTitle = name;
+            var postData = {clear_data: false};
+            var confirmMsg = '';
+
+            if (isMerchantUninstall) {
+                var mp = findMerchantPlugin(marketId);
+                if (mp) pluginTitle = mp.title || mp.name || name;
+                postData = {market_id: marketId};
+                confirmMsg = '卸载分站插件「' + pluginTitle + '」后，将从分站货架移除并清空剩余库存记录。若已有分站购买记录，请改为下架。确认卸载？';
+            } else {
+                for (var i = 0; i < allPlugins.length; i++) {
+                    if (allPlugins[i].name === name) { pluginTitle = allPlugins[i].title || name; break; }
+                }
+                confirmMsg = '卸载将清除插件「' + pluginTitle + '」的配置数据并删除磁盘文件，无法恢复。确认卸载？';
+            }
+
             layui.use('layer', function(){
                 var layer = layui.layer;
-                layer.confirm('卸载将清除插件「' + pluginTitle + '」的配置数据并删除磁盘文件，无法恢复。确认卸载？',
+                layer.confirm(confirmMsg,
                     {icon: 3, title: '卸载确认', skin: 'admin-modal'},
                     function(idx){
-                        doRequest(action, name, {clear_data: false}, function(){ layer.close(idx); });
+                        doRequest(action, name, postData, function(){ layer.close(idx); });
                     });
             });
             return;
         }
 
         doRequest(action, name, extraData);
+    }
+
+    function findMerchantPlugin(marketId) {
+        marketId = parseInt(marketId, 10) || 0;
+        for (var i = 0; i < merchantPlugins.length; i++) {
+            if ((parseInt(merchantPlugins[i].market_id || merchantPlugins[i].id || 0, 10) || 0) === marketId) {
+                return merchantPlugins[i];
+            }
+        }
+        return null;
+    }
+
+    function openMerchantPrice(marketId) {
+        var plugin = findMerchantPlugin(marketId);
+        if (!plugin) {
+            layui.layer.msg('分站插件不存在');
+            return;
+        }
+        var current = fmtMoney(plugin.retail_price);
+        var html = '<div style="padding:18px 20px;">' +
+                   '  <div style="margin-bottom:10px;color:#6b7280;font-size:13px;">' +
+                   '    插件:<b style="color:#0f172a;">' + escHtml(plugin.title || plugin.name) + '</b>' +
+                   '  </div>' +
+                   '  <div style="margin-bottom:6px;color:#6b7280;font-size:12px;">分站售价(元 / 次)</div>' +
+                   '  <input id="pluginMerchantPriceInput" class="layui-input" type="number" min="0" step="0.01" value="' + current + '" autofocus>' +
+                   '  <div style="margin-top:6px;color:#94a3b8;font-size:12px;">主站采购成本约 ¥' + fmtMoney(plugin.cost_price) + ' / 次</div>' +
+                   '</div>';
+        layui.layer.open({
+            type: 1,
+            title: '设置分站插件售价',
+            area: ['380px', 'auto'],
+            shadeClose: false,
+            content: html,
+            btn: ['确定', '取消'],
+            yes: function (idx) {
+                var v = parseFloat($('#pluginMerchantPriceInput').val());
+                if (isNaN(v) || v < 0) {
+                    layui.layer.msg('价格非法');
+                    return;
+                }
+                $.post('/admin/plugin.php', {
+                    _action: 'set_merchant_price',
+                    csrf_token: csrfToken,
+                    market_id: marketId,
+                    retail_price_micro: Math.round(v * 1000000)
+                }).done(function (res) {
+                    if (res && (res.code === 0 || res.code === 200)) {
+                        csrfToken = (res.data && res.data.csrf_token) ? res.data.csrf_token : csrfToken;
+                        layui.layer.msg(res.msg || '售价已更新');
+                        layui.layer.close(idx);
+                        merchantLoaded = false;
+                        loadPlugins();
+                    } else {
+                        layui.layer.msg((res && res.msg) || '更新失败');
+                    }
+                }).fail(function () {
+                    layui.layer.msg('网络异常');
+                });
+            }
+        });
+    }
+
+    function openMerchantToggleList(marketId, targetListed) {
+        var plugin = findMerchantPlugin(marketId);
+        if (!plugin) {
+            layui.layer.msg('分站插件不存在');
+            return;
+        }
+        var target = parseInt(targetListed, 10);
+        var listed = isNaN(target)
+            ? ((parseInt(plugin.is_listed || 0, 10) !== 1))
+            : (target === 1);
+        var title = plugin.title || plugin.name || '';
+        var tip = listed
+            ? '确定要上架分站插件「' + title + '」吗？'
+            : '确定要下架分站插件「' + title + '」吗？<br><small style="color:#94a3b8;">下架不影响已购分站,但分站市场不可见、不再售出。</small>';
+        layui.use('layer', function(){
+            var layer = layui.layer;
+            layer.confirm(tip, {icon: 3, title: listed ? '上架确认' : '下架确认', skin: 'admin-modal'}, function(idx){
+                doRequest('set_merchant_listed', plugin.name || '', {
+                    market_id: marketId,
+                    is_listed: listed ? 1 : 0
+                }, function(){ layer.close(idx); });
+            });
+        });
     }
 
     function doRequest(action, name, extraData, callback) {
@@ -446,7 +610,8 @@ $(function(){
 
     // 应用商店
     $('#pluginAppstoreBtn').on('click', function(){
-        $.pjax({ url: '/admin/appstore.php', container: '#adminContent' });
+        var url = currentFilter === 'merchant' ? '/admin/appstore.php?tab=merchant' : '/admin/appstore.php';
+        $.pjax({ url: url, container: '#adminContent' });
     });
 
     // em-tabs 分类筛选：同款切换（是否已激活跳过）
@@ -455,7 +620,19 @@ $(function(){
         if ($item.hasClass('is-active')) return;
         $item.addClass('is-active').siblings().removeClass('is-active');
         currentFilter = $item.data('filter');
-        renderPlugins(allPlugins);
+        if (currentFilter === 'merchant') {
+            if (merchantLoaded) {
+                renderPlugins(merchantPlugins);
+            } else {
+                loadPlugins();
+            }
+        } else {
+            if (allPlugins.length > 0) {
+                renderPlugins(allPlugins);
+            } else {
+                loadPlugins();
+            }
+        }
     });
 
     // 解绑旧事件防止 PJAX 重复绑定
@@ -488,7 +665,10 @@ $(function(){
         e.stopPropagation();
         var action = $(this).data('action');
         var name = $(this).data('name');
-        handleAction(action, name);
+        handleAction(action, name, {
+            market_id: $(this).data('market-id'),
+            target_listed: $(this).data('target-listed')
+        });
     });
 
     // 开关切换

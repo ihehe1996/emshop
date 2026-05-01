@@ -362,6 +362,22 @@ final class LicenseClient
     }
 
     /**
+     * 应用商店 - 创建订单（POST /api/app_create_order.php）。
+     *
+     * 当前重构阶段仅要求传 emkey / app_id。服务端返回 data.out_trade_no。
+     *
+     * @return array{out_trade_no?:string}
+     * @throws RuntimeException
+     */
+    public static function appCreateOrder(string $emkey, int $appId): array
+    {
+        return self::postForm('api/app_create_order.php', [
+            'emkey'  => $emkey,
+            'app_id' => $appId,
+        ], 10);
+    }
+
+    /**
      * 为指定应用创建购买订单（/api/app_buy.php），返回可跳转的收银台 URL。
      *
      * 客户端拿到 data.pay_url 后直接跳转即可；订单状态由收银台 / 异步通知回填。
@@ -630,17 +646,33 @@ final class LicenseClient
     /**
      * 主站货架 · 创建购买订单。
      */
-    public static function mainAppBuy(string $emkey, string $host, int $appId, string $payMethod): array
+    public static function mainAppCreateOrder(string $emkey, int $appId): array
     {
-        return self::appBuy($emkey, $host, $appId, $payMethod, '');
+        return self::appCreateOrder($emkey, $appId);
     }
 
     /**
-     * 分站货架 · 创建购买订单(主站代分站采购,服务端按 audience='merchant' 用分站货架价格收费)。
+     * 分站货架 · 创建购买订单。
+     */
+    public static function merchantAppCreateOrder(string $emkey, int $appId): array
+    {
+        return self::appCreateOrder($emkey, $appId);
+    }
+
+    /**
+     * 主站货架 · 创建购买订单（兼容旧调用，后续移除）。
+     */
+    public static function mainAppBuy(string $emkey, string $host, int $appId, string $payMethod): array
+    {
+        return self::mainAppCreateOrder($emkey, $appId);
+    }
+
+    /**
+     * 分站货架 · 创建购买订单（兼容旧调用，后续移除）。
      */
     public static function merchantAppBuy(string $emkey, string $host, int $appId, string $payMethod): array
     {
-        return self::appBuy($emkey, $host, $appId, $payMethod, '');
+        return self::merchantAppCreateOrder($emkey, $appId);
     }
 
     /**
@@ -652,7 +684,7 @@ final class LicenseClient
     }
 
     /**
-     * 分站货架 · 已上架应用最新版本(主站后台用,触发后调 registerPurchase 补货 + 升级)。
+     * 分站货架 · 已上架应用最新版本(主站后台更新检测用)。
      */
     public static function merchantAppLatestVersions(array $names, string $type): array
     {

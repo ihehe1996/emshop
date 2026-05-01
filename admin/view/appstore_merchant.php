@@ -205,30 +205,67 @@ $csrfToken = $csrfToken ?? Csrf::token();
     transform: scale(1.1);
 }
 
+/* ===== 分站应用商店提示框 ===== */
+.merchant-store-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #4a5568;
+    background: linear-gradient(135deg, #fef9e7 0%, #fdf3d6 100%);
+    border-left: 4px solid #f59e0b;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(245, 158, 11, 0.08);
+}
+.merchant-store-notice__icon {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #f59e0b;
+    font-size: 16px;
+    margin-top: 1px;
+}
+.merchant-store-notice__content {
+    flex: 1;
+}
+
 </style>
 
 <div class="admin-page admin-page-appstore">
     <h1 class="admin-page__title">应用商店</h1>
 
-    <!-- 主站 / 分站 切换:跳转两个独立 view(本文件 = 主站) -->
+    <!-- 主站 / 分站 切换:跳转两个独立 view(本文件 = 分站) -->
     <div class="appstore-tab-switch" id="appstoreTabSwitch">
-        <a class="appstore-tab-switch__item is-active" href="/admin/appstore.php">
+        <a class="appstore-tab-switch__item" href="/admin/appstore.php">
             <i class="fa fa-server"></i>主站应用商店
         </a>
-        <a class="appstore-tab-switch__item" href="/admin/appstore.php?tab=merchant">
+        <a class="appstore-tab-switch__item is-active" href="/admin/appstore.php?tab=merchant">
             <i class="fa fa-cubes"></i>分站应用商店
         </a>
     </div>
 
-    <!-- 分类选项卡：服务端直接渲染（"全部" + "模板主题" + PluginModel::MAIN_PLUGIN_CATEGORIES），不再走异步接口 -->
+    <!-- 分站应用商店功能说明 -->
+    <div class="merchant-store-notice">
+        <div class="merchant-store-notice__icon">
+            <i class="fa fa-info-circle"></i>
+        </div>
+        <div class="merchant-store-notice__content">
+            此处下载的应用将上架到分站的应用商店，主站可自定义应用的价格，分站站长使用账号余额购买插件的使用权限。分站应用后续由主站统一管理。
+        </div>
+    </div>
+
+    <!-- 分类选项卡：服务端直接渲染（"全部" + PluginModel::MERCHANT_PLUGIN_CATEGORIES），分站不展示模板主题 -->
     <div class="em-tabs" id="appstoreTabs">
         <a class="em-tabs__item is-active" data-filter='{"type":"all","id":0}'>
             <i class="fa fa-th-large"></i>全部<em class="em-tabs__count"></em>
         </a>
-        <a class="em-tabs__item" data-filter='{"type":"template","id":0}'>
-            <i class="fa fa-paint-brush"></i>模板主题<em class="em-tabs__count"></em>
-        </a>
-        <?php foreach (PluginModel::MAIN_PLUGIN_CATEGORIES as $__cid => $__cname): ?>
+        <?php foreach (PluginModel::MERCHANT_PLUGIN_CATEGORIES as $__cid => $__cname): ?>
         <a class="em-tabs__item" data-filter='<?= htmlspecialchars(json_encode(['type' => '', 'id' => (int) $__cid]), ENT_QUOTES, 'UTF-8') ?>'>
             <i class="fa fa-folder-o"></i><?= htmlspecialchars((string) $__cname, ENT_QUOTES, 'UTF-8') ?><em class="em-tabs__count"></em>
         </a>
@@ -297,20 +334,23 @@ $csrfToken = $csrfToken ?? Csrf::token();
 </script>
 
 <!--
-    操作按钮分支:
-    - 已装                               → 灰色"已安装"
+    操作按钮分支(tab=main / tab=merchant 共用模板,文案按 window.APPSTORE_TAB 切换):
+    - 已装/已上架                        → 灰色"已安装"
     - 未装 · 未激活 · 付费                → 紫色"先激活授权"
-    - 未装 · 免费                         → 蓝色"安装"
-    - 未装 · 付费                         → 红色"购买 ¥my_price"
+    - 未装 · 免费                         → 蓝色"安装" / "采购上架"
+    - 未装 · 付费                         → 红色"购买 ¥my_price" / "采购 ¥my_price"
 -->
 <script type="text/html" id="appstoreActionTpl">
-    {{# var L = { installed: '已安装', install: '安装', buy: '购买' }; }}
+    {{# var tab = window.APPSTORE_TAB || 'main';
+       var L = tab === 'merchant'
+           ? { installed: '已安装', install: '安装', buy: '采购' }
+           : { installed: '已安装', install: '安装',     buy: '购买' }; }}
     {{# if (d.is_installed == 1) { }}
         <a class="em-btn em-sm-btn em-reset-btn em-disabled-btn"><i class="fa fa-check"></i>{{ L.installed }}</a>
     {{# } else if (d.is_free == 1) { }}
         <a class="em-btn em-sm-btn em-save-btn" lay-event="install"><i class="fa fa-download"></i>{{ L.install }}</a>
     {{# } else if (!window.APPSTORE_LICENSED) { }}
-        <a class="em-btn em-sm-btn em-purple-btn" lay-event="needLicense"><i class="fa fa-shield"></i>限授权用户安装</a>
+        <a class="em-btn em-sm-btn em-purple-btn" lay-event="needLicense"><i class="fa fa-shield"></i>先激活授权</a>
     {{# } else { }}
         <a class="em-btn em-sm-btn em-red-btn" lay-event="buy"><i class="fa fa-shopping-cart"></i>{{ L.buy }} ¥{{ parseFloat(d.my_price || 0).toFixed(2) }}</a>
     {{# } }}
@@ -325,7 +365,7 @@ window.APPSTORE_LICENSED = <?= $appstoreLicensed ? 'true' : 'false' ?>;
 var APPSTORE_CSRF = <?= json_encode($csrfToken) ?>;
 // 当前 tab(main / merchant):决定调服务端哪个货架接口、装到主站本地还是落分站市场
 // templet 通过 window.APPSTORE_TAB 读取以切换按钮文案
-window.APPSTORE_TAB = 'main';
+window.APPSTORE_TAB = 'merchant';
 
 function appstoreAbsUrl(url) {
     if (!url) return '';
@@ -657,7 +697,7 @@ $(function () {
         });
 
         // ---------- 主站 / 分站 应用商店切换 ----------
-        // 物理拆分两个 view 后,切换走 PJAX 跳转(失败回退整页跳转);本 view 是主站
+        // 物理拆分两个 view 后,切换走 PJAX 跳转(失败回退整页跳转);本 view 是分站
         $('#appstoreTabSwitch').on('click', '.appstore-tab-switch__item', function (e) {
             e.preventDefault();
             var $item = $(this);
