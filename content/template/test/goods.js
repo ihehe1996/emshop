@@ -614,13 +614,15 @@ var GoodsDetail = (function () {
             $.post('?c=order&a=create', postData, function (res) {
                 $btn.removeClass('is-loading').prop('disabled', false).html(origHtml);
                 if (res.code === 200) {
+                    var orderDetailUrl = '/user/order_detail.php?order_no=' + encodeURIComponent(res.data.order_no || '');
+                    var guestFindUrl = '/user/find_order.php';
                     if (res.data.paid) {
                         layui.layer.msg('支付成功');
-                        location.href = '/user/order_detail.php?order_no=' + res.data.order_no;
+                        location.href = opts.isGuest ? guestFindUrl : orderDetailUrl;
                     } else if (res.data.pay_url) {
                         location.href = res.data.pay_url;
                     } else {
-                        layui.layer.msg('支付创建失败，请检查支付配置后重试');
+                        location.href = opts.isGuest ? guestFindUrl : orderDetailUrl;
                     }
                 } else {
                     layui.layer.msg(res.msg || '下单失败');
