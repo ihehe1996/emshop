@@ -2,7 +2,7 @@
 defined('EM_ROOT') || exit('access denied!');
 
 function plugin_setting_view() {
-    $plugin_storage = Storage::getInstance('tips');
+    $plugin_storage = Storage::getInstance('test_tips');
     $demo = $plugin_storage->getValue('demo');
 ?>
 
@@ -53,7 +53,7 @@ function plugin_setting_view() {
             $.ajax({
                 type: 'POST',
                 url: window.PLUGIN_SAVE_URL || '/admin/plugin.php',
-                data: $('#tipsForm').serialize() + '&_action=save_config&name=tips',
+                data: $('#tipsForm').serialize() + '&_action=save_config&name=test_tips',
                 dataType: 'json',
                 success: function(res){
                     if (res.code === 0 || res.code === 200) {
@@ -86,7 +86,7 @@ function plugin_setting() {
         Output::fail('请求已失效，请刷新页面后重试');
     }
     $demo = Input::postStrVar('demo');
-    $plugin_storage = Storage::getInstance('tips');
+    $plugin_storage = Storage::getInstance('test_tips');
     $plugin_storage->setValue('demo', $demo);
     Output::ok('配置已保存', ['csrf_token' => Csrf::refresh()]);
 }

@@ -15,8 +15,7 @@ require_once __DIR__ . '/global.php';
  * 列表来源:
  *   - 自身已购:em_app_purchase where merchant_id = {id} AND type = 'plugin'
  *   - 自身启用:em_merchant.enabled_plugins(逗号分隔 slug)
- *   - 主站继承:em_config.enabled_plugins ∩ category 命中 PluginModel::SYSTEM_PLUGINS
- *               这部分对商户只读(支付/商品类型/对接商品 由主站统管,商户不能启停)
+ *   - 系统统管插件(支付/商品类型/对接商品)在商户端列表中隐藏
  *
  * 弹窗模式(?_popup=1)沿用:渲染 plugin 自带的 *_setting.php 视图,save_config 仍走本控制器。
  */
@@ -42,13 +41,48 @@ if (Request::isPost()) {
             Response::error('非法插件名');
         }
 
-        // 商户只能操作自己 scope 下的记录;不允许触碰 scope='main' 的主站继承插件
-        if (!$pluginModel->isInstalled($name, $scope)) {
+        $owned = $pluginModel->isInstalled($name, $scope);
+        $selfEnabled = $pluginModel->isEnabled($name, $scope);
+        $header = $pluginModel->parseHeader(EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php');
+        $isSystemPlugin = $header !== null
+            && in_array((string) ($header['category'] ?? ''), array_values(PluginModel::SYSTEM_PLUGINS), true);
+
+        // 兼容部分插件 setting.php 历史硬编码 name 错误:
+        // save_config 时优先回退到弹窗 URL 的 ?name=xxx 再校验权限
+        if ($action === 'save_config' && !$owned && !$selfEnabled) {
+            $fallbackName = '';
+            $ref = (string) ($_SERVER['HTTP_REFERER'] ?? '');
+            if ($ref !== '') {
+                $query = parse_url($ref, PHP_URL_QUERY);
+                if (is_string($query) && $query !== '') {
+                    parse_str($query, $q);
+                    $candidate = trim((string) ($q['name'] ?? ''));
+                    if ($candidate !== '' && preg_match('/^[a-zA-Z0-9_\-]+$/', $candidate)) {
+                        $fallbackName = $candidate;
+                    }
+                }
+            }
+            if ($fallbackName !== '' && $fallbackName !== $name) {
+                $name = $fallbackName;
+                $owned = $pluginModel->isInstalled($name, $scope);
+                $selfEnabled = $pluginModel->isEnabled($name, $scope);
+                $header = $pluginModel->parseHeader(EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php');
+                $isSystemPlugin = $header !== null
+                    && in_array((string) ($header['category'] ?? ''), array_values(PluginModel::SYSTEM_PLUGINS), true);
+            }
+        }
+
+        if ($isSystemPlugin) {
+            Response::error('该插件由主站统一管理,商户端不可操作');
+        }
+
+        if (!$owned && !$selfEnabled) {
             Response::error('该插件未在你的店铺中购买/启用,无法操作');
         }
 
         switch ($action) {
             case 'enable': {
+                if (!$owned) Response::error('该插件未在你的店铺中购买,无法启用');
                 if ($pluginModel->isEnabled($name, $scope)) Response::error('该插件已经是启用状态');
                 $pluginModel->enable($name, $scope);
                 Response::success('插件已启用', ['csrf_token' => Csrf::refresh()]);
@@ -101,7 +135,15 @@ if (Input::get('_popup', '') === '1') {
     if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) {
         exit('非法插件名');
     }
-    if (!$pluginModel->isInstalled($name, $scope)) {
+    $popupOwned = $pluginModel->isInstalled($name, $scope);
+    $popupSelfEnabled = $pluginModel->isEnabled($name, $scope);
+    $popupHeader = $pluginModel->parseHeader(EM_ROOT . '/content/plugin/' . $name . '/' . $name . '.php');
+    $popupSystem = $popupHeader !== null
+        && in_array((string) ($popupHeader['category'] ?? ''), array_values(PluginModel::SYSTEM_PLUGINS), true);
+    if ($popupSystem) {
+        exit('该插件由主站统一管理,商户端不可配置');
+    }
+    if (!$popupOwned && !$popupSelfEnabled) {
         exit('该插件未在你的店铺中购买/启用');
     }
     $settingFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '_setting.php';
@@ -129,39 +171,30 @@ if (Input::get('_popup', '') === '1') {
 }
 
 // ============================================================
-// 普通页面:列表 = 自身已购(em_app_purchase)+ 主站继承(SYSTEM_PLUGINS 启用)
+// 普通页面:列表 = 自身已购(em_app_purchase)
 //
-// 元数据全部来自 parseHeader(磁盘),DB 只查 is_enabled / 已购 / 主站启用
+// 元数据全部来自 parseHeader(磁盘),DB 只查 is_enabled / 已购
 // ============================================================
 $disk          = $pluginModel->scanPlugins();                        // 磁盘所有插件 + parseHeader 元数据
 $purchaseModel = new AppPurchaseModel();
 $ownedCodes    = $purchaseModel->purchasedCodes($merchantId, 'plugin'); // 商户已购 app_code 列表
 $ownedSet      = array_flip($ownedCodes);
 
-// 主站继承:主站启用 ∩ category 命中 SYSTEM_PLUGINS
-$mainEnabled   = $pluginModel->getEnabledNames('main');
-$inheritedSet  = [];
-foreach ($mainEnabled as $n) {
-    $info = $disk[$n] ?? null;
-    if ($info !== null && in_array((string) ($info['category'] ?? ''), PluginModel::SYSTEM_PLUGINS, true)) {
-        $inheritedSet[$n] = true;
-    }
-}
-
 // 商户自身 scope 的启用名单(从 em_merchant.enabled_plugins 解析得到)
 $selfEnabledSet = array_flip($pluginModel->getEnabledNames($scope));
 
 $plugins = [];
 foreach ($disk as $name => $info) {
-    $isOwned     = isset($ownedSet[$name]);
-    $isInherited = isset($inheritedSet[$name]) && !$isOwned;
-    if (!$isOwned && !$isInherited) continue;
+    if (in_array((string) ($info['category'] ?? ''), array_values(PluginModel::SYSTEM_PLUGINS), true)) {
+        continue;
+    }
+    $hasOwned = isset($ownedSet[$name]);
+    $hasEnabled = isset($selfEnabledSet[$name]);
+    if (!$hasOwned && !$hasEnabled) continue;
 
     $row = $info;
-    $row['is_inherited'] = $isInherited;
-    // 继承插件由主站启停,商户视图统一显示"已启用"语义不需要再查 selfEnabled
-    $row['is_enabled']   = !$isInherited && isset($selfEnabledSet[$name]);
-    $row['has_setting']  = !$isInherited && (string) ($info['setting_file'] ?? '') !== '';
+    $row['is_enabled']   = $hasEnabled;
+    $row['has_setting']  = (string) ($info['setting_file'] ?? '') !== '';
     $plugins[] = $row;
 }
 

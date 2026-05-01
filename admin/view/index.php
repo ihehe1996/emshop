@@ -134,6 +134,7 @@ $csrfToken = Csrf::token();
                     <div class="admin-menu-group__body">
                         <a href="/admin/order.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('商品订单'); ?></a>
                         <a href="/admin/recharge.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('充值订单'); ?></a>
+                        <a href="/admin/app_order.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('应用订单'); ?></a>
                         <a href="/admin/withdraw.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('提现申请'); ?></a>
                         <a href="/admin/merchant_order.php" data-pjax="#adminContent" class="admin-menu-item"><?= t('分站订单'); ?></a>
                     </div>
