@@ -101,6 +101,7 @@ if ((string) Input::get('_action', '') === 'app_detail') {
 //
 // tab=main     → 拉服务端"主站货架"(scope=1),主站自己用,合并 em_plugin/em_template 已装状态
 // tab=merchant → 拉服务端"分站货架"(scope=2),主站为分站采购,合并 em_app_market 已上架状态
+// list_mode=purchased → 拉服务端"已购买应用"(app_purchased_list.php)，携带 emkey + scope
 if ((string) Input::get('_action', '') === 'list') {
     LicenseService::revalidateCurrent(); // 获取最新授权状态
     // 取当前激活码和域名用于服务端计算 my_price（未激活时 emkey 为空，服务端会按 VIP 价返回）
@@ -111,6 +112,8 @@ if ((string) Input::get('_action', '') === 'list') {
 
     $tab = (string) Input::get('tab', 'main');
     if (!in_array($tab, ['main', 'merchant'], true)) $tab = 'main';
+    $listMode = (string) Input::get('list_mode', '');
+    if (!in_array($listMode, ['', 'purchased'], true)) $listMode = '';
 
 
     $params = [
@@ -122,9 +125,25 @@ if ((string) Input::get('_action', '') === 'list') {
         'emkey'       => $emkey,
         'host'        => $host,
     ];
+    // 已购买列表依赖 emkey；未激活时直接返回空列表，避免打断页面
+    if ($listMode === 'purchased' && $emkey === '') {
+        Response::success('', [
+            'list'    => [],
+            'count'   => 0,
+            'page'    => (int) $params['page'],
+            'pageNum' => (int) $params['pageNum'],
+        ]);
+    }
     try {
-        // 阶段 8:走拆分后的 mainAppList / merchantAppList(scope/audience/member_code 由方法内部固定)
-        $result = $tab === 'merchant' ? LicenseClient::merchantAppList($params) : LicenseClient::mainAppList($params);
+        $isPurchasedList = $listMode === 'purchased';
+        if ($isPurchasedList) {
+            $result = $tab === 'merchant'
+                ? LicenseClient::merchantAppPurchasedList($params)
+                : LicenseClient::mainAppPurchasedList($params);
+        } else {
+            // 阶段 8:走拆分后的 mainAppList / merchantAppList(scope/audience/member_code 由方法内部固定)
+            $result = $tab === 'merchant' ? LicenseClient::merchantAppList($params) : LicenseClient::mainAppList($params);
+        }
         if ($tab === 'main') {
             // tab=main:主站自用,合并已装状态
             //   插件:磁盘有目录 = 已装(version 走 parseHeader);em_plugin 表已废弃,启用列表在 em_config

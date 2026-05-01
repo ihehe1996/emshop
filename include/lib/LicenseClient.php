@@ -239,6 +239,26 @@ final class LicenseClient
     }
 
     /**
+     * 应用商店 - 已购买应用列表（POST /api/app_purchased_list.php）。
+     *
+     * 返回结构与 appStoreList 保持一致：{ list, count, page, pageNum }。
+     *
+     * @param array{page?:int,pageNum?:int,type?:string,category_id?:int,keyword?:string,scope?:int,emkey?:string,host?:string} $params
+     * @return array{list:array<int,array>,count:int,page:int,pageNum:int}
+     * @throws RuntimeException
+     */
+    public static function appPurchasedList(array $params): array
+    {
+        $data = self::postForm('api/app_purchased_list.php', $params, 15);
+        return [
+            'list'    => is_array($data['list'] ?? null) ? array_values($data['list']) : [],
+            'count'   => (int) ($data['count']   ?? 0),
+            'page'    => (int) ($data['page']    ?? 1),
+            'pageNum' => (int) ($data['pageNum'] ?? 10),
+        ];
+    }
+
+    /**
      * 验证站点已购买应用（POST /api/app_purchased.php）。
      *
      * 给定一批应用的 name_en，返回本站点（emkey + member_code）**已购买或免费可用**的子集。
@@ -625,6 +645,30 @@ final class LicenseClient
         $params['audience'] = 'merchant';
         $params['member_code'] = '';
         return self::appStoreList($params);
+    }
+
+    /**
+     * 主站货架 · 已购买应用列表。
+     *
+     * @param array{page?:int,pageNum?:int,type?:string,category_id?:int,keyword?:string,emkey?:string,host?:string} $params
+     * @return array{list:array<int,array>,count:int,page:int,pageNum:int}
+     */
+    public static function mainAppPurchasedList(array $params): array
+    {
+        $params['scope'] = 1;
+        return self::appPurchasedList($params);
+    }
+
+    /**
+     * 分站货架 · 已购买应用列表（主站为分站采购视角）。
+     *
+     * @param array{page?:int,pageNum?:int,type?:string,category_id?:int,keyword?:string,emkey?:string,host?:string} $params
+     * @return array{list:array<int,array>,count:int,page:int,pageNum:int}
+     */
+    public static function merchantAppPurchasedList(array $params): array
+    {
+        $params['scope'] = 2;
+        return self::appPurchasedList($params);
     }
 
     /**

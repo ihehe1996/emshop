@@ -369,7 +369,7 @@ function template_setting_view() {
             formData += '&slides_blog_json=' + encodeURIComponent(JSON.stringify(slidesData.blog));
             formData += '&_action=save_config&name=test';
 
-            // URL 由 popup header 注入到 iframe 自身 window（主站默认 /admin/template.php，商户覆盖为 /user/merchant/theme.php）
+            // URL 由 popup header 注入到 iframe 自身 window（主站默认 /admin/template.php，商户覆盖为 /user/merchant/template.php）
             var __saveUrl = window.TEMPLATE_SAVE_URL || '/admin/template.php';
             $.ajax({
                 type: 'POST',
