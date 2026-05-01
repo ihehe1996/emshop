@@ -53,6 +53,21 @@ function virtualCardSyncCardStock(int $goodsId): void
     GoodsModel::updatePriceStockCache($goodsId);
 }
 
+/**
+ * 判断当前商品是否自动发货。
+ *
+ * 规则：
+ * - plugin_data 未配置 auto_delivery 时，默认按开启处理（与后台表单默认值一致）
+ * - 仅当显式存为 0/'0' 时，视为人工发货
+ */
+function virtualCardIsAutoDelivery(array $pluginData): bool
+{
+    if (!array_key_exists('auto_delivery', $pluginData)) {
+        return true;
+    }
+    return (string) $pluginData['auto_delivery'] !== '0';
+}
+
 // ================================================================
 // 第一步：注册商品类型
 // ================================================================
@@ -72,7 +87,7 @@ addFilter('goods_delivery_type', function ($deliveryType, $goods) {
         return $deliveryType;
     }
     $pd = json_decode($goods['plugin_data'] ?? '{}', true) ?: [];
-    return !empty($pd['auto_delivery']) ? 'auto' : 'manual';
+    return virtualCardIsAutoDelivery($pd) ? 'auto' : 'manual';
 });
 
 // ================================================================
@@ -182,7 +197,7 @@ addAction('goods_type_virtual_card_render', function ($goods, $spec) {
         margin-top: 8px; font-size: 13px; color: #666;
     }
     </style>
-    <?php $isAuto = !empty($pluginData['auto_delivery']); ?>
+    <?php $isAuto = virtualCardIsAutoDelivery($pluginData); ?>
     <div class="goods-type-virtual-card">
         <div class="goods-type-badge">
             <span class="badge badge--auto"><i class="fa fa-bolt"></i> <?php echo $formatLabels[$format] ?? '虚拟商品'; ?></span>
@@ -223,7 +238,7 @@ addFilter('goods_type_virtual_card_order_submit', function ($result, $orderData)
 
     // 读取插件配置，判断是否自动发货
     $pluginData = json_decode($goods['plugin_data'] ?? '{}', true) ?: [];
-    $autoDelivery = (int)($pluginData['auto_delivery'] ?? 0);
+    $autoDelivery = virtualCardIsAutoDelivery($pluginData);
 
     if ($autoDelivery) {
         // 自动发货：检查卡密库存
@@ -272,7 +287,7 @@ addAction('goods_type_virtual_card_order_paid', function ($orderId, $orderGoodsI
     // 读取商品的插件配置，判断是否自动发货
     $goods = Database::fetchOne("SELECT plugin_data FROM {$prefix}goods WHERE id = ? LIMIT 1", [$goodsId]);
     $goodsPluginData = json_decode($goods['plugin_data'] ?? '{}', true) ?: [];
-    $autoDelivery = (int) ($goodsPluginData['auto_delivery'] ?? 0);
+    $autoDelivery = virtualCardIsAutoDelivery($goodsPluginData);
 
     if ($autoDelivery) {
         // ===== 自动发货：从卡密库取卡密 =====
@@ -455,7 +470,7 @@ addAction('goods_type_virtual_card_stock_form', function ($goods, $specs) {
     $goodsId = (int)$goods['id'];
     $csrfToken = Csrf::token();
     $pluginData = !empty($goods['plugin_data']) ? json_decode($goods['plugin_data'], true) ?: [] : [];
-    $isAutoDelivery = !empty($pluginData['auto_delivery']);
+    $isAutoDelivery = virtualCardIsAutoDelivery($pluginData);
 
     if (!$isAutoDelivery) {
         // 非自动发货：与实物商品相同的数量管理
