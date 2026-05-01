@@ -49,6 +49,15 @@ function plugin_setting_view(): void
         <form class="layui-form" id="mpayForm" lay-filter="mpayForm">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
 
+            <div class="popup-section">
+                <div class="layui-form-item" style="margin-bottom:0;">
+                    <label class="layui-form-label">官网注册地址</label>
+                    <div class="layui-input-block" style="padding-top:9px;">
+                        <a href="https://m.ynile.cn/" target="_blank" rel="noopener noreferrer">https://m.ynile.cn/</a>
+                    </div>
+                </div>
+            </div>
+
             <div class="layui-tab layui-tab-brief mpay-tab" lay-filter="mpayTab">
                 <ul class="layui-tab-title">
                     <?php $first = true; foreach ($channels as $code => $ch): ?>

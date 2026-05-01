@@ -2,7 +2,7 @@
 /**
 Plugin Name: 码支付
 Version: 2.0.0
-Plugin URL:
+Plugin URL: https://m.ynile.cn/
 Description: 码支付聚合支付插件，支持支付宝、微信、QQ钱包，可选页面跳转或API下单模式。
 Author: EMSHOP
 Author URL:
