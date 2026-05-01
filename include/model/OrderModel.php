@@ -493,6 +493,52 @@ class OrderModel
     }
 
     /**
+     * 0 元订单支付处理。
+     * 直接更新订单状态为已支付并记录一条内置支付流水，然后触发发货队列。
+     *
+     * @throws RuntimeException
+     */
+    public static function payFreeOrder(int $orderId): bool
+    {
+        self::tables();
+
+        $order = self::getById($orderId);
+        if (!$order) {
+            throw new RuntimeException('订单不存在');
+        }
+        if ($order['status'] !== 'pending') {
+            throw new RuntimeException('订单状态异常');
+        }
+
+        $payAmount = (int) $order['pay_amount'];
+        if ($payAmount > 0) {
+            throw new RuntimeException('订单金额不为0，不能走免支付流程');
+        }
+
+        Database::begin();
+        try {
+            self::changeStatus($orderId, 'paid');
+
+            $sql = "INSERT INTO `" . self::$paymentTable . "`
+                    (order_id, payment_code, payment_plugin, trade_no, amount, status, paid_at, created_at)
+                    VALUES (?, 'free', 'built-in', ?, 0, 'success', NOW(), NOW())";
+            Database::execute($sql, [
+                $orderId,
+                'FREE' . $order['order_no'],
+            ]);
+
+            Database::commit();
+
+            self::triggerDelivery($orderId);
+
+            return true;
+        } catch (Throwable $e) {
+            Database::rollBack();
+            throw $e;
+        }
+    }
+
+    /**
      * 触发发货流程。
      * 将每个订单商品写入 em_delivery_queue，由 Swoole 队列消费者异步执行。
      * 不直接调用插件钩子，避免阻塞用户请求。
