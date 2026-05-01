@@ -20,7 +20,7 @@ require_once __DIR__ . '/init.php';
 /**
  * 身份感知的回跳 URL 构造：
  *   - 登录用户 → /user/order_detail.php?order_no=xxx（个人中心壳）
- *   - 游客 → /user/find_order.php?order_no=xxx（独立查单壳，无侧边栏）
+ *   - 游客 → /user/find_order.php（独立查单壳，无侧边栏，不拼接订单号）
  * 单独放这里，供本文件兜底和 epay 等插件的 payment_return_* 钩子复用。
  */
 function payment_return_redirect_url(string $orderNo = ''): string
@@ -33,8 +33,10 @@ function payment_return_redirect_url(string $orderNo = ''): string
         if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') @session_start();
         $isLogged = !empty($_SESSION['em_front_user']['id']);
     }
-    $base = $isLogged ? '/user/order_detail.php' : '/user/find_order.php';
-    return $orderNo !== '' ? ($base . '?order_no=' . urlencode($orderNo)) : $base;
+    if ($isLogged) {
+        return $orderNo !== '' ? ('/user/order_detail.php?order_no=' . urlencode($orderNo)) : '/user/order_detail.php';
+    }
+    return '/user/find_order.php';
 }
 
 $plugin = (string) Input::get('plugin', '');
