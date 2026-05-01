@@ -96,9 +96,17 @@ function alipay_order_subject(string $orderNo): string
     return '订单 ' . $orderNo;
 }
 
+function alipay_clean_key_text(string $rawKey): string
+{
+    $key = str_replace(['\\r\\n', '\\n', '\\r'], "\n", $rawKey);
+    $key = trim(str_replace(["\r\n", "\r"], "\n", $key));
+    $key = trim($key, "\"' \t\n\r\0\x0B");
+    return $key;
+}
+
 function alipay_normalize_key(string $rawKey, bool $private): string
 {
-    $key = trim(str_replace(["\r\n", "\r"], "\n", $rawKey));
+    $key = alipay_clean_key_text($rawKey);
     if ($key === '') {
         return '';
     }
@@ -117,6 +125,73 @@ function alipay_normalize_key(string $rawKey, bool $private): string
     $footer = $private ? '-----END PRIVATE KEY-----' : '-----END PUBLIC KEY-----';
 
     return $header . "\n" . trim(chunk_split($compact, 64, "\n")) . "\n" . $footer;
+}
+
+function alipay_private_key_candidates(string $rawKey): array
+{
+    $key = alipay_clean_key_text($rawKey);
+    if ($key === '') {
+        return [];
+    }
+
+    // 已带 PEM 头时优先按原样尝试。
+    if (strpos($key, 'BEGIN') !== false) {
+        return [alipay_normalize_key($key, true)];
+    }
+
+    $compact = preg_replace('/\s+/', '', $key) ?: '';
+    if ($compact === '') {
+        return [];
+    }
+
+    return [
+        "-----BEGIN PRIVATE KEY-----\n" . trim(chunk_split($compact, 64, "\n")) . "\n-----END PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----\n" . trim(chunk_split($compact, 64, "\n")) . "\n-----END RSA PRIVATE KEY-----",
+    ];
+}
+
+function alipay_public_key_candidates(string $rawKey): array
+{
+    $key = alipay_clean_key_text($rawKey);
+    if ($key === '') {
+        return [];
+    }
+
+    if (strpos($key, 'BEGIN') !== false) {
+        return [alipay_normalize_key($key, false)];
+    }
+
+    $compact = preg_replace('/\s+/', '', $key) ?: '';
+    if ($compact === '') {
+        return [];
+    }
+
+    return [
+        "-----BEGIN PUBLIC KEY-----\n" . trim(chunk_split($compact, 64, "\n")) . "\n-----END PUBLIC KEY-----",
+        "-----BEGIN RSA PUBLIC KEY-----\n" . trim(chunk_split($compact, 64, "\n")) . "\n-----END RSA PUBLIC KEY-----",
+    ];
+}
+
+function alipay_load_private_key(string $rawKey)
+{
+    foreach (alipay_private_key_candidates($rawKey) as $candidate) {
+        $res = openssl_pkey_get_private($candidate);
+        if ($res !== false) {
+            return $res;
+        }
+    }
+    return false;
+}
+
+function alipay_load_public_key(string $rawKey)
+{
+    foreach (alipay_public_key_candidates($rawKey) as $candidate) {
+        $res = openssl_pkey_get_public($candidate);
+        if ($res !== false) {
+            return $res;
+        }
+    }
+    return false;
 }
 
 
@@ -153,12 +228,7 @@ function alipay_sign(array $params, string $privateKeyRaw): string
         return '';
     }
 
-    $privateKey = alipay_normalize_key($privateKeyRaw, true);
-    if ($privateKey === '') {
-        return '';
-    }
-
-    $res = openssl_pkey_get_private($privateKey);
+    $res = alipay_load_private_key($privateKeyRaw);
     if ($res === false) {
         return '';
     }
@@ -179,12 +249,7 @@ function alipay_verify(array $params, string $sign, string $publicKeyRaw): bool
         return false;
     }
 
-    $publicKey = alipay_normalize_key($publicKeyRaw, false);
-    if ($publicKey === '') {
-        return false;
-    }
-
-    $res = openssl_pkey_get_public($publicKey);
+    $res = alipay_load_public_key($publicKeyRaw);
     if ($res === false) {
         return false;
     }
@@ -237,6 +302,11 @@ function alipay_build_gateway_url(array $params): string
     return ALIPAY_PLUGIN_GATEWAY_URL . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
 }
 
+function alipay_base64url_encode(string $raw): string
+{
+    return rtrim(strtr(base64_encode($raw), '+/', '-_'), '=');
+}
+
 function alipay_post_gateway(array $params): array
 {
     $payload = http_build_query($params, '', '&', PHP_QUERY_RFC3986);
@@ -246,11 +316,23 @@ function alipay_post_gateway(array $params): array
     }
 
     $ch = curl_init(ALIPAY_PLUGIN_GATEWAY_URL);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+    $opts = [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $payload,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
+    ];
+
+    $caInfo = alipay_resolve_ca_bundle();
+    if ($caInfo !== '') {
+        $opts[CURLOPT_CAINFO] = $caInfo;
+    }
+
+    curl_setopt_array($ch, $opts);
 
     $response = curl_exec($ch);
     $error = curl_error($ch);
@@ -258,7 +340,14 @@ function alipay_post_gateway(array $params): array
     curl_close($ch);
 
     if ($response === false || $response === '') {
-        return ['ok' => false, 'msg' => '支付宝接口请求失败：' . ($error ?: 'empty response')];
+        $msg = '支付宝接口请求失败：' . ($error ?: 'empty response');
+        if (stripos((string) $error, 'SSL certificate problem') !== false) {
+            $msg .= '。检测到服务器缺少/无法识别 CA 根证书链，请安装系统 ca-certificates 或在 php.ini 配置 curl.cainfo/openssl.cafile';
+            if ($caInfo !== '') {
+                $msg .= '（当前 CA 路径：' . $caInfo . '）';
+            }
+        }
+        return ['ok' => false, 'msg' => $msg];
     }
     if ($httpCode !== 200) {
         return ['ok' => false, 'msg' => '支付宝接口状态异常：HTTP ' . $httpCode];
@@ -282,6 +371,47 @@ function alipay_post_gateway(array $params): array
     }
 
     return ['ok' => true, 'data' => $bizResp];
+}
+
+function alipay_resolve_ca_bundle(): string
+{
+    $candidates = [];
+
+    $iniCurl = trim((string) ini_get('curl.cainfo'));
+    if ($iniCurl !== '') {
+        $candidates[] = $iniCurl;
+    }
+
+    $iniOpenSsl = trim((string) ini_get('openssl.cafile'));
+    if ($iniOpenSsl !== '') {
+        $candidates[] = $iniOpenSsl;
+    }
+
+    $envSsl = trim((string) getenv('SSL_CERT_FILE'));
+    if ($envSsl !== '') {
+        $candidates[] = $envSsl;
+    }
+
+    $candidates = array_merge($candidates, [
+        EM_ROOT . '/cacert.pem',
+        EM_ROOT . '/content/cacert.pem',
+        __DIR__ . '/cacert.pem',
+        '/etc/ssl/certs/ca-certificates.crt',      // Debian/Ubuntu
+        '/etc/pki/tls/certs/ca-bundle.crt',        // CentOS/RHEL
+        '/etc/ssl/ca-bundle.pem',                  // SUSE
+        '/usr/local/etc/openssl/cert.pem',         // macOS/Homebrew
+        'C:\\Windows\\System32\\curl-ca-bundle.crt',
+        'C:\\Windows\\curl-ca-bundle.crt',
+    ]);
+
+    foreach ($candidates as $p) {
+        $path = trim((string) $p);
+        if ($path !== '' && is_file($path) && is_readable($path)) {
+            return $path;
+        }
+    }
+
+    return '';
 }
 
 function alipay_create_face_pay_url(array $cfg, string $orderNo, string $amount, string $subject): string
@@ -405,7 +535,9 @@ addFilter('payment_create', function (array $ctx): array {
         if ($mode === 'face') {
             try {
                 $url = alipay_create_face_pay_url($cfg, $orderNo, $amount, $subject);
-                $ctx['pay_url'] = $url;
+                $ctx['pay_url'] = alipay_site_url()
+                    . '/?plugin=alipay&order_no=' . rawurlencode($orderNo)
+                    . '&q=' . rawurlencode(alipay_base64url_encode($url));
                 return $ctx;
             } catch (Throwable $e) {
                 $errors[] = '当面付：' . $e->getMessage();
