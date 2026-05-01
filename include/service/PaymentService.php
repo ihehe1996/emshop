@@ -59,25 +59,46 @@ class PaymentService
     }
 
     /**
-     * 触发 `payment_create` 过滤器，用主站 scope 跑插件钩子，返回插件生成的 pay_url。
+     * 触发 `payment_create` 过滤器，用主站 scope 跑插件钩子，返回支付创建元数据。
      *
-     * 商户站下单 / 充值时调用方原本直接 applyFilter，但这样钩子里的 Storage::getInstance()
-     * 会读到商户 scope 的存储（空的，因为商户站不再独立配支付），插件返回 ctx 不带 pay_url，
-     * 前端只能跳订单详情看到"待付款"状态卡住。改成在主站 scope 下跑钩子。
+     * 返回字段：
+     * - pay_url：前端当前可直接跳转的支付地址（兼容既有逻辑）
+     * - qrcode：二维码收银页地址（仅插件有返回时存在，如 mapi / 当面付场景）
      *
      * @param array<string, mixed> $order   订单行（OrderModel::getById 的结果，或充值"伪订单"）
      * @param array<string, mixed> $payment 支付方式行（来自 PaymentService::getMethods）
+     * @return array{pay_url:string,qrcode:string}
      */
-    public static function createPayment(array $order, array $payment): string
+    public static function createPaymentPayload(array $order, array $payment): array
     {
         $ctx = self::runUnderMainScope(static function () use ($order, $payment) {
             return applyFilter('payment_create', [
-                'order'   => $order,
-                'payment' => $payment,
-                'pay_url' => '',
+                'order'       => $order,
+                'payment'     => $payment,
+                'pay_url'     => '',
+                'qrcode'      => '',
             ]);
         });
-        return (string) ($ctx['pay_url'] ?? '');
+        if (!is_array($ctx)) {
+            $ctx = [];
+        }
+        return [
+            'pay_url' => (string) ($ctx['pay_url'] ?? ''),
+            // 兼容旧插件仍返回 qrcode_page 的情况
+            'qrcode' => (string) (($ctx['qrcode'] ?? '') !== '' ? $ctx['qrcode'] : ($ctx['qrcode_page'] ?? '')),
+        ];
+    }
+
+    /**
+     * 兼容旧调用：仅返回 pay_url。
+     *
+     * @param array<string, mixed> $order
+     * @param array<string, mixed> $payment
+     */
+    public static function createPayment(array $order, array $payment): string
+    {
+        $payload = self::createPaymentPayload($order, $payment);
+        return $payload['pay_url'];
     }
 
     /**

@@ -79,14 +79,16 @@ class RechargeController extends BaseController
 
             // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
             // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
-            $payUrl = PaymentService::createPayment($pseudoOrder, $payment);
+            $payPayload = PaymentService::createPaymentPayload($pseudoOrder, $payment);
+            $payUrl = (string) ($payPayload['pay_url'] ?? '');
             if ($payUrl === '') {
                 throw new RuntimeException('支付方式未生成支付链接');
             }
 
             Response::success('', [
-                'order_no' => $created['order_no'],
-                'pay_url'  => $payUrl,
+                'order_no'     => $created['order_no'],
+                'pay_url'      => $payUrl,
+                'qrcode'       => (string) ($payPayload['qrcode'] ?? ''),
             ]);
         } catch (RuntimeException $e) {
             Response::error($e->getMessage());

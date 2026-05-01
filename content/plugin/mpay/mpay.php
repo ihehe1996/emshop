@@ -414,6 +414,7 @@ addFilter('payment_create', function (array $ctx): array {
                 'urlscheme' => $scheme,
                 'trade_no'  => $tradeNo,
             ]);
+            $ctx['qrcode'] = $ctx['pay_url'];
             return $ctx;
         }
 
@@ -565,5 +566,3 @@ addAction('payment_return_mpay', function (array $data): void {
 
     Response::redirect(payment_return_redirect_url($orderNo));
 });
-
-
