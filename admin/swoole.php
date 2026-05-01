@@ -11,7 +11,7 @@ adminRequireLogin();
 
 $csrfToken = Csrf::token();
 // Swoole API 地址（后台系统设置中配置 swoole_api_url，生产环境填 http://127.0.0.1:9601）
-$swooleApiUrl = Config::get('swoole_api_url', 'http://127.0.0.1:9601');
+$swooleApiUrls = swooleApiCandidates(Config::get('swoole_api_url', 'http://127.0.0.1:9601'));
 
 // AJAX 请求：代理转发到 Swoole HTTP API
 if (Request::isPost()) {
@@ -24,22 +24,25 @@ if (Request::isPost()) {
 
     switch ($action) {
         case 'status':
-            $result = swooleApiGet($swooleApiUrl . '/status');
+            $result = swooleApiGetAny($swooleApiUrls, '/status');
             if ($result === null) {
-                Response::success('', ['running' => false]);
-            } else {
-                Response::success('', $result['data'] ?? ['running' => false]);
+                Response::success('', ['running' => swoolePidRunning()]);
             }
+            $data = $result['data'] ?? [];
+            if (!isset($data['running'])) {
+                $data['running'] = true;
+            }
+            Response::success('', $data);
             break;
 
         case 'queue_recent':
-            $result = swooleApiGet($swooleApiUrl . '/queue/recent');
+            $result = swooleApiGetAny($swooleApiUrls, '/queue/recent');
             Response::success('', ['list' => $result['data'] ?? []]);
             break;
 
         case 'queue_retry':
             $id = (int) Input::post('id', 0);
-            swooleApiPost($swooleApiUrl . '/queue/retry', ['id' => $id]);
+            swooleApiPostAny($swooleApiUrls, '/queue/retry', ['id' => $id]);
             Response::success('已重置', ['csrf_token' => Csrf::refresh()]);
             break;
 
@@ -50,7 +53,7 @@ if (Request::isPost()) {
                 Response::error('启动操作仅在 Linux 环境可用（swoole 不支持 Windows 原生）');
             }
             // 已在跑就别重复启动
-            if (swooleApiGet($swooleApiUrl . '/status') !== null) {
+            if (swooleApiGetAny($swooleApiUrls, '/status') !== null || swoolePidRunning()) {
                 Response::success('Swoole 已在运行', ['csrf_token' => Csrf::refresh()]);
             }
             $php = swoolePhpBinary();
@@ -88,7 +91,7 @@ if (Request::isPost()) {
                 Response::error('重启操作仅在 Linux 环境可用');
             }
             // reload 必须 swoole 在跑，否则 SIGUSR1 没人接
-            if (swooleApiGet($swooleApiUrl . '/status') === null) {
+            if (swooleApiGetAny($swooleApiUrls, '/status') === null && !swoolePidRunning()) {
                 Response::error('Swoole 未运行，请先启动');
             }
             $php = swoolePhpBinary();
@@ -217,4 +220,92 @@ function swooleApiPost(string $url, array $data): ?array
         return null;
     }
     return json_decode($body, true);
+}
+
+/**
+ * 规范化并生成可回退的 Swoole API 地址列表。
+ *
+ * 优先使用后台配置值；若该值不可达，再回退到本机地址。
+ *
+ * @return array<int, string>
+ */
+function swooleApiCandidates(string $configured): array
+{
+    $add = static function (array &$list, string $url): void {
+        $u = trim($url);
+        if ($u === '') {
+            return;
+        }
+        $u = rtrim($u, '/');
+        if (!preg_match('#^https?://#i', $u)) {
+            return;
+        }
+        if (!in_array($u, $list, true)) {
+            $list[] = $u;
+        }
+    };
+
+    $urls = [];
+    $add($urls, $configured);
+    $add($urls, 'http://127.0.0.1:9601');
+    $add($urls, 'http://localhost:9601');
+    return $urls;
+}
+
+/**
+ * 依次尝试多个 API 地址发起 GET，请求到任意一个成功即返回。
+ *
+ * @param array<int, string> $baseUrls
+ */
+function swooleApiGetAny(array $baseUrls, string $path): ?array
+{
+    foreach ($baseUrls as $baseUrl) {
+        $result = swooleApiGet($baseUrl . $path);
+        if ($result !== null) {
+            return $result;
+        }
+    }
+    return null;
+}
+
+/**
+ * 依次尝试多个 API 地址发起 POST，请求到任意一个成功即返回。
+ *
+ * @param array<int, string> $baseUrls
+ */
+function swooleApiPostAny(array $baseUrls, string $path, array $data): ?array
+{
+    foreach ($baseUrls as $baseUrl) {
+        $result = swooleApiPost($baseUrl . $path, $data);
+        if ($result !== null) {
+            return $result;
+        }
+    }
+    return null;
+}
+
+/**
+ * 兜底进程检测：与 `php swoole/server.php status` 一致，读取 PID 并检查进程是否存在。
+ */
+function swoolePidRunning(): bool
+{
+    $pidFile = EM_ROOT . '/swoole/swoole.pid';
+    if (!is_file($pidFile)) {
+        return false;
+    }
+
+    $pid = (int) trim((string) @file_get_contents($pidFile));
+    if ($pid <= 0) {
+        return false;
+    }
+
+    if (function_exists('posix_kill')) {
+        return @posix_kill($pid, 0);
+    }
+
+    // 某些 FPM 环境未启用 posix 扩展，Linux 下退化为 /proc 检查。
+    if (PHP_OS_FAMILY === 'Linux') {
+        return is_dir('/proc/' . $pid);
+    }
+    return false;
 }
