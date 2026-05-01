@@ -316,6 +316,7 @@ $needGuestFind = !empty($is_guest) && ($gfContactOn || $gfPasswordOn);
         $(document).off('.emCart');
         // 货币三要素：显示 × 符号 + 数值 × rate；送后端 AJAX 仍用主货币数值（data-price 原值）
         var CUR = (window.EMSHOP_CURRENCY || { symbol: '¥', rate: 1 });
+        var IS_GUEST = <?= !empty($is_guest) ? 'true' : 'false' ?>;
         var currencySymbol = CUR.symbol;
         function fmtMoney(mainPrice) { return (mainPrice * CUR.rate).toFixed(2); }
 
@@ -659,14 +660,16 @@ $needGuestFind = !empty($is_guest) && ($gfContactOn || $gfPasswordOn);
                 $btn.prop('disabled', false).text('去结算');
                 if (res.code === 200) {
                     updateCartBadge(0);
+                    var orderDetailUrl = '/user/order_detail.php?order_no=' + encodeURIComponent(res.data.order_no || '');
+                    var guestFindUrl = '/user/find_order.php';
                     // 余额已付 → 提示并去详情；非余额插件返回 pay_url → 跳支付页
                     if (res.data.paid) {
                         layui.layer.msg('支付成功');
-                        location.href = '/user/order_detail.php?order_no=' + res.data.order_no;
+                        location.href = IS_GUEST ? guestFindUrl : orderDetailUrl;
                     } else if (res.data.pay_url) {
                         location.href = res.data.pay_url;
                     } else {
-                        location.href = '/user/order_detail.php?order_no=' + res.data.order_no;
+                        location.href = IS_GUEST ? guestFindUrl : orderDetailUrl;
                     }
                 } else {
                     layui.layer.msg(res.msg || '下单失败');
