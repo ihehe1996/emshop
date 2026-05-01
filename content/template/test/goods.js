@@ -620,7 +620,7 @@ var GoodsDetail = (function () {
                     } else if (res.data.pay_url) {
                         location.href = res.data.pay_url;
                     } else {
-                        location.href = '/user/order_detail.php?order_no=' + res.data.order_no;
+                        layui.layer.msg('支付创建失败，请检查支付配置后重试');
                     }
                 } else {
                     layui.layer.msg(res.msg || '下单失败');
