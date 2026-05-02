@@ -64,6 +64,70 @@ addFilter('goods_type_label', function ($label, $og) {
     return $label;
 });
 
+// 发货类型展示：按导入映射里的 fulfillment_mode 动态显示（auto/manual）
+addFilter('goods_delivery_type', function ($deliveryType, $goods) {
+    if (($goods['goods_type'] ?? '') !== 'emshop_remote') {
+        return $deliveryType;
+    }
+    $cfg = $goods['configs'] ?? null;
+    if (is_string($cfg)) {
+        $decoded = json_decode($cfg, true);
+        if (is_array($decoded)) {
+            $cfg = $decoded;
+        }
+    }
+    if (!is_array($cfg)) {
+        return $deliveryType !== '' ? $deliveryType : 'manual';
+    }
+    $imp = $cfg['emshop_import'] ?? null;
+    if (!is_array($imp)) {
+        return $deliveryType !== '' ? $deliveryType : 'manual';
+    }
+    $mode = strtolower(trim((string) ($imp['fulfillment_mode'] ?? '')));
+    if ($mode === 'upstream_auto') {
+        return 'auto';
+    }
+    if ($mode === 'manual') {
+        return 'manual';
+    }
+    return $deliveryType !== '' ? $deliveryType : 'manual';
+});
+
+// 是否需要收货地址：emshop_remote 且 upstream_auto 时不需要地址，manual 仍需要。
+addFilter('goods_needs_address', function ($needsAddress, $goods) {
+    if (($goods['goods_type'] ?? '') !== 'emshop_remote') {
+        return $needsAddress;
+    }
+    $cfg = $goods['configs'] ?? null;
+    if (is_string($cfg)) {
+        $decoded = json_decode($cfg, true);
+        if (is_array($decoded)) {
+            $cfg = $decoded;
+        }
+    }
+    if (!is_array($cfg)) {
+        return $needsAddress;
+    }
+    $imp = $cfg['emshop_import'] ?? null;
+    if (!is_array($imp)) {
+        $dt = applyFilter('goods_delivery_type', 'manual', $goods);
+        if ($dt === 'auto') return false;
+        if ($dt === 'manual') return true;
+        return $needsAddress;
+    }
+    $mode = strtolower(trim((string) ($imp['fulfillment_mode'] ?? '')));
+    if ($mode === 'upstream_auto') {
+        return false;
+    }
+    if ($mode === 'manual') {
+        return true;
+    }
+    $dt = applyFilter('goods_delivery_type', 'manual', $goods);
+    if ($dt === 'auto') return false;
+    if ($dt === 'manual') return true;
+    return $needsAddress;
+});
+
 addAction('goods_type_emshop_remote_save', function ($goodsId, $postData): void {
     $goodsId = (int) $goodsId;
     if ($goodsId <= 0) {
@@ -109,4 +173,105 @@ addFilter('goods_type_emshop_remote_manual_delivery_submit', function ($_, $args
         'delivery_content' => $note,
         'plugin_data'      => ['delivery_note' => $note],
     ];
+});
+
+// 下单前校验（OrderModel::create 会统一触发）：
+// emshop_remote 不论自动/人工，统一先调上游 simulate_order，失败就拦截本地下单。
+addFilter('goods_type_emshop_remote_order_submit', function ($currentError, $ctx) {
+    if (is_string($currentError) && $currentError !== '') {
+        return $currentError;
+    }
+    $goods = $ctx['goods'] ?? [];
+    $spec = $ctx['spec'] ?? [];
+    $qty = max(1, (int) ($ctx['quantity'] ?? 1));
+    if (!is_array($goods) || !is_array($spec)) {
+        return $currentError;
+    }
+    if (($goods['goods_type'] ?? '') !== 'emshop_remote') {
+        return $currentError;
+    }
+
+    $goodsCfg = [];
+    if (!empty($goods['configs'])) {
+        $decoded = is_array($goods['configs']) ? $goods['configs'] : json_decode((string) $goods['configs'], true);
+        if (is_array($decoded)) {
+            $goodsCfg = $decoded;
+        }
+    }
+    $imp = $goodsCfg['emshop_import'] ?? [];
+    if (!is_array($imp)) {
+        return $currentError;
+    }
+
+    $siteId = (int) ($imp['remote_site_id'] ?? 0);
+    $remoteGoodsId = (int) ($imp['remote_goods_id'] ?? 0);
+    if ($siteId <= 0 || $remoteGoodsId <= 0) {
+        return '上游映射缺失：请重新导入该商品';
+    }
+    $site = \EmshopPlugin\RemoteSiteModel::find($siteId);
+    if ($site === null || (int) ($site['enabled'] ?? 0) !== 1) {
+        return '上游站点不可用：请检查对接站点状态';
+    }
+
+    $remoteSpecId = 0;
+    $specCfg = [];
+    if (!empty($spec['configs'])) {
+        $decodedSpec = is_array($spec['configs']) ? $spec['configs'] : json_decode((string) $spec['configs'], true);
+        if (is_array($decodedSpec)) {
+            $specCfg = $decodedSpec;
+        }
+    }
+    if (!empty($specCfg['emshop_import']) && is_array($specCfg['emshop_import'])) {
+        $remoteSpecId = (int) ($specCfg['emshop_import']['upstream_spec_id'] ?? 0);
+    }
+
+    $payload = [
+        'goods_id'        => $remoteGoodsId,
+        'quantity'        => $qty,
+        // 上游启用了游客查单必填时，至少给非空值避免被此类配置拦住库存/余额校验
+        'contact'         => 'emshop-precheck',
+        'order_password'  => 'emshop-precheck',
+    ];
+    if ($remoteSpecId > 0) {
+        $payload['spec_id'] = $remoteSpecId;
+    }
+
+    $cacheKey = 'emshop_sim_' . md5(json_encode([
+        'site' => $siteId,
+        'g'    => $remoteGoodsId,
+        's'    => $remoteSpecId,
+        'q'    => $qty,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+
+    $resp = class_exists('Cache') ? Cache::get($cacheKey) : null;
+    if (!is_array($resp)) {
+        try {
+            $resp = \EmshopPlugin\RemoteApiClient::apiPost(
+                (string) ($site['base_url'] ?? ''),
+                'simulate_order',
+                $payload,
+                (string) ($site['appid'] ?? ''),
+                (string) ($site['secret'] ?? '')
+            );
+            if (!is_array($resp)) {
+                $resp = ['can_order' => false, 'reason' => '上游模拟下单返回异常'];
+            }
+        } catch (\Throwable $e) {
+            $resp = [
+                'can_order' => false,
+                'reason'    => '上游模拟下单校验失败：' . $e->getMessage(),
+            ];
+        }
+        if (class_exists('Cache')) {
+            Cache::set($cacheKey, $resp, 20, 'emshop_simulate_order');
+        }
+    }
+
+    $canOrder = (bool) ($resp['can_order'] ?? false);
+    if (!$canOrder) {
+        $reason = trim((string) ($resp['reason'] ?? '上游模拟下单未通过'));
+        return $reason !== '' ? $reason : '上游模拟下单未通过';
+    }
+
+    return $currentError;
 });

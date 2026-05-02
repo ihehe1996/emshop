@@ -252,7 +252,7 @@ abstract class BaseController
             $limitTail = " LIMIT {$limit}";
         }
         $sql = "SELECT g.id, g.title, g.category_id, g.cover_images, g.min_price, g.max_price,
-                    g.total_stock, g.goods_type, g.plugin_data, g.owner_id, g.jump_url" . $selectExtra . ",
+                    g.total_stock, g.goods_type, g.plugin_data, g.configs, g.owner_id, g.jump_url" . $selectExtra . ",
                     (SELECT market_price FROM {$prefix}goods_spec
                      WHERE goods_id = g.id AND is_default = 1 AND status = 1 LIMIT 1) as default_market_price,
                     (SELECT COALESCE(SUM(sold_count), 0) FROM {$prefix}goods_spec
@@ -383,7 +383,7 @@ abstract class BaseController
 
         // 查询当前页数据
         $sql = "SELECT g.id, g.title, g.category_id, g.cover_images, g.min_price, g.max_price,
-                    g.total_stock, g.goods_type, g.plugin_data, g.owner_id, g.jump_url" . $selectExtra . ",
+                    g.total_stock, g.goods_type, g.plugin_data, g.configs, g.owner_id, g.jump_url" . $selectExtra . ",
                     (SELECT market_price FROM {$prefix}goods_spec
                      WHERE goods_id = g.id AND is_default = 1 AND status = 1 LIMIT 1) as default_market_price,
                     (SELECT COALESCE(SUM(sold_count), 0) FROM {$prefix}goods_spec

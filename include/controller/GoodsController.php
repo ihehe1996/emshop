@@ -229,12 +229,21 @@ class GoodsController extends BaseController
                 $covers = json_decode($row['cover_images'] ?? '[]', true) ?: [];
                 // 解析商品配置（满减等）
                 $configs = json_decode($row['configs'] ?? '{}', true) ?: [];
+                $defaultDeliveryType = 'manual';
+                if (!empty($row['goods_type']) && class_exists('GoodsTypeManager')) {
+                    $typeCfg = GoodsTypeManager::getTypeConfig((string) $row['goods_type']);
+                    if ($typeCfg && !empty($typeCfg['delivery_type'])) {
+                        $defaultDeliveryType = (string) $typeCfg['delivery_type'];
+                    }
+                }
+                $deliveryType = applyFilter('goods_delivery_type', $defaultDeliveryType, $row);
 
                 $stock = $defaultSpec ? (int) $defaultSpec['stock'] : (int) $row['total_stock'];
                 $goods = [
                     'id'             => (int) $row['id'],
                     'name'           => $row['title'],
                     'goods_type'     => (string) ($row['goods_type'] ?? ''),
+                    'delivery_type'  => $deliveryType,
                     'image'          => $covers[0] ?? '',
                     'images'         => $covers,
                     'price'          => $defaultSpec ? (float) $defaultSpec['price'] : (float) $row['min_price'],
@@ -290,6 +299,7 @@ class GoodsController extends BaseController
         if ($goods && !empty($goods['goods_type']) && class_exists('GoodsTypeManager')) {
             $typeCfg = GoodsTypeManager::getTypeConfig((string) $goods['goods_type']);
             $needsAddress = !empty($typeCfg['needs_address']);
+            $needsAddress = (bool) applyFilter('goods_needs_address', $needsAddress, $goods);
         }
         // 登录用户预拉地址簿，省一次 AJAX；游客走前端手填不预拉
         $userAddresses = [];

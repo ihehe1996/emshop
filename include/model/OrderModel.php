@@ -223,9 +223,34 @@ class OrderModel
             //   - 游客：从 $orderData['guest_address'] 读手填 6 字段（下单页弹出的表单），同款 JSON 快照
             //   - 所有商品都不需要地址时 → null（保持现有虚拟卡密订单不变）
             $needsAddress = false;
+            $goodsCfgCache = [];
             foreach ($orderGoodsRows as $r) {
                 $typeCfg = class_exists('GoodsTypeManager') ? GoodsTypeManager::getTypeConfig((string) ($r['goods_type'] ?? '')) : null;
-                if (!empty($typeCfg['needs_address'])) {
+                $need = !empty($typeCfg['needs_address']);
+                $cfgArr = json_decode((string) ($r['_goods_configs'] ?? '{}'), true) ?: [];
+                if ($cfgArr === []) {
+                    $gid = (int) ($r['goods_id'] ?? 0);
+                    if ($gid > 0) {
+                        if (!array_key_exists($gid, $goodsCfgCache)) {
+                            $cfgRow = Database::fetchOne(
+                                "SELECT `configs` FROM `" . Database::prefix() . "goods` WHERE `id` = ? LIMIT 1",
+                                [$gid]
+                            );
+                            $goodsCfgCache[$gid] = is_array($cfgRow)
+                                ? (json_decode((string) ($cfgRow['configs'] ?? '{}'), true) ?: [])
+                                : [];
+                        }
+                        if (is_array($goodsCfgCache[$gid]) && $goodsCfgCache[$gid] !== []) {
+                            $cfgArr = $goodsCfgCache[$gid];
+                        }
+                    }
+                }
+                $needCtx = [
+                    'goods_type' => (string) ($r['goods_type'] ?? ''),
+                    'configs'    => $cfgArr,
+                ];
+                $need = (bool) applyFilter('goods_needs_address', $need, $needCtx);
+                if ($need) {
                     $needsAddress = true;
                     break;
                 }
