@@ -87,7 +87,7 @@ if (!defined('EM_ROOT')) {
                     <button type="button" class="uc-btn uc-btn--copy" data-copy="apiGoodsListUrl" title="复制"><i class="fa fa-copy"></i></button>
                 </div>
                 <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
-                    不分页；不传筛选参数时返回当前 API 账号（主站或分站）可见且已开启 API 的商品，与商城前台商品列表未选分类时的可见范围一致。可选 <code>goods_id</code>、<code>goods_ids</code>、<code>category_id</code>、<code>category_ids</code> 等，详见接口注释。
+                    不分页；请求须发在<strong>与前台一致的域名</strong>上（主站域名见主站橱窗，店铺域名见该店橱窗）。商品范围由<strong>域名</strong>决定，与会员在哪个入口登录无关；任意已开通 API 的会员密钥均可鉴权。可选 <code>goods_id</code>、<code>goods_ids</code>、<code>category_id</code>、<code>category_ids</code> 等，详见接口注释。
                 </div>
             </div>
         </div>
