@@ -157,6 +157,23 @@ final class RemoteApiClient
     }
 
     /**
+     * @param array<string, mixed> $payload create_order 业务参数（如 goods_id/spec_id/quantity/contact...）
+     * @return array<string, mixed>
+     */
+    public static function createOrder(string $baseUrl, string $appid, string $secret, array $payload): array
+    {
+        return self::apiPost($baseUrl, 'create_order', $payload, $appid, $secret);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function queryOrder(string $baseUrl, string $appid, string $secret, string $orderNo): array
+    {
+        return self::apiPost($baseUrl, 'query_order', ['order_no' => $orderNo], $appid, $secret);
+    }
+
+    /**
      * @return string|false
      */
     private static function httpPost(string $url, string $body)

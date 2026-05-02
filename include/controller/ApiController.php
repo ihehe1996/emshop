@@ -88,6 +88,7 @@ class ApiController extends BaseController
             Response::error('goods_id 参数错误');
         }
 
+        $orderResult = [];
         try {
             $orderResult = $this->runWithMerchantScope($scope['merchant_row'], function () use (
                 $scope,
@@ -546,7 +547,7 @@ class ApiController extends BaseController
         $placeholders = implode(',', array_fill(0, count($goodsIds), '?'));
 
         $specRows = Database::query(
-            "SELECT `goods_id`, `name`, `spec_no`, `price`, `cost_price`, `market_price`, `stock`,
+            "SELECT `id`, `goods_id`, `name`, `spec_no`, `price`, `cost_price`, `market_price`, `stock`,
                     `tags`, `configs`, `min_buy`, `max_buy`, `sort`, `is_default`, `status`
              FROM `{$prefix}goods_spec`
              WHERE `goods_id` IN ({$placeholders}) AND `status` = 1
@@ -590,6 +591,7 @@ class ApiController extends BaseController
                 $cfg = [];
             }
             $out[$gid]['specs'][] = [
+                'upstream_spec_id' => (int) ($s['id'] ?? 0),
                 'name'         => (string) ($s['name'] ?? ''),
                 'spec_no'      => (string) ($s['spec_no'] ?? ''),
                 'price'        => number_format((float) GoodsModel::moneyFromDb($s['price'] ?? 0), 2, '.', ''),
