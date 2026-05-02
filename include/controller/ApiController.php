@@ -377,7 +377,7 @@ class ApiController extends BaseController
      *
      * 未传 category_id / category_ids 时：不按 category_source 做「伪全部分类」过滤；可见范围与 GoodsController::_list 未选分类一致（当前域名对应的 MerchantContext + applyMerchantScope，与会员身份无关），并叠加 goods_ids / keyword 等请求条件；另 require_api_enabled 仅保留可对接下单的商品。
      *
-     * 传 goods_id(s) 拉取明细时，每条在基础字段外附带：intro、content、cover_images（数组）、extra_fields（configs 内）、tag_names、min_buy、max_buy、upstream_goods_type（上游原始类型，仅展示/溯源）。
+     * 传 goods_id(s) 拉取明细时，每条在基础字段外附带：intro、content、cover_images（数组）、configs（完整 JSON 对象，与后台保存一致）、tag_names、min_buy、max_buy（与规格表一致，可 null）、upstream_goods_type（溯源）；另保留 extra_fields 便于旧客户端。
      */
     private function goodsList(): void
     {
@@ -464,11 +464,16 @@ class ApiController extends BaseController
         }
         $prefix = Database::prefix();
         $placeholders = implode(',', array_fill(0, count($goodsIds), '?'));
+        // 不按「必有默认规格」内连接：否则无默认行/规格停用时整商品明细丢失，导入侧简介/多图/configs 全空
         $rows = Database::query(
             "SELECT g.`id`, g.`intro`, g.`content`, g.`cover_images`, g.`configs`, g.`goods_type` AS upstream_goods_type,
-                    gs.`min_buy`, gs.`max_buy`
+                    (SELECT gs.`min_buy` FROM `{$prefix}goods_spec` gs
+                     WHERE gs.`goods_id` = g.`id` AND gs.`status` = 1
+                     ORDER BY gs.`is_default` DESC, gs.`sort` ASC, gs.`id` ASC LIMIT 1) AS `min_buy`,
+                    (SELECT gs.`max_buy` FROM `{$prefix}goods_spec` gs
+                     WHERE gs.`goods_id` = g.`id` AND gs.`status` = 1
+                     ORDER BY gs.`is_default` DESC, gs.`sort` ASC, gs.`id` ASC LIMIT 1) AS `max_buy`
              FROM `{$prefix}goods` g
-             INNER JOIN `{$prefix}goods_spec` gs ON gs.`goods_id` = g.`id` AND gs.`is_default` = 1 AND gs.`status` = 1
              WHERE g.`id` IN ({$placeholders})",
             $goodsIds
         );
@@ -507,15 +512,18 @@ class ApiController extends BaseController
                     $names[] = $n;
                 }
             }
+            $minBuy = $r['min_buy'] ?? null;
+            $maxBuy = $r['max_buy'] ?? null;
             $out[$gid] = [
-                'intro'               => (string) ($r['intro'] ?? ''),
-                'content'             => $content,
-                'cover_images'        => $covers,
-                'extra_fields'        => $extra,
-                'tag_names'           => $names,
-                'min_buy'             => max(1, (int) ($r['min_buy'] ?? 1)),
-                'max_buy'             => max(0, (int) ($r['max_buy'] ?? 0)),
-                'upstream_goods_type' => (string) ($r['upstream_goods_type'] ?? ''),
+                'intro'                => (string) ($r['intro'] ?? ''),
+                'content'              => $content,
+                'cover_images'         => $covers,
+                'configs'              => $cfg,
+                'extra_fields'         => $extra,
+                'tag_names'            => $names,
+                'min_buy'              => $minBuy !== null && $minBuy !== '' ? (int) $minBuy : null,
+                'max_buy'              => $maxBuy !== null && $maxBuy !== '' ? (int) $maxBuy : null,
+                'upstream_goods_type'  => (string) ($r['upstream_goods_type'] ?? ''),
             ];
         }
         return $out;
