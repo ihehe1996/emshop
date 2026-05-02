@@ -212,13 +212,12 @@ final class GoodsImportService
         }
         $priceRaw = GoodsModel::moneyToDb(number_format($sale, 2, '.', ''));
 
+        $coverList = self::jsonDecodeStringList($item['cover_images'] ?? null);
         $coverSources = [];
-        if (!empty($item['cover_images']) && is_array($item['cover_images'])) {
-            foreach ($item['cover_images'] as $u) {
-                $u = trim((string) $u);
-                if ($u !== '') {
-                    $coverSources[] = $u;
-                }
+        foreach ($coverList as $u) {
+            $u = trim((string) $u);
+            if ($u !== '') {
+                $coverSources[] = $u;
             }
         }
         $coverRaw = trim((string) ($item['cover_image'] ?? ''));
@@ -231,8 +230,8 @@ final class GoodsImportService
         if (function_exists('mb_strlen') && mb_strlen($intro, 'UTF-8') > 8000) {
             $intro = mb_substr($intro, 0, 8000, 'UTF-8');
         }
-        $content = (string) ($item['content'] ?? '');
-        if ($content === '') {
+        $content = array_key_exists('content', $item) ? (string) $item['content'] : '';
+        if ($content === '' && !array_key_exists('content', $item)) {
             $content = '<p>（由 EMSHOP 对接站点导入）</p>';
         }
         if (function_exists('mb_strlen') && mb_strlen($content, 'UTF-8') > 500000) {
@@ -243,20 +242,21 @@ final class GoodsImportService
         if ($upstreamType === '') {
             $upstreamType = trim((string) ($item['goods_type'] ?? ''));
         }
-        $configs = [
-            'emshop_import' => [
-                'remote_site_id'      => $siteId,
-                'remote_goods_id'       => $remoteId,
-                'upstream_goods_type'   => $upstreamType,
-            ],
-        ];
-        $extraFields = $item['extra_fields'] ?? null;
-        if (is_array($extraFields) && $extraFields !== []) {
-            $configs['extra_fields'] = $extraFields;
+        $configs = self::jsonDecodeAssoc($item['configs'] ?? null);
+        $efOnly = self::decodeExtraFieldsPayload($item['extra_fields'] ?? null);
+        if ($efOnly !== [] && empty($configs['extra_fields'])) {
+            $configs['extra_fields'] = $efOnly;
         }
+        $configs['emshop_import'] = [
+            'remote_site_id'       => $siteId,
+            'remote_goods_id'      => $remoteId,
+            'upstream_goods_type'  => $upstreamType,
+        ];
 
-        $minBuy = max(1, (int) ($item['min_buy'] ?? 1));
-        $maxBuy = max(0, (int) ($item['max_buy'] ?? 0));
+        $minBuyRaw = $item['min_buy'] ?? null;
+        $maxBuyRaw = $item['max_buy'] ?? null;
+        $specMinBuy = ($minBuyRaw === null || $minBuyRaw === '') ? null : max(1, (int) $minBuyRaw);
+        $specMaxBuy = ($maxBuyRaw === null || $maxBuyRaw === '') ? null : max(0, (int) $maxBuyRaw);
 
         // 独立商品类型：发货走 goods_type_emshop_remote_order_paid，避免误用 virtual_card / physical 的卡密与运费逻辑
         $goodsType = 'emshop_remote';
@@ -268,7 +268,7 @@ final class GoodsImportService
             'intro'         => $intro,
             'content'       => $content,
             'goods_type'    => $goodsType,
-            'configs'       => json_encode($configs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'configs'       => $configs !== [] ? json_encode($configs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
             'is_on_sale'    => 1,
             'status'        => 1,
             'unit'          => '个',
@@ -286,20 +286,25 @@ final class GoodsImportService
 
         $stock = max(0, (int) ($item['stock'] ?? 0));
 
-        Database::insert('goods_spec', [
+        $specRow = [
             'goods_id'   => $goodsId,
             'name'       => '默认规格',
             'price'      => $priceRaw,
             'stock'      => $stock,
-            'min_buy'    => $minBuy,
-            'max_buy'    => $maxBuy,
             'sort'       => 0,
             'is_default' => 1,
             'status'     => 1,
-        ]);
+        ];
+        if ($specMinBuy !== null) {
+            $specRow['min_buy'] = $specMinBuy;
+        }
+        if ($specMaxBuy !== null) {
+            $specRow['max_buy'] = $specMaxBuy;
+        }
+        Database::insert('goods_spec', $specRow);
 
-        $tagNames = $item['tag_names'] ?? null;
-        if (is_array($tagNames) && $tagNames !== []) {
+        $tagNames = self::jsonDecodeStringList($item['tag_names'] ?? null);
+        if ($tagNames !== []) {
             $tagIds = [];
             foreach ($tagNames as $nm) {
                 $nm = trim((string) $nm);
@@ -314,6 +319,81 @@ final class GoodsImportService
 
         doAction('goods_type_emshop_remote_save', $goodsId, ['plugin_data' => []]);
         GoodsModel::updatePriceStockCache($goodsId);
+    }
+
+    /** @param mixed $v 上游 JSON 可能二次编码为字符串 */
+    private static function jsonDecodeFlexible($v)
+    {
+        if (is_array($v)) {
+            return $v;
+        }
+        if (!is_string($v)) {
+            return null;
+        }
+        $s = trim($v);
+        if ($s === '') {
+            return null;
+        }
+        $decoded = json_decode($s, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return null;
+        }
+        if (is_string($decoded)) {
+            $decoded2 = json_decode($decoded, true);
+            if (json_last_error() === JSON_ERROR_NONE && $decoded2 !== null) {
+                return $decoded2;
+            }
+        }
+        return $decoded;
+    }
+
+    /** @param mixed $v @return array<string, mixed> */
+    private static function jsonDecodeAssoc($v): array
+    {
+        $x = self::jsonDecodeFlexible($v);
+        return is_array($x) ? $x : [];
+    }
+
+    /** @param mixed $v @return list<string> */
+    private static function jsonDecodeStringList($v): array
+    {
+        $x = self::jsonDecodeFlexible($v);
+        if ($x === null) {
+            return [];
+        }
+        if (is_string($x)) {
+            $t = trim($x);
+            return $t !== '' ? [$t] : [];
+        }
+        if (!is_array($x)) {
+            return [];
+        }
+        $out = [];
+        foreach ($x as $e) {
+            if (is_string($e) || is_numeric($e)) {
+                $t = trim((string) $e);
+                if ($t !== '') {
+                    $out[] = $t;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** 与后台 goods_edit 的 extra_fields 行结构一致（数组的数组） */
+    private static function decodeExtraFieldsPayload($v): array
+    {
+        $x = self::jsonDecodeFlexible($v);
+        if (!is_array($x)) {
+            return [];
+        }
+        $out = [];
+        foreach ($x as $row) {
+            if (is_array($row)) {
+                $out[] = $row;
+            }
+        }
+        return $out;
     }
 
     /**

@@ -119,6 +119,9 @@ final class RemoteApiClient
         if ($raw === '' || $raw === false) {
             throw new \RuntimeException('对方接口无响应或网络失败');
         }
+        // if($act == 'goods_category'){
+        //     echo $raw; die;
+        // }
         $json = json_decode($raw, true);
         if (!is_array($json)) {
             throw new \RuntimeException('对方返回非 JSON');
