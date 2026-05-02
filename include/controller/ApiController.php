@@ -375,7 +375,8 @@ class ApiController extends BaseController
      *   category_source = main|merchant（有 category_id 或 category_ids 时生效，默认 main）
      *   keyword         标题/简介模糊
      *
-     * 不传 goods_id(s)、category_id、keyword 时：返回当前账号可见范围内全部已开启 API 对接的商品。
+     * 不传 goods_id(s)、category_id(s)、keyword 时：返回当前账号可见范围内全部已开启 API 对接的商品；
+     * 与 GoodsController 列表一致，会按主站/商户目录体系（category_source）过滤，避免主站货与分站自建类目串数据。
      */
     private function goodsList(): void
     {
@@ -409,6 +410,11 @@ class ApiController extends BaseController
         $keyword = trim((string) ($params['keyword'] ?? ''));
         if ($keyword !== '') {
             $where['keyword'] = $keyword;
+        }
+
+        // 无分类、无按 id 精确拉取时（含关键词搜索）：按主站/商户商品目录体系统一 category_source（与前台列表/侧边栏口径一致）
+        if ($goodsIds === [] && empty($where['category_id']) && empty($where['category_ids'])) {
+            $where['api_enforce_scope_catalog'] = true;
         }
 
         $rows = $this->runWithMerchantScope($scope['merchant_row'], function () use ($where) {
