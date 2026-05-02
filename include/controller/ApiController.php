@@ -316,8 +316,8 @@ class ApiController extends BaseController
     private function goodsCategory(): void
     {
         $params = $this->requestParams();
-        $apiUser = $this->authUser($params);
-        $scope = $this->resolveScope($apiUser);
+        $this->authUser($params);
+        $scope = $this->resolveGoodsApiHostScope();
 
         $prefix = Database::prefix();
         $merchantId = (int) ($scope['merchant_id'] ?? 0);
@@ -375,13 +375,13 @@ class ApiController extends BaseController
      *   category_source = main|merchant（有 category_id 或 category_ids 时生效，默认 main）
      *   keyword         标题/简介模糊
      *
-     * 未传 category_id / category_ids 时：不按 category_source 做「伪全部分类」过滤；可见范围与 GoodsController::_list 未选分类一致（resolveScope + applyMerchantScope），并叠加 goods_ids / keyword 等请求条件；另 require_api_enabled 仅保留可对接下单的商品。
+     * 未传 category_id / category_ids 时：不按 category_source 做「伪全部分类」过滤；可见范围与 GoodsController::_list 未选分类一致（当前域名对应的 MerchantContext + applyMerchantScope，与会员身份无关），并叠加 goods_ids / keyword 等请求条件；另 require_api_enabled 仅保留可对接下单的商品。
      */
     private function goodsList(): void
     {
         $params = $this->requestParams();
-        $apiUser = $this->authUser($params);
-        $scope = $this->resolveScope($apiUser);
+        $this->authUser($params);
+        $scope = $this->resolveGoodsApiHostScope();
 
         $where = [
             'require_api_enabled' => true,
@@ -625,6 +625,48 @@ class ApiController extends BaseController
             'merchant_id'  => $merchantId,
             'owner_id'     => (int) ($apiUser['id'] ?? 0),
             'merchant_row' => $merchant,
+        ];
+    }
+
+    /**
+     * goods_category / goods_list 的可见域：仅由当前请求域名解析决定（同 init 里 MerchantContext::resolve），
+     * 与会员账号是否「绑定店铺」无关；会员仅作鉴权（appid + SECRET）。
+     * 主站域名 → 主站橱窗；店铺域名 → 该店橱窗（与游客访问该域名所见一致）。
+     *
+     * @return array{merchant_id:int,owner_id:int,merchant_row:?array}
+     */
+    private function resolveGoodsApiHostScope(): array
+    {
+        if (!class_exists('MerchantContext')) {
+            return [
+                'merchant_id'  => 0,
+                'owner_id'     => 0,
+                'merchant_row' => null,
+            ];
+        }
+
+        $hostMerchantId = MerchantContext::currentId();
+        if ($hostMerchantId <= 0) {
+            return [
+                'merchant_id'  => 0,
+                'owner_id'     => 0,
+                'merchant_row' => null,
+            ];
+        }
+
+        $hostRow = MerchantContext::current();
+        if ($hostRow === null || (int) ($hostRow['id'] ?? 0) !== $hostMerchantId) {
+            return [
+                'merchant_id'  => 0,
+                'owner_id'     => 0,
+                'merchant_row' => null,
+            ];
+        }
+
+        return [
+            'merchant_id'  => $hostMerchantId,
+            'owner_id'     => (int) ($hostRow['user_id'] ?? 0),
+            'merchant_row' => $hostRow,
         ];
     }
 
