@@ -167,8 +167,7 @@ abstract class BaseController
     /**
      * 查询前台商品列表（已上架、未删除，字段映射为模板格式）。
      *
-     * @param array  $where 筛选：category_id / is_recommended / keyword；可选 require_api_enabled、goods_ids、no_limit、
-     *                    api_enforce_scope_catalog（与 GoodsController 列表一致：无分类条件时按主站/商户目录体系统一 category_source）
+     * @param array  $where 筛选：category_id / is_recommended / keyword；可选 require_api_enabled、goods_ids、no_limit
      * @param int    $limit 条数（no_limit 为 true 时忽略）
      * @param string $orderBy 排序
      * @return array<array{id:int, name:string, price:float, original_price:float|null}>
@@ -204,15 +203,6 @@ abstract class BaseController
                 $conditions[] = "g.category_source = 'merchant'";
             } else {
                 $conditions[] = "(g.category_source = 'main' OR g.category_source = '' OR g.category_source IS NULL)";
-            }
-        } elseif (!empty($where['api_enforce_scope_catalog']) && class_exists('MerchantContext')) {
-            // 无 category 条件时与前台列表语义对齐（参见 GoodsController::_list + getGoodsSidebarData 对主站/商户商品的划分）
-            $merchantId = MerchantContext::currentId();
-            if ($merchantId <= 0) {
-                $conditions[] = "(g.category_source = 'main' OR g.category_source = '' OR g.category_source IS NULL)";
-            } else {
-                // 分站：主站引用货只出现在主站分类体系；本店自建货走商户分类（owner_id 已由 applyMerchantScope 限制）
-                $conditions[] = '(g.owner_id <> 0 OR (g.category_source = \'main\' OR g.category_source = \'\' OR g.category_source IS NULL))';
             }
         }
         if (!empty($where['goods_ids']) && is_array($where['goods_ids'])) {
@@ -354,13 +344,6 @@ abstract class BaseController
                 $conditions[] = "g.category_source = 'merchant'";
             } else {
                 $conditions[] = "(g.category_source = 'main' OR g.category_source = '' OR g.category_source IS NULL)";
-            }
-        } elseif (!empty($where['api_enforce_scope_catalog']) && class_exists('MerchantContext')) {
-            $merchantId = MerchantContext::currentId();
-            if ($merchantId <= 0) {
-                $conditions[] = "(g.category_source = 'main' OR g.category_source = '' OR g.category_source IS NULL)";
-            } else {
-                $conditions[] = '(g.owner_id <> 0 OR (g.category_source = \'main\' OR g.category_source = \'\' OR g.category_source IS NULL))';
             }
         }
         if (!empty($where['is_recommended'])) {
