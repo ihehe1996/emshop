@@ -376,6 +376,8 @@ class ApiController extends BaseController
      *   keyword         标题/简介模糊
      *
      * 未传 category_id / category_ids 时：不按 category_source 做「伪全部分类」过滤；可见范围与 GoodsController::_list 未选分类一致（当前域名对应的 MerchantContext + applyMerchantScope，与会员身份无关），并叠加 goods_ids / keyword 等请求条件；另 require_api_enabled 仅保留可对接下单的商品。
+     *
+     * 传 goods_id(s) 拉取明细时，每条在基础字段外附带：intro、content、cover_images（数组）、extra_fields（configs 内）、tag_names、min_buy、max_buy、upstream_goods_type（上游原始类型，仅展示/溯源）。
      */
     private function goodsList(): void
     {
@@ -415,10 +417,13 @@ class ApiController extends BaseController
             return $this->queryGoodsList($where, 1, 'g.sort ASC, g.id DESC');
         });
 
+        $importExtras = $goodsIds !== [] ? $this->fetchGoodsListImportExtras($goodsIds) : [];
+
         $outList = [];
         foreach ($rows as $row) {
-            $outList[] = [
-                'goods_id'        => (int) ($row['id'] ?? 0),
+            $gid = (int) ($row['id'] ?? 0);
+            $item = [
+                'goods_id'        => $gid,
                 'title'           => (string) ($row['name'] ?? ''),
                 'cover_image'     => (string) ($row['image'] ?? ''),
                 'min_price'       => number_format((float) ($row['price'] ?? 0), 2, '.', ''),
@@ -433,12 +438,87 @@ class ApiController extends BaseController
                 'jump_url'        => (string) ($row['jump_url'] ?? ''),
                 'category_id'     => (int) ($row['category_id'] ?? 0),
             ];
+            if ($gid > 0 && isset($importExtras[$gid])) {
+                $item = array_merge($item, $importExtras[$gid]);
+            }
+            $outList[] = $item;
         }
 
         Response::success('', [
             'list'  => $outList,
             'total' => count($outList),
         ]);
+    }
+
+    /**
+     * goods_list 在按 goods_ids 拉取时附带的导入用字段（需在主库再查一次完整商品行）。
+     *
+     * @param list<int> $goodsIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetchGoodsListImportExtras(array $goodsIds): array
+    {
+        $goodsIds = array_values(array_unique(array_filter(array_map('intval', $goodsIds))));
+        if ($goodsIds === []) {
+            return [];
+        }
+        $prefix = Database::prefix();
+        $placeholders = implode(',', array_fill(0, count($goodsIds), '?'));
+        $rows = Database::query(
+            "SELECT g.`id`, g.`intro`, g.`content`, g.`cover_images`, g.`configs`, g.`goods_type` AS upstream_goods_type,
+                    gs.`min_buy`, gs.`max_buy`
+             FROM `{$prefix}goods` g
+             INNER JOIN `{$prefix}goods_spec` gs ON gs.`goods_id` = g.`id` AND gs.`is_default` = 1 AND gs.`status` = 1
+             WHERE g.`id` IN ({$placeholders})",
+            $goodsIds
+        );
+        $tagMap = class_exists('GoodsTagModel') ? GoodsTagModel::getTagsByGoodsIds($goodsIds) : [];
+        $out = [];
+        foreach ($rows as $r) {
+            $gid = (int) ($r['id'] ?? 0);
+            if ($gid <= 0) {
+                continue;
+            }
+            $content = (string) ($r['content'] ?? '');
+            if (function_exists('mb_strlen') && mb_strlen($content, 'UTF-8') > 500000) {
+                $content = mb_substr($content, 0, 500000, 'UTF-8');
+            } elseif (strlen($content) > 500000) {
+                $content = substr($content, 0, 500000);
+            }
+            $covers = json_decode((string) ($r['cover_images'] ?? '[]'), true);
+            if (!is_array($covers)) {
+                $covers = [];
+            }
+            $covers = array_values(array_filter($covers, static function ($u) {
+                return trim((string) $u) !== '';
+            }));
+            $cfg = json_decode((string) ($r['configs'] ?? '{}'), true);
+            if (!is_array($cfg)) {
+                $cfg = [];
+            }
+            $extra = $cfg['extra_fields'] ?? [];
+            if (!is_array($extra)) {
+                $extra = [];
+            }
+            $names = [];
+            foreach ($tagMap[$gid] ?? [] as $t) {
+                $n = trim((string) ($t['name'] ?? ''));
+                if ($n !== '') {
+                    $names[] = $n;
+                }
+            }
+            $out[$gid] = [
+                'intro'               => (string) ($r['intro'] ?? ''),
+                'content'             => $content,
+                'cover_images'        => $covers,
+                'extra_fields'        => $extra,
+                'tag_names'           => $names,
+                'min_buy'             => max(1, (int) ($r['min_buy'] ?? 1)),
+                'max_buy'             => max(0, (int) ($r['max_buy'] ?? 0)),
+                'upstream_goods_type' => (string) ($r['upstream_goods_type'] ?? ''),
+            ];
+        }
+        return $out;
     }
 
     /**
