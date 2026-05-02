@@ -167,8 +167,8 @@ abstract class BaseController
     /**
      * 查询前台商品列表（已上架、未删除，字段映射为模板格式）。
      *
-     * @param array  $where 筛选：category_id / is_recommended / keyword
-     * @param int    $limit 条数
+     * @param array  $where 筛选：category_id / is_recommended / keyword；可选 require_api_enabled、goods_ids、no_limit
+     * @param int    $limit 条数（no_limit 为 true 时忽略）
      * @param string $orderBy 排序
      * @return array<array{id:int, name:string, price:float, original_price:float|null}>
      */
@@ -181,6 +181,10 @@ abstract class BaseController
         $joinParams = [];
         $whereParams = [];
         $join = '';
+
+        if (!empty($where['require_api_enabled'])) {
+            $conditions[] = '(g.api_enabled IS NULL OR g.api_enabled = 1)';
+        }
 
         if (!empty($where['category_ids']) && is_array($where['category_ids'])) {
             $placeholders = implode(',', array_fill(0, count($where['category_ids']), '?'));
@@ -199,6 +203,23 @@ abstract class BaseController
                 $conditions[] = "g.category_source = 'merchant'";
             } else {
                 $conditions[] = "(g.category_source = 'main' OR g.category_source = '' OR g.category_source IS NULL)";
+            }
+        }
+        if (!empty($where['goods_ids']) && is_array($where['goods_ids'])) {
+            $idList = [];
+            foreach ($where['goods_ids'] as $gid) {
+                $gid = (int) $gid;
+                if ($gid > 0) {
+                    $idList[$gid] = true;
+                }
+            }
+            $idList = array_keys($idList);
+            if ($idList !== []) {
+                $placeholders = implode(',', array_fill(0, count($idList), '?'));
+                $conditions[] = "g.id IN ({$placeholders})";
+                foreach ($idList as $gid) {
+                    $whereParams[] = $gid;
+                }
             }
         }
         if (!empty($where['is_recommended'])) {
@@ -225,6 +246,11 @@ abstract class BaseController
 
         $params = array_merge($joinParams, $whereParams);
         $whereSql = implode(' AND ', $conditions);
+        $limitTail = '';
+        if (empty($where['no_limit'])) {
+            $limit = max(1, $limit);
+            $limitTail = " LIMIT {$limit}";
+        }
         $sql = "SELECT g.id, g.title, g.cover_images, g.min_price, g.max_price,
                     g.total_stock, g.goods_type, g.plugin_data, g.owner_id, g.jump_url" . $selectExtra . ",
                     (SELECT market_price FROM {$prefix}goods_spec
@@ -233,8 +259,7 @@ abstract class BaseController
                      WHERE goods_id = g.id AND status = 1) as total_sold
                 FROM {$prefix}goods g{$join}
                 WHERE {$whereSql}
-                ORDER BY {$orderBy}
-                LIMIT {$limit}";
+                ORDER BY {$orderBy}{$limitTail}";
 
         $rows = Database::query($sql, $params);
         $list = [];
@@ -281,7 +306,7 @@ abstract class BaseController
     /**
      * 分页查询前台商品列表。
      *
-     * @param array  $where   筛选条件
+     * @param array  $where   筛选条件；可选 require_api_enabled=true 仅保留 api_enabled 为 1 或 NULL 的商品
      * @param int    $page    当前页码（从1开始）
      * @param int    $perPage 每页条数
      * @param string $orderBy 排序
@@ -295,6 +320,11 @@ abstract class BaseController
         $joinParams = [];
         $whereParams = [];
         $join = '';
+
+        // 外部 API 商品列表：仅展示允许 API 下单的商品（与 ApiController::createOrder 一致）
+        if (!empty($where['require_api_enabled'])) {
+            $conditions[] = '(g.api_enabled IS NULL OR g.api_enabled = 1)';
+        }
 
         if (!empty($where['category_ids']) && is_array($where['category_ids'])) {
             $placeholders = implode(',', array_fill(0, count($where['category_ids']), '?'));

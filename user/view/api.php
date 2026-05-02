@@ -59,6 +59,53 @@ if (!defined('EM_ROOT')) {
             </div>
         </div>
     </div>
+
+    <div class="uc-form-card" style="margin-top:16px;">
+        <div class="uc-form-group">
+            <label class="uc-form-label">下单接口</label>
+            <div class="uc-form-control">
+                <div class="uc-api-field">
+                    <input type="text" class="uc-input uc-input--readonly" id="apiCreateOrderUrl" value="<?= htmlspecialchars($apiUrl . '?c=api&act=create_order') ?>" readonly>
+                    <button type="button" class="uc-btn uc-btn--copy" data-copy="apiCreateOrderUrl" title="复制"><i class="fa fa-copy"></i></button>
+                </div>
+            </div>
+        </div>
+        <div class="uc-form-group">
+            <label class="uc-form-label">查单接口</label>
+            <div class="uc-form-control">
+                <div class="uc-api-field">
+                    <input type="text" class="uc-input uc-input--readonly" id="apiQueryOrderUrl" value="<?= htmlspecialchars($apiUrl . '?c=api&act=query_order') ?>" readonly>
+                    <button type="button" class="uc-btn uc-btn--copy" data-copy="apiQueryOrderUrl" title="复制"><i class="fa fa-copy"></i></button>
+                </div>
+            </div>
+        </div>
+        <div class="uc-form-group">
+            <label class="uc-form-label">商品列表接口</label>
+            <div class="uc-form-control">
+                <div class="uc-api-field">
+                    <input type="text" class="uc-input uc-input--readonly" id="apiGoodsListUrl" value="<?= htmlspecialchars($apiUrl . '?c=api&act=goods_list') ?>" readonly>
+                    <button type="button" class="uc-btn uc-btn--copy" data-copy="apiGoodsListUrl" title="复制"><i class="fa fa-copy"></i></button>
+                </div>
+                <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
+                    不分页；不传筛选参数则返回全部已开启 API 的商品。可选 <code>goods_id</code>、<code>goods_ids</code>（逗号或 JSON 数组）、<code>category_id</code> 等，详见接口注释。
+                </div>
+            </div>
+        </div>
+        <div class="uc-form-group">
+            <label class="uc-form-label">签名规则</label>
+            <div class="uc-form-control">
+                <div class="uc-form-hint" style="line-height:1.8;">
+                    1. 参与签名参数按参数名升序排序，排除 <code>sign</code> / <code>sign_type</code> / 空值。<br>
+                    2. 拼接为 <code>key=value&key2=value2...</code> 后，末尾追加 <code>SECRET</code>。<br>
+                    3. 计算 <code>md5(拼接串 + SECRET)</code>，转小写得到 <code>sign</code>。<br>
+                    4. 必传鉴权参数：<code>appid</code>、<code>timestamp</code>、<code>sign</code>（可选 <code>sign_type=MD5</code>）。
+                </div>
+                <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
+                    下单接口将<strong>直接扣除对接账号余额</strong>完成支付，不走第三方支付收银台，不需要传 <code>payment_code</code>。
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>

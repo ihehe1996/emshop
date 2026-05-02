@@ -57,6 +57,7 @@ final class Dispatcher
         'rebate' => true,
         'recharge' => true,
         'withdraw' => true,
+        'api' => true,
     ];
 
     /** 博客模式默认控制器 */
@@ -93,6 +94,7 @@ final class Dispatcher
         'rebate'      => 'Rebate',
         'recharge'    => 'Recharge',
         'withdraw'    => 'Withdraw',
+        'api'         => 'Api',
     ];
 
     /** @var Dispatcher */

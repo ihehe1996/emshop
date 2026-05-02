@@ -1,0 +1,711 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * 外部下单 API 控制器。
+ *
+ * 路由：/?c=api&act=create_order   (POST)
+ *       /?c=api&act=query_order    (GET/POST)
+ *       /?c=api&act=base_info      (GET/POST)
+ *       /?c=api&act=goods_category (GET/POST)
+ *       /?c=api&act=goods_list      (GET/POST，不分页；可选 goods_id / goods_ids / category_id)
+ *
+ * 鉴权参数（所有 act 通用）：
+ *   appid      = user.id
+ *   timestamp  = UNIX 时间戳（秒）
+ *   sign       = md5(按参数名排序后的 key=value&... + SECRET)，排除 sign/sign_type 和空值
+ */
+class ApiController extends BaseController
+{
+    /** 签名有效期（秒） */
+    private const SIGN_TTL = 600;
+
+    public function _index(): void
+    {
+        $act = trim((string) (Input::post('act', '') ?: Input::get('act', '')));
+        if ($act === '') {
+            Response::error('缺少 act 参数');
+        }
+
+        switch ($act) {
+            case 'create_order':
+                $this->createOrder();
+                return;
+            case 'query_order':
+                $this->queryOrder();
+                return;
+            case 'base_info':
+            case 'get_base_info':
+                $this->baseInfo();
+                return;
+            case 'goods_category':
+            case 'goods_categories':
+            case 'get_goods_category':
+                $this->goodsCategory();
+                return;
+            case 'goods_list':
+            case 'get_goods_list':
+                $this->goodsList();
+                return;
+            default:
+                Response::error('未知 act');
+        }
+    }
+
+    /**
+     * 创建订单（外部下单）。
+     *
+     * 必填：
+     *   appid, timestamp, sign, goods_id, quantity
+     *
+     * 可选：
+     *   spec_id
+     *   coupon_code
+     *   guest_find_contact_query / contact
+     *   guest_find_password_query / order_password
+     *   attach
+     *   extra_json（JSON 对象，附加字段键值）
+     *   extra_{name}（附加字段，和 extra_json 二选一或混用）
+     *   address_json（JSON：recipient/mobile/province/city/district/detail）
+     */
+    private function createOrder(): void
+    {
+        if (!Request::isPost()) {
+            Response::error('create_order 仅支持 POST 请求');
+        }
+
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+        $scope = $this->resolveScope($apiUser);
+
+        $goodsId = (int) ($params['goods_id'] ?? 0);
+        $specId = (int) ($params['spec_id'] ?? 0);
+        $quantity = max(1, (int) ($params['quantity'] ?? 1));
+        $couponCode = trim((string) ($params['coupon_code'] ?? ''));
+
+        if ($goodsId <= 0) {
+            Response::error('goods_id 参数错误');
+        }
+
+        try {
+            $orderResult = $this->runWithMerchantScope($scope['merchant_row'], function () use (
+                $scope,
+                $apiUser,
+                $params,
+                $goodsId,
+                $specId,
+                $quantity,
+                $couponCode
+            ) {
+            $goods = GoodsModel::getById($goodsId);
+            if (!$goods
+                || (int) ($goods['status'] ?? 0) !== 1
+                || (int) ($goods['is_on_sale'] ?? 0) !== 1
+                || ($goods['deleted_at'] ?? null) !== null
+            ) {
+                throw new RuntimeException('商品不存在或已下架');
+            }
+
+            // 主站 API 只能下主站商品；商户 API 只能下本店可见商品（GoodsModel::getById 在商户 scope 已过滤）
+            if ((int) $scope['merchant_id'] === 0 && (int) ($goods['owner_id'] ?? 0) !== 0) {
+                throw new RuntimeException('该商品不支持当前 API 账号下单');
+            }
+
+            // API 开关：字段不存在则兼容为开启；存在时必须=1
+            if (array_key_exists('api_enabled', $goods) && (int) ($goods['api_enabled'] ?? 0) !== 1) {
+                throw new RuntimeException('该商品未开启 API 对接下单');
+            }
+
+            $allSpecs = GoodsModel::getSpecsByGoodsId((int) $goods['id']);
+            if ($allSpecs === []) {
+                throw new RuntimeException('商品规格不存在');
+            }
+
+            if (count($allSpecs) > 1 && $specId <= 0) {
+                throw new RuntimeException('该商品为多规格，请传 spec_id');
+            }
+
+            $pickedSpec = null;
+            foreach ($allSpecs as $s) {
+                if ((int) ($s['id'] ?? 0) === $specId) {
+                    $pickedSpec = $s;
+                    break;
+                }
+            }
+            if ($pickedSpec === null) {
+                $pickedSpec = $allSpecs[0];
+                $specId = (int) ($pickedSpec['id'] ?? 0);
+            }
+
+            $extraFields = $this->collectExtraFields($goods, $params);
+
+            $contactQuery = trim((string) ($params['guest_find_contact_query'] ?? $params['contact'] ?? ''));
+            $orderPassword = trim((string) ($params['guest_find_password_query'] ?? $params['order_password'] ?? ''));
+
+            if (GuestFindModel::isContactEnabled() && $contactQuery === '') {
+                throw new RuntimeException('请传 ' . GuestFindModel::getContactTypeLabel());
+            }
+            if (GuestFindModel::isPasswordEnabled() && $orderPassword === '') {
+                throw new RuntimeException('请传订单密码');
+            }
+
+            $guestAddress = $this->parseGuestAddress($params);
+
+            $createData = [
+                'user_id'             => 0, // 外部接口默认游客单
+                'guest_token'         => 'api_' . substr(md5((string) $apiUser['id'] . '|' . microtime(true) . '|' . random_int(1000, 9999)), 0, 32),
+                'merchant_id'         => (int) $scope['merchant_id'],
+                'owner_id'            => (int) $scope['owner_id'],
+                // API 对接单固定走"对接人余额支付"；不走第三方收银台
+                'payment_code'        => 'balance',
+                'payment_name'        => '余额支付',
+                'payment_plugin'      => 'built-in',
+                'payment_plugin_name' => '内置',
+                'payment_channel'     => 'balance',
+                'source'              => 'api',
+                'guest_address'       => $guestAddress,
+            ];
+
+            if ($contactQuery !== '') {
+                if ($extraFields !== []) {
+                    $extraFields['guest_find_contact'] = $contactQuery;
+                } else {
+                    $createData['contact_info'] = $contactQuery;
+                }
+            }
+            if ($extraFields !== []) {
+                $attach = trim((string) ($params['attach'] ?? ''));
+                if ($attach !== '') {
+                    $extraFields['api_attach'] = $attach;
+                }
+                $createData['contact_info'] = $extraFields;
+            }
+            if ($orderPassword !== '') {
+                $createData['order_password'] = $orderPassword;
+            }
+
+            // 可选优惠券
+            if ($couponCode !== '') {
+                $couponService = new CouponService();
+                $goodsAmountRaw = ((int) ($pickedSpec['price_raw'] ?? 0)) * $quantity;
+                $checkRes = $couponService->check($couponCode, [
+                    'goods_amount_raw' => $goodsAmountRaw,
+                    'goods_items'      => [[
+                        'goods_id'    => (int) $goods['id'],
+                        'category_id' => (int) ($goods['category_id'] ?? 0),
+                        'goods_type'  => (string) ($goods['goods_type'] ?? ''),
+                    ]],
+                    'user_id'          => 0,
+                ]);
+                $createData['coupon'] = $checkRes['coupon'];
+                $createData['coupon_discount'] = (int) $checkRes['discount_raw'];
+            }
+
+            $result = OrderModel::create($createData, [[
+                'goods_id'  => (int) $goods['id'],
+                'spec_id'   => $specId,
+                'quantity'  => $quantity,
+            ]]);
+
+            // 下单后立即扣 API 对接人的余额并支付，不返回支付方式链接
+            if ((int) ($result['pay_amount'] ?? 0) <= 0) {
+                OrderModel::payFreeOrder((int) $result['order_id']);
+            } else {
+                try {
+                    OrderModel::payWithBalance((int) $result['order_id'], (int) $apiUser['id']);
+                } catch (Throwable $payErr) {
+                    // 支付失败的 API 单标记 failed，避免残留 pending 单
+                    try {
+                        OrderModel::changeStatus((int) $result['order_id'], 'failed');
+                    } catch (Throwable $_) {
+                    }
+                    throw $payErr;
+                }
+            }
+
+            return [
+                'order_id'   => (int) $result['order_id'],
+                'order_no'   => (string) $result['order_no'],
+                'pay_amount' => bcdiv((string) $result['pay_amount'], '1000000', 2),
+                'paid'       => true,
+                'pay_url'    => '',
+                'qrcode'     => '',
+            ];
+            });
+        } catch (RuntimeException $e) {
+            Response::error($e->getMessage());
+        } catch (Throwable $e) {
+            Response::error('下单失败，请稍后重试');
+        }
+
+        Response::success('下单成功', $orderResult);
+    }
+
+    /**
+     * 查询订单（外部查单）。
+     *
+     * 必填：appid, timestamp, sign, order_no
+     */
+    private function queryOrder(): void
+    {
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+        $scope = $this->resolveScope($apiUser);
+
+        $orderNo = trim((string) ($params['order_no'] ?? ''));
+        if ($orderNo === '') {
+            Response::error('order_no 不能为空');
+        }
+
+        $order = OrderModel::getByOrderNo($orderNo);
+        if ($order === null) {
+            Response::error('订单不存在');
+        }
+
+        // 订单归属校验：防止跨商户/跨主站查询
+        $merchantId = (int) ($order['merchant_id'] ?? 0);
+        $ownerId = (int) ($order['owner_id'] ?? 0);
+        if ($merchantId !== (int) $scope['merchant_id'] || $ownerId !== (int) $scope['owner_id']) {
+            Response::error('无权查询该订单');
+        }
+
+        Response::success('', [
+            'order_no'          => (string) $order['order_no'],
+            'status'            => (string) $order['status'],
+            'status_name'       => OrderModel::statusName((string) $order['status']),
+            'pay_amount'        => bcdiv((string) ($order['pay_amount'] ?? 0), '1000000', 2),
+            'payment_code'      => (string) ($order['payment_code'] ?? ''),
+            'payment_name'      => (string) ($order['payment_name'] ?? ''),
+            'created_at'        => (string) ($order['created_at'] ?? ''),
+            'pay_time'          => (string) ($order['pay_time'] ?? ''),
+            'delivery_time'     => (string) ($order['delivery_time'] ?? ''),
+            'complete_time'     => (string) ($order['complete_time'] ?? ''),
+        ]);
+    }
+
+    /**
+     * 获取基础信息。
+     *
+     * 必填：appid, timestamp, sign
+     */
+    private function baseInfo(): void
+    {
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+
+        $siteName = trim((string) Config::get('sitename', 'EMSHOP'));
+        if ($siteName === '') {
+            $siteName = 'EMSHOP';
+        }
+
+        Response::success('', [
+            'site_name' => $siteName,
+            'account'   => (string) ($apiUser['username'] ?? ''),
+            'email'     => (string) ($apiUser['email'] ?? ''),
+            'mobile'    => (string) ($apiUser['mobile'] ?? ''),
+            'balance'   => bcdiv((string) ($apiUser['money'] ?? 0), '1000000', 2),
+        ]);
+    }
+
+    /**
+     * 获取商品分类。
+     *
+     * 必填：appid, timestamp, sign
+     */
+    private function goodsCategory(): void
+    {
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+        $scope = $this->resolveScope($apiUser);
+
+        $prefix = Database::prefix();
+        $merchantId = (int) ($scope['merchant_id'] ?? 0);
+
+        if ($merchantId > 0) {
+            $rows = Database::query(
+                "SELECT c.`id`, c.`parent_id`,
+                        CASE
+                            WHEN mcm.`alias_name` IS NULL OR mcm.`alias_name` = '' THEN c.`name`
+                            ELSE mcm.`alias_name`
+                        END AS `name`,
+                        c.`cover_image`
+                 FROM `{$prefix}goods_category` c
+                 LEFT JOIN `{$prefix}merchant_category_map` mcm
+                        ON mcm.`master_category_id` = c.`id` AND mcm.`merchant_id` = ?
+                 WHERE c.`status` = 1
+                   AND (mcm.`is_hidden` IS NULL OR mcm.`is_hidden` = 0)
+                 ORDER BY c.`parent_id` ASC, c.`sort` ASC, c.`id` ASC",
+                [$merchantId]
+            );
+        } else {
+            $rows = Database::query(
+                "SELECT `id`, `parent_id`, `name`, `cover_image`
+                 FROM `{$prefix}goods_category`
+                 WHERE `status` = 1
+                 ORDER BY `parent_id` ASC, `sort` ASC, `id` ASC"
+            );
+        }
+
+        $list = [];
+        foreach ($rows as $row) {
+            $list[] = [
+                'category_id'    => (int) ($row['id'] ?? 0),
+                'parent_id'      => (int) ($row['parent_id'] ?? 0),
+                'category_name'  => (string) ($row['name'] ?? ''),
+                'category_image' => (string) ($row['cover_image'] ?? ''),
+            ];
+        }
+
+        Response::success('', [
+            'list' => $list,
+        ]);
+    }
+
+    /**
+     * 可对接下单的商品列表（不分页；与前台可见性、商户加价一致；仅含已开启 API 的商品）。
+     *
+     * 必填：appid, timestamp, sign
+     *
+     * 可选（可组合，均为 AND）：
+     *   goods_id        单个商品 id
+     *   goods_ids       多个 id：逗号分隔字符串 "1,2,3"，或 JSON 数组 [1,2,3]（与 goods_id 二选一时可混用，合并去重）
+     *   category_id     分类 id（需配合 category_source 区分主站/商户分类）
+     *   category_source = main|merchant（有 category_id 时生效，默认 main）
+     *   keyword         标题/简介模糊
+     *
+     * 不传 goods_id(s)、category_id、keyword 时：返回当前账号可见范围内全部已开启 API 对接的商品。
+     */
+    private function goodsList(): void
+    {
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+        $scope = $this->resolveScope($apiUser);
+
+        $where = [
+            'require_api_enabled' => true,
+            'no_limit'            => true,
+        ];
+
+        $goodsIds = $this->parseRequestGoodsIds($params);
+        if ($goodsIds !== []) {
+            $where['goods_ids'] = $goodsIds;
+        }
+
+        $categoryId = (int) ($params['category_id'] ?? 0);
+        if ($categoryId > 0) {
+            $where['category_id'] = $categoryId;
+            $catSource = strtolower(trim((string) ($params['category_source'] ?? 'main')));
+            $where['category_source'] = $catSource === 'merchant' ? 'merchant' : 'main';
+        }
+        $keyword = trim((string) ($params['keyword'] ?? ''));
+        if ($keyword !== '') {
+            $where['keyword'] = $keyword;
+        }
+
+        $rows = $this->runWithMerchantScope($scope['merchant_row'], function () use ($where) {
+            return $this->queryGoodsList($where, 1, 'g.sort ASC, g.id DESC');
+        });
+
+        $outList = [];
+        foreach ($rows as $row) {
+            $outList[] = [
+                'goods_id'        => (int) ($row['id'] ?? 0),
+                'title'           => (string) ($row['name'] ?? ''),
+                'cover_image'     => (string) ($row['image'] ?? ''),
+                'min_price'       => number_format((float) ($row['price'] ?? 0), 2, '.', ''),
+                'original_price'  => isset($row['original_price']) && $row['original_price'] !== null
+                    ? number_format((float) $row['original_price'], 2, '.', '')
+                    : '',
+                'stock'           => (int) ($row['stock'] ?? 0),
+                'stock_text'      => (string) ($row['stock_text'] ?? ''),
+                'sold'            => (int) ($row['sold'] ?? 0),
+                'goods_type'      => (string) ($row['goods_type'] ?? ''),
+                'delivery_type'   => (string) ($row['delivery_type'] ?? ''),
+                'jump_url'        => (string) ($row['jump_url'] ?? ''),
+            ];
+        }
+
+        Response::success('', [
+            'list'  => $outList,
+            'total' => count($outList),
+        ]);
+    }
+
+    /**
+     * 解析请求中的商品 id 列表（goods_id + goods_ids 合并，去重，>0）。
+     *
+     * @param array<string, mixed> $params
+     * @return list<int>
+     */
+    private function parseRequestGoodsIds(array $params): array
+    {
+        $acc = [];
+        $single = (int) ($params['goods_id'] ?? 0);
+        if ($single > 0) {
+            $acc[$single] = true;
+        }
+        $rawIds = $params['goods_ids'] ?? null;
+        if (is_array($rawIds)) {
+            foreach ($rawIds as $v) {
+                $id = (int) $v;
+                if ($id > 0) {
+                    $acc[$id] = true;
+                }
+            }
+        } elseif (is_string($rawIds) && trim($rawIds) !== '') {
+            foreach (preg_split('/\s*,\s*/', $rawIds, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $part) {
+                $id = (int) $part;
+                if ($id > 0) {
+                    $acc[$id] = true;
+                }
+            }
+        }
+        return array_map('intval', array_keys($acc));
+    }
+
+    /**
+     * 请求参数（支持 JSON body + 表单参数）。
+     *
+     * @return array<string, mixed>
+     */
+    private function requestParams(): array
+    {
+        $params = array_merge(Input::allGet(), Input::allPost());
+
+        $ct = strtolower((string) ($_SERVER['CONTENT_TYPE'] ?? ''));
+        if (strpos($ct, 'application/json') !== false) {
+            $raw = file_get_contents('php://input');
+            if (is_string($raw) && trim($raw) !== '') {
+                $json = json_decode($raw, true);
+                if (is_array($json)) {
+                    $params = array_merge($params, $json);
+                }
+            }
+        }
+
+        return $params;
+    }
+
+    /**
+     * 鉴权并返回 API 用户。
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, mixed>
+     */
+    private function authUser(array $params): array
+    {
+        $appId = (int) ($params['appid'] ?? 0);
+        $timestamp = (int) ($params['timestamp'] ?? 0);
+        $sign = strtolower(trim((string) ($params['sign'] ?? '')));
+        $signType = strtoupper(trim((string) ($params['sign_type'] ?? 'MD5')));
+
+        if ($appId <= 0) {
+            Response::error('appid 参数错误');
+        }
+        if ($timestamp <= 0) {
+            Response::error('timestamp 参数错误');
+        }
+        if ($sign === '') {
+            Response::error('sign 不能为空');
+        }
+        if ($signType !== 'MD5') {
+            Response::error('仅支持 MD5 签名');
+        }
+        if (abs(time() - $timestamp) > self::SIGN_TTL) {
+            Response::error('请求已过期');
+        }
+
+        $user = (new UserListModel())->findById($appId);
+        if ($user === null || (int) ($user['status'] ?? 0) !== 1) {
+            Response::error('API 用户不存在或已禁用');
+        }
+
+        $secret = trim((string) ($user['secret'] ?? ''));
+        if ($secret === '') {
+            Response::error('该账号未生成 API SECRET');
+        }
+
+        $calc = $this->sign($params, $secret);
+        if (!hash_equals($calc, $sign)) {
+            Response::error('签名错误');
+        }
+
+        return $user;
+    }
+
+    /**
+     * @param array<string, mixed> $params
+     */
+    private function sign(array $params, string $secret): string
+    {
+        // c/a/act 属于路由参数，不参与签名，避免 query 与 body 混传时校验歧义
+        unset($params['sign'], $params['sign_type'], $params['c'], $params['a'], $params['act']);
+        ksort($params, SORT_STRING);
+
+        $parts = [];
+        foreach ($params as $k => $v) {
+            if ($v === null || $v === '') {
+                continue;
+            }
+            if (is_array($v)) {
+                $v = json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            } elseif (is_bool($v)) {
+                $v = $v ? '1' : '0';
+            }
+            $parts[] = $k . '=' . (string) $v;
+        }
+
+        return strtolower(md5(implode('&', $parts) . $secret));
+    }
+
+    /**
+     * 解析 API 用户对应的下单作用域。
+     *
+     * @param array<string, mixed> $apiUser
+     * @return array{merchant_id:int,owner_id:int,merchant_row:?array}
+     */
+    private function resolveScope(array $apiUser): array
+    {
+        $merchantId = (int) ($apiUser['merchant_id'] ?? 0);
+        if ($merchantId <= 0) {
+            return [
+                'merchant_id'  => 0,
+                'owner_id'     => 0,
+                'merchant_row' => null,
+            ];
+        }
+
+        $merchant = (new MerchantModel())->findById($merchantId);
+        if ($merchant === null || (int) ($merchant['status'] ?? 0) !== 1) {
+            Response::error('商户不存在或已停用');
+        }
+        if ((int) ($merchant['user_id'] ?? 0) !== (int) ($apiUser['id'] ?? 0)) {
+            Response::error('API 账号与商户归属不匹配');
+        }
+
+        return [
+            'merchant_id'  => $merchantId,
+            'owner_id'     => (int) ($apiUser['id'] ?? 0),
+            'merchant_row' => $merchant,
+        ];
+    }
+
+    /**
+     * 在指定商户上下文中执行闭包，执行后恢复原上下文。
+     *
+     * @template T
+     * @param array<string, mixed>|null $merchant
+     * @param callable():T $fn
+     * @return T
+     */
+    private function runWithMerchantScope(?array $merchant, callable $fn)
+    {
+        $saved = MerchantContext::current();
+        MerchantContext::setCurrent($merchant);
+        try {
+            return $fn();
+        } finally {
+            MerchantContext::setCurrent($saved);
+        }
+    }
+
+    /**
+     * 收集并校验商品附加字段。
+     *
+     * @param array<string, mixed> $goods
+     * @param array<string, mixed> $params
+     * @return array<string, string>
+     */
+    private function collectExtraFields(array $goods, array $params): array
+    {
+        $extraJsonRaw = (string) ($params['extra_json'] ?? '');
+        $extraJson = [];
+        if ($extraJsonRaw !== '') {
+            $decoded = json_decode($extraJsonRaw, true);
+            if (!is_array($decoded)) {
+                throw new RuntimeException('extra_json 不是有效 JSON');
+            }
+            $extraJson = $decoded;
+        }
+
+        $configs = json_decode((string) ($goods['configs'] ?? '{}'), true) ?: [];
+        $extraFields = [];
+        foreach (($configs['extra_fields'] ?? []) as $ef) {
+            $name = (string) ($ef['name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+
+            $val = '';
+            if (array_key_exists('extra_' . $name, $params)) {
+                $val = trim((string) $params['extra_' . $name]);
+            } elseif (array_key_exists($name, $extraJson)) {
+                $val = trim((string) $extraJson[$name]);
+            }
+
+            if (!empty($ef['required']) && $val === '') {
+                throw new RuntimeException('请填写 ' . (string) ($ef['title'] ?? $name));
+            }
+            $extraFields[$name] = $val;
+        }
+
+        return $extraFields;
+    }
+
+    /**
+     * 解析游客收货地址。
+     *
+     * @param array<string, mixed> $params
+     * @return array<string, string>|null
+     */
+    private function parseGuestAddress(array $params): ?array
+    {
+        if (isset($params['guest_address']) && is_array($params['guest_address'])) {
+            return [
+                'recipient' => trim((string) ($params['guest_address']['recipient'] ?? '')),
+                'mobile'    => trim((string) ($params['guest_address']['mobile'] ?? '')),
+                'province'  => trim((string) ($params['guest_address']['province'] ?? '')),
+                'city'      => trim((string) ($params['guest_address']['city'] ?? '')),
+                'district'  => trim((string) ($params['guest_address']['district'] ?? '')),
+                'detail'    => trim((string) ($params['guest_address']['detail'] ?? '')),
+            ];
+        }
+
+        $jsonRaw = trim((string) ($params['address_json'] ?? ''));
+        if ($jsonRaw !== '') {
+            $decoded = json_decode($jsonRaw, true);
+            if (!is_array($decoded)) {
+                throw new RuntimeException('address_json 不是有效 JSON');
+            }
+            return [
+                'recipient' => trim((string) ($decoded['recipient'] ?? '')),
+                'mobile'    => trim((string) ($decoded['mobile'] ?? '')),
+                'province'  => trim((string) ($decoded['province'] ?? '')),
+                'city'      => trim((string) ($decoded['city'] ?? '')),
+                'district'  => trim((string) ($decoded['district'] ?? '')),
+                'detail'    => trim((string) ($decoded['detail'] ?? '')),
+            ];
+        }
+
+        $recipient = trim((string) ($params['recipient'] ?? ''));
+        $mobile = trim((string) ($params['mobile'] ?? ''));
+        $province = trim((string) ($params['province'] ?? ''));
+        $city = trim((string) ($params['city'] ?? ''));
+        $district = trim((string) ($params['district'] ?? ''));
+        $detail = trim((string) ($params['detail'] ?? ''));
+
+        if ($recipient === '' && $mobile === '' && $province === '' && $city === '' && $district === '' && $detail === '') {
+            return null;
+        }
+
+        return [
+            'recipient' => $recipient,
+            'mobile'    => $mobile,
+            'province'  => $province,
+            'city'      => $city,
+            'district'  => $district,
+            'detail'    => $detail,
+        ];
+    }
+}

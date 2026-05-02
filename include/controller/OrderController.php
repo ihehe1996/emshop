@@ -212,10 +212,10 @@ class OrderController extends BaseController
             // 非余额支付：触发 payment_create 过滤器，让对应插件生成 pay_url
             // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
             // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
-            $payUrl = '';
+            $payPayload = ['pay_url' => '', 'qrcode' => ''];
             if (!$paidNow) {
                 $orderRow = OrderModel::getById((int) $result['order_id']);
-                $payUrl = PaymentService::createPayment($orderRow, $payment);
+                $payPayload = PaymentService::createPaymentPayload($orderRow, $payment);
             }
 
             Response::success('下单成功', [
@@ -223,7 +223,8 @@ class OrderController extends BaseController
                 'order_no'   => $result['order_no'],
                 'pay_amount' => bcdiv((string) $result['pay_amount'], '1000000', 2),
                 'paid'       => $paidNow,
-                'pay_url'    => $payUrl,
+                'pay_url'    => (string) ($payPayload['pay_url'] ?? ''),
+                'qrcode'     => (string) ($payPayload['qrcode'] ?? ''),
             ]);
 
         } catch (RuntimeException $e) {
@@ -420,10 +421,10 @@ class OrderController extends BaseController
             // 非余额支付：触发 payment_create 过滤器，让对应插件生成 pay_url
             // 走 PaymentService::createPayment 而不是直接 applyFilter —— 它会临时把 scope
             // 切到 'main' 让插件 Storage::getInstance 读到主站凭证（商户 scope 没存这些凭证）
-            $payUrl = '';
+            $payPayload = ['pay_url' => '', 'qrcode' => ''];
             if (!$paidNow) {
                 $orderRow = OrderModel::getById((int) $result['order_id']);
-                $payUrl = PaymentService::createPayment($orderRow, $payment);
+                $payPayload = PaymentService::createPaymentPayload($orderRow, $payment);
             }
 
             Response::success('下单成功', [
@@ -431,7 +432,8 @@ class OrderController extends BaseController
                 'order_no'   => $result['order_no'],
                 'pay_amount' => bcdiv((string) $result['pay_amount'], '1000000', 2),
                 'paid'       => $paidNow,
-                'pay_url'    => $payUrl,
+                'pay_url'    => (string) ($payPayload['pay_url'] ?? ''),
+                'qrcode'     => (string) ($payPayload['qrcode'] ?? ''),
             ]);
 
         } catch (StockShortageException $e) {

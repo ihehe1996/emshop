@@ -551,6 +551,7 @@ addFilter('payment_create', function (array $ctx): array {
                 $ctx['pay_url'] = alipay_site_url()
                     . '/?plugin=alipay&order_no=' . rawurlencode($orderNo)
                     . '&q=' . rawurlencode(alipay_base64url_encode($url));
+                $ctx['qrcode'] = $ctx['pay_url'];
                 return $ctx;
             } catch (Throwable $e) {
                 $errors[] = '当面付：' . $e->getMessage();
