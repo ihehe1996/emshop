@@ -377,7 +377,8 @@ class ApiController extends BaseController
      *
      * 未传 category_id / category_ids 时：不按 category_source 做「伪全部分类」过滤；可见范围与 GoodsController::_list 未选分类一致（当前域名对应的 MerchantContext + applyMerchantScope，与会员身份无关），并叠加 goods_ids / keyword 等请求条件；另 require_api_enabled 仅保留可对接下单的商品。
      *
-     * 传 goods_id(s) 拉取明细时，每条在基础字段外附带：intro、content、cover_images（数组）、configs（完整 JSON 对象，与后台保存一致）、tag_names、min_buy、max_buy（与规格表一致，可 null）、upstream_goods_type（溯源）；另保留 extra_fields 便于旧客户端。
+     * 传 goods_id(s) 拉取明细时，每条在基础字段外附带：intro、content、cover_images（数组）、configs（完整 JSON 对象，与后台保存一致）、tag_names、min_buy、max_buy（与规格表一致，可 null）、specs（完整规格列表）、
+     * spec_dim_name（维度名，格式同后台 goods_edit 提交值），upstream_goods_type（溯源）；另保留 extra_fields 便于旧客户端。
      */
     private function goodsList(): void
     {
@@ -478,6 +479,7 @@ class ApiController extends BaseController
             $goodsIds
         );
         $tagMap = class_exists('GoodsTagModel') ? GoodsTagModel::getTagsByGoodsIds($goodsIds) : [];
+        $specMap = $this->fetchGoodsSpecsForImport($goodsIds);
         $out = [];
         foreach ($rows as $r) {
             $gid = (int) ($r['id'] ?? 0);
@@ -523,8 +525,97 @@ class ApiController extends BaseController
                 'tag_names'            => $names,
                 'min_buy'              => $minBuy !== null && $minBuy !== '' ? (int) $minBuy : null,
                 'max_buy'              => $maxBuy !== null && $maxBuy !== '' ? (int) $maxBuy : null,
+                'specs'                => $specMap[$gid]['specs'] ?? [],
+                'spec_dim_name'        => $specMap[$gid]['spec_dim_name'] ?? '',
                 'upstream_goods_type'  => (string) ($r['upstream_goods_type'] ?? ''),
             ];
+        }
+        return $out;
+    }
+
+    /**
+     * @param list<int> $goodsIds
+     * @return array<int, array{specs:list<array<string,mixed>>,spec_dim_name:string}>
+     */
+    private function fetchGoodsSpecsForImport(array $goodsIds): array
+    {
+        if ($goodsIds === []) {
+            return [];
+        }
+        $prefix = Database::prefix();
+        $placeholders = implode(',', array_fill(0, count($goodsIds), '?'));
+
+        $specRows = Database::query(
+            "SELECT `goods_id`, `name`, `spec_no`, `price`, `cost_price`, `market_price`, `stock`,
+                    `tags`, `configs`, `min_buy`, `max_buy`, `sort`, `is_default`, `status`
+             FROM `{$prefix}goods_spec`
+             WHERE `goods_id` IN ({$placeholders}) AND `status` = 1
+             ORDER BY `goods_id` ASC, `sort` ASC, `id` ASC",
+            $goodsIds
+        );
+        $dimRows = Database::query(
+            "SELECT `goods_id`, `name`
+             FROM `{$prefix}goods_spec_dim`
+             WHERE `goods_id` IN ({$placeholders})
+             ORDER BY `goods_id` ASC, `sort` ASC, `id` ASC",
+            $goodsIds
+        );
+
+        $dimsByGoods = [];
+        foreach ($dimRows as $d) {
+            $gid = (int) ($d['goods_id'] ?? 0);
+            if ($gid <= 0) {
+                continue;
+            }
+            $nm = trim((string) ($d['name'] ?? ''));
+            if ($nm !== '') {
+                $dimsByGoods[$gid][] = $nm;
+            }
+        }
+
+        $out = [];
+        foreach ($specRows as $s) {
+            $gid = (int) ($s['goods_id'] ?? 0);
+            if ($gid <= 0) {
+                continue;
+            }
+            $tags = json_decode((string) ($s['tags'] ?? '[]'), true);
+            if (!is_array($tags)) {
+                $tags = [];
+            }
+            $tags = array_values(array_filter(array_map('strval', $tags), 'strlen'));
+
+            $cfg = json_decode((string) ($s['configs'] ?? '{}'), true);
+            if (!is_array($cfg)) {
+                $cfg = [];
+            }
+            $out[$gid]['specs'][] = [
+                'name'         => (string) ($s['name'] ?? ''),
+                'spec_no'      => (string) ($s['spec_no'] ?? ''),
+                'price'        => number_format((float) GoodsModel::moneyFromDb($s['price'] ?? 0), 2, '.', ''),
+                'cost_price'   => $s['cost_price'] !== null && $s['cost_price'] !== ''
+                    ? number_format((float) GoodsModel::moneyFromDb($s['cost_price']), 2, '.', '')
+                    : '',
+                'market_price' => $s['market_price'] !== null && $s['market_price'] !== ''
+                    ? number_format((float) GoodsModel::moneyFromDb($s['market_price']), 2, '.', '')
+                    : '',
+                'stock'        => max(0, (int) ($s['stock'] ?? 0)),
+                'tags'         => $tags,
+                'configs'      => $cfg,
+                'min_buy'      => $s['min_buy'] !== null && $s['min_buy'] !== '' ? (int) $s['min_buy'] : null,
+                'max_buy'      => $s['max_buy'] !== null && $s['max_buy'] !== '' ? (int) $s['max_buy'] : null,
+                'sort'         => (int) ($s['sort'] ?? 0),
+                'is_default'   => (int) ($s['is_default'] ?? 0) === 1 ? 1 : 0,
+                'status'       => 1,
+            ];
+            if (!isset($out[$gid]['spec_dim_name'])) {
+                $out[$gid]['spec_dim_name'] = '';
+            }
+        }
+
+        foreach ($out as $gid => $v) {
+            $dimNames = $dimsByGoods[$gid] ?? [];
+            $out[$gid]['spec_dim_name'] = $dimNames !== [] ? implode('/', $dimNames) : '';
         }
         return $out;
     }

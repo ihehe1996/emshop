@@ -189,9 +189,8 @@ final class GoodsImportService
             "SELECT `id` FROM `{$prefix}goods` WHERE `source_type` = ? AND `source_id` = ? AND `deleted_at` IS NULL LIMIT 1",
             [self::SOURCE_TYPE, $sourceId]
         );
-        if ($dup) {
-            throw new RuntimeException('已导入过（本站商品 ID ' . (int) ($dup['id'] ?? 0) . '）');
-        }
+        $goodsId = (int) ($dup['id'] ?? 0);
+        $isUpdate = $goodsId > 0;
 
         $title = trim((string) ($item['title'] ?? ''));
         if ($title === '') {
@@ -210,7 +209,6 @@ final class GoodsImportService
         if ($sale < 0) {
             $sale = 0;
         }
-        $priceRaw = GoodsModel::moneyToDb(number_format($sale, 2, '.', ''));
 
         $coverList = self::jsonDecodeStringList($item['cover_images'] ?? null);
         $coverSources = [];
@@ -261,7 +259,7 @@ final class GoodsImportService
         // 独立商品类型：发货走 goods_type_emshop_remote_order_paid，避免误用 virtual_card / physical 的卡密与运费逻辑
         $goodsType = 'emshop_remote';
 
-        $goodsId = (int) GoodsModel::create([
+        $goodsRow = [
             'title'         => mb_substr($title, 0, 200, 'UTF-8'),
             'category_id'   => $targetCategoryId,
             'cover_images'  => json_encode($covers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -273,52 +271,306 @@ final class GoodsImportService
             'status'        => 1,
             'unit'          => '个',
             'owner_id'      => 0,
-            'created_by'    => $adminId,
             'source_type'   => self::SOURCE_TYPE,
             'source_id'     => $sourceId,
             'api_enabled'   => 1,
             'jump_url'      => '',
             'sort'          => 0,
-        ]);
-        if ($goodsId <= 0) {
-            throw new RuntimeException('创建商品失败');
+        ];
+
+        if ($isUpdate) {
+            $ok = GoodsModel::update($goodsId, $goodsRow);
+            if (!$ok) {
+                throw new RuntimeException('更新已导入商品失败');
+            }
+        } else {
+            $goodsRow['created_by'] = $adminId;
+            $goodsId = (int) GoodsModel::create($goodsRow);
+            if ($goodsId <= 0) {
+                throw new RuntimeException('创建商品失败');
+            }
         }
 
         $stock = max(0, (int) ($item['stock'] ?? 0));
 
-        $specRow = [
-            'goods_id'   => $goodsId,
-            'name'       => '默认规格',
-            'price'      => $priceRaw,
-            'stock'      => $stock,
-            'sort'       => 0,
-            'is_default' => 1,
-            'status'     => 1,
-        ];
-        if ($specMinBuy !== null) {
-            $specRow['min_buy'] = $specMinBuy;
+        $specRows = self::decodeSpecRowsPayload($item['specs'] ?? null);
+        if ($specRows === []) {
+            $specRows = [[
+                'name'       => '默认规格',
+                'price'      => number_format($basePrice, 2, '.', ''),
+                'cost_price' => number_format($basePrice, 2, '.', ''),
+                'stock'      => $stock,
+                'min_buy'    => $specMinBuy,
+                'max_buy'    => $specMaxBuy,
+                'sort'       => 0,
+                'is_default' => 1,
+                'status'     => 1,
+            ]];
         }
-        if ($specMaxBuy !== null) {
-            $specRow['max_buy'] = $specMaxBuy;
-        }
-        Database::insert('goods_spec', $specRow);
+        $dimNameRaw = trim((string) ($item['spec_dim_name'] ?? ''));
+        self::syncSpecRows(
+            $goodsId,
+            $specRows,
+            $dimNameRaw,
+            $markupMode,
+            $markupValue
+        );
 
         $tagNames = self::jsonDecodeStringList($item['tag_names'] ?? null);
-        if ($tagNames !== []) {
-            $tagIds = [];
-            foreach ($tagNames as $nm) {
-                $nm = trim((string) $nm);
-                if ($nm !== '') {
-                    $tagIds[] = GoodsTagModel::findOrCreate($nm);
-                }
-            }
-            if ($tagIds !== []) {
-                GoodsTagModel::syncGoodsTags($goodsId, $tagIds);
+        $tagIds = [];
+        foreach ($tagNames as $nm) {
+            $nm = trim((string) $nm);
+            if ($nm !== '') {
+                $tagIds[] = GoodsTagModel::findOrCreate($nm);
             }
         }
+        GoodsTagModel::syncGoodsTags($goodsId, $tagIds);
+        GoodsTagModel::refreshAllCounts();
 
         doAction('goods_type_emshop_remote_save', $goodsId, ['plugin_data' => []]);
         GoodsModel::updatePriceStockCache($goodsId);
+    }
+
+    /**
+     * @param mixed $v
+     * @return list<array<string,mixed>>
+     */
+    private static function decodeSpecRowsPayload($v): array
+    {
+        $x = self::jsonDecodeFlexible($v);
+        if (!is_array($x)) {
+            return [];
+        }
+        $out = [];
+        foreach ($x as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $name = trim((string) ($row['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $out[] = $row;
+        }
+        return $out;
+    }
+
+    /**
+     * 按后台 goods_edit 的规则同步规格（就地更新 + 重建维度/组合）。
+     *
+     * @param list<array<string,mixed>> $specRows
+     */
+    private static function syncSpecRows(
+        int $goodsId,
+        array $specRows,
+        string $specDimNameRaw,
+        string $markupMode,
+        float $markupValue
+    ): void {
+        $prefix = Database::prefix();
+
+        $oldSpecs = Database::query(
+            "SELECT `id`, `name` FROM `{$prefix}goods_spec` WHERE `goods_id` = ?",
+            [$goodsId]
+        );
+        $oldMap = [];
+        foreach ($oldSpecs as $os) {
+            $nm = trim((string) ($os['name'] ?? ''));
+            if ($nm !== '') {
+                $oldMap[$nm] = (int) ($os['id'] ?? 0);
+            }
+        }
+
+        $normalized = [];
+        foreach ($specRows as $idx => $sp) {
+            $name = trim((string) ($sp['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $upPrice = max(0, (float) ($sp['price'] ?? 0));
+            $sale = $markupMode === 'amount'
+                ? $upPrice + $markupValue
+                : $upPrice * (1 + $markupValue / 100.0);
+            if ($sale < 0) {
+                $sale = 0;
+            }
+            $minRaw = $sp['min_buy'] ?? null;
+            $maxRaw = $sp['max_buy'] ?? null;
+            $minBuy = ($minRaw === null || $minRaw === '') ? null : max(1, (int) $minRaw);
+            $maxBuy = ($maxRaw === null || $maxRaw === '') ? null : max(0, (int) $maxRaw);
+
+            $tagJson = null;
+            $tags = $sp['tags'] ?? null;
+            if (is_string($tags)) {
+                $decoded = json_decode($tags, true);
+                if (is_array($decoded)) {
+                    $tags = $decoded;
+                }
+            }
+            if (is_array($tags) && $tags !== []) {
+                $cleanTags = array_values(array_filter(array_map('strval', $tags), 'strlen'));
+                if ($cleanTags !== []) {
+                    $tagJson = json_encode($cleanTags, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+            }
+
+            $cfg = $sp['configs'] ?? null;
+            $cfgArr = self::jsonDecodeAssoc($cfg);
+            $keepCfg = [];
+            if (!empty($cfgArr['images']) && is_array($cfgArr['images'])) {
+                $keepCfg['images'] = array_values(array_filter($cfgArr['images'], 'is_string'));
+            }
+            $cfgJson = $keepCfg !== []
+                ? json_encode($keepCfg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : null;
+
+            $normalized[] = [
+                'name'         => $name,
+                'spec_no'      => trim((string) ($sp['spec_no'] ?? '')),
+                'price'        => GoodsModel::moneyToDb(number_format($sale, 2, '.', '')),
+                'cost_price'   => GoodsModel::moneyToDb(number_format($upPrice, 2, '.', '')),
+                'market_price' => ($sp['market_price'] ?? '') !== ''
+                    ? GoodsModel::moneyToDb((float) $sp['market_price'])
+                    : null,
+                'stock'        => max(0, (int) ($sp['stock'] ?? 0)),
+                'tags'         => $tagJson,
+                'configs'      => $cfgJson,
+                'min_buy'      => $minBuy,
+                'max_buy'      => $maxBuy,
+                'sort'         => (int) ($sp['sort'] ?? $idx),
+                'is_default'   => (int) ($sp['is_default'] ?? 0) === 1 ? 1 : 0,
+            ];
+        }
+        if ($normalized === []) {
+            return;
+        }
+        $defaultIdx = -1;
+        foreach ($normalized as $idx => $n) {
+            if ($n['is_default'] === 1) {
+                $defaultIdx = $idx;
+                break;
+            }
+        }
+        if ($defaultIdx < 0) {
+            $defaultIdx = 0;
+        }
+        foreach ($normalized as $idx => $n) {
+            $normalized[$idx]['is_default'] = $idx === $defaultIdx ? 1 : 0;
+        }
+
+        $newNames = array_map(static function ($x) { return $x['name']; }, $normalized);
+        foreach ($oldMap as $oldName => $oldId) {
+            if (!in_array($oldName, $newNames, true)) {
+                Database::execute("DELETE FROM `{$prefix}goods_spec_combo` WHERE `spec_id` = ?", [$oldId]);
+                Database::execute("DELETE FROM `{$prefix}goods_price_level` WHERE `spec_id` = ?", [$oldId]);
+                Database::execute("DELETE FROM `{$prefix}goods_price_user` WHERE `spec_id` = ?", [$oldId]);
+                Database::execute("DELETE FROM `{$prefix}goods_spec` WHERE `id` = ?", [$oldId]);
+            }
+        }
+
+        $specIdMap = [];
+        Database::execute("UPDATE `{$prefix}goods_spec` SET `is_default` = 0 WHERE `goods_id` = ?", [$goodsId]);
+        foreach ($normalized as $i => $row) {
+            $payload = [
+                'spec_no'     => $row['spec_no'],
+                'price'       => $row['price'],
+                'cost_price'  => $row['cost_price'],
+                'market_price'=> $row['market_price'],
+                'stock'       => $row['stock'],
+                'tags'        => $row['tags'],
+                'configs'     => $row['configs'],
+                'min_buy'     => $row['min_buy'],
+                'max_buy'     => $row['max_buy'],
+                'sort'        => $row['sort'],
+                'is_default'  => $row['is_default'],
+                'status'      => 1,
+            ];
+            if (isset($oldMap[$row['name']])) {
+                $specId = (int) $oldMap[$row['name']];
+                Database::update('goods_spec', $payload, $specId);
+            } else {
+                $specId = (int) Database::insert('goods_spec', array_merge($payload, [
+                    'goods_id' => $goodsId,
+                    'name'     => $row['name'],
+                ]));
+            }
+            $specIdMap[$i] = $specId;
+        }
+
+        Database::execute("DELETE FROM `{$prefix}goods_spec_combo` WHERE `goods_id` = ?", [$goodsId]);
+        Database::execute("DELETE FROM `{$prefix}goods_spec_value` WHERE `goods_id` = ?", [$goodsId]);
+        Database::execute("DELETE FROM `{$prefix}goods_spec_dim` WHERE `goods_id` = ?", [$goodsId]);
+
+        $specDimNames = $specDimNameRaw !== '' ? array_map('trim', explode('/', $specDimNameRaw)) : [];
+        $dimCounts = [];
+        foreach ($normalized as $row) {
+            $parts = array_values(array_filter(array_map('trim', explode('/', $row['name'])), 'strlen'));
+            $dimCounts[] = count($parts);
+        }
+        $dimCount = $dimCounts !== [] ? (int) ($dimCounts[0] ?? 1) : 1;
+
+        if ($dimCount <= 1) {
+            if ($normalized !== []) {
+                Database::insert('goods_spec_dim', [
+                    'goods_id' => $goodsId,
+                    'name'     => $specDimNames[0] ?? '规格',
+                    'sort'     => 0,
+                ]);
+            }
+            return;
+        }
+
+        $dimValues = [];
+        $partsByIdx = [];
+        foreach ($normalized as $idx => $row) {
+            $parts = array_values(array_filter(array_map('trim', explode('/', $row['name'])), 'strlen'));
+            $partsByIdx[$idx] = $parts;
+            foreach ($parts as $dIdx => $val) {
+                if (!isset($dimValues[$dIdx])) {
+                    $dimValues[$dIdx] = [];
+                }
+                if (!in_array($val, $dimValues[$dIdx], true)) {
+                    $dimValues[$dIdx][] = $val;
+                }
+            }
+        }
+
+        $valueIdMap = [];
+        for ($i = 0; $i < $dimCount; $i++) {
+            $dimId = (int) Database::insert('goods_spec_dim', [
+                'goods_id' => $goodsId,
+                'name'     => $specDimNames[$i] ?? ('规格' . ($i + 1)),
+                'sort'     => $i,
+            ]);
+            foreach ($dimValues[$i] ?? [] as $valSort => $valName) {
+                $valId = (int) Database::insert('goods_spec_value', [
+                    'dim_id'   => $dimId,
+                    'goods_id' => $goodsId,
+                    'name'     => $valName,
+                    'sort'     => (int) $valSort,
+                ]);
+                $valueIdMap[$i . '|' . $valName] = $valId;
+            }
+        }
+
+        foreach ($normalized as $idx => $row) {
+            $parts = $partsByIdx[$idx] ?? [];
+            $valueIds = [];
+            foreach ($parts as $dIdx => $val) {
+                $valueIds[] = (int) ($valueIdMap[$dIdx . '|' . $val] ?? 0);
+            }
+            $valueIds = array_values(array_filter($valueIds));
+            if ($valueIds === []) {
+                continue;
+            }
+            Database::insert('goods_spec_combo', [
+                'goods_id'    => $goodsId,
+                'spec_id'     => (int) ($specIdMap[$idx] ?? 0),
+                'combo_hash'  => md5(implode('|', $valueIds)),
+                'combo_text'  => $row['name'],
+                'value_ids'   => json_encode($valueIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+        }
     }
 
     /** @param mixed $v 上游 JSON 可能二次编码为字符串 */
