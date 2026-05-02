@@ -8,6 +8,7 @@ use AttachmentModel;
 use Database;
 use GoodsCategoryModel;
 use GoodsModel;
+use GoodsTagModel;
 use RuntimeException;
 use Throwable;
 
@@ -211,22 +212,63 @@ final class GoodsImportService
         }
         $priceRaw = GoodsModel::moneyToDb(number_format($sale, 2, '.', ''));
 
-        $coverRaw = trim((string) ($item['cover_image'] ?? ''));
-        $covers = self::buildCoverImages($baseUrl, $coverRaw, $imageMode);
-
-        $remoteType = trim((string) ($item['goods_type'] ?? ''));
-        $goodsType = 'physical';
-        if ($remoteType !== '' && \GoodsTypeManager::getTypeConfig($remoteType)) {
-            $goodsType = $remoteType;
+        $coverSources = [];
+        if (!empty($item['cover_images']) && is_array($item['cover_images'])) {
+            foreach ($item['cover_images'] as $u) {
+                $u = trim((string) $u);
+                if ($u !== '') {
+                    $coverSources[] = $u;
+                }
+            }
         }
+        $coverRaw = trim((string) ($item['cover_image'] ?? ''));
+        if ($coverRaw !== '') {
+            $coverSources[] = $coverRaw;
+        }
+        $covers = self::buildCoverImagesList($baseUrl, $coverSources, $imageMode);
+
+        $intro = trim((string) ($item['intro'] ?? ''));
+        if (function_exists('mb_strlen') && mb_strlen($intro, 'UTF-8') > 8000) {
+            $intro = mb_substr($intro, 0, 8000, 'UTF-8');
+        }
+        $content = (string) ($item['content'] ?? '');
+        if ($content === '') {
+            $content = '<p>（由 EMSHOP 对接站点导入）</p>';
+        }
+        if (function_exists('mb_strlen') && mb_strlen($content, 'UTF-8') > 500000) {
+            $content = mb_substr($content, 0, 500000, 'UTF-8');
+        }
+
+        $upstreamType = trim((string) ($item['upstream_goods_type'] ?? ''));
+        if ($upstreamType === '') {
+            $upstreamType = trim((string) ($item['goods_type'] ?? ''));
+        }
+        $configs = [
+            'emshop_import' => [
+                'remote_site_id'      => $siteId,
+                'remote_goods_id'       => $remoteId,
+                'upstream_goods_type'   => $upstreamType,
+            ],
+        ];
+        $extraFields = $item['extra_fields'] ?? null;
+        if (is_array($extraFields) && $extraFields !== []) {
+            $configs['extra_fields'] = $extraFields;
+        }
+
+        $minBuy = max(1, (int) ($item['min_buy'] ?? 1));
+        $maxBuy = max(0, (int) ($item['max_buy'] ?? 0));
+
+        // 独立商品类型：发货走 goods_type_emshop_remote_order_paid，避免误用 virtual_card / physical 的卡密与运费逻辑
+        $goodsType = 'emshop_remote';
 
         $goodsId = (int) GoodsModel::create([
             'title'         => mb_substr($title, 0, 200, 'UTF-8'),
             'category_id'   => $targetCategoryId,
             'cover_images'  => json_encode($covers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'intro'         => '',
-            'content'       => '<p>（由 EMSHOP 对接站点导入）</p>',
+            'intro'         => $intro,
+            'content'       => $content,
             'goods_type'    => $goodsType,
+            'configs'       => json_encode($configs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'is_on_sale'    => 1,
             'status'        => 1,
             'unit'          => '个',
@@ -249,36 +291,56 @@ final class GoodsImportService
             'name'       => '默认规格',
             'price'      => $priceRaw,
             'stock'      => $stock,
+            'min_buy'    => $minBuy,
+            'max_buy'    => $maxBuy,
             'sort'       => 0,
             'is_default' => 1,
             'status'     => 1,
         ]);
 
-        self::runTypeSaveHook($goodsId, $goodsType);
+        $tagNames = $item['tag_names'] ?? null;
+        if (is_array($tagNames) && $tagNames !== []) {
+            $tagIds = [];
+            foreach ($tagNames as $nm) {
+                $nm = trim((string) $nm);
+                if ($nm !== '') {
+                    $tagIds[] = GoodsTagModel::findOrCreate($nm);
+                }
+            }
+            if ($tagIds !== []) {
+                GoodsTagModel::syncGoodsTags($goodsId, $tagIds);
+            }
+        }
+
+        doAction('goods_type_emshop_remote_save', $goodsId, ['plugin_data' => []]);
         GoodsModel::updatePriceStockCache($goodsId);
     }
 
-    private static function runTypeSaveHook(int $goodsId, string $goodsType): void
+    /**
+     * @param list<string> $relativeOrAbsoluteUrls
+     * @return list<string>
+     */
+    private static function buildCoverImagesList(string $baseUrl, array $relativeOrAbsoluteUrls, string $imageMode): array
     {
-        if ($goodsType === 'physical') {
-            $postData = [
-                'plugin_data' => [
-                    'delivery_days'      => 3,
-                    'shipping_fee_type'  => 'free',
-                    'shipping_fee'       => 0,
-                    'delivery_remark'    => '',
-                ],
-            ];
-            doAction('goods_type_physical_save', $goodsId, $postData);
-        } elseif ($goodsType === 'virtual_card') {
-            $postData = [
-                'plugin_data' => [
-                    'content_format' => 'card',
-                    'auto_delivery'  => 0,
-                ],
-            ];
-            doAction('goods_type_virtual_card_save', $goodsId, $postData);
+        $relativeOrAbsoluteUrls = array_slice($relativeOrAbsoluteUrls, 0, 20);
+        $seen = [];
+        $out = [];
+        foreach ($relativeOrAbsoluteUrls as $u) {
+            $u = trim((string) $u);
+            if ($u === '' || isset($seen[$u])) {
+                continue;
+            }
+            $seen[$u] = true;
+            $one = self::buildCoverImages($baseUrl, $u, $imageMode);
+            foreach ($one as $path) {
+                $path = trim((string) $path);
+                if ($path !== '' && !isset($seen['@' . $path])) {
+                    $seen['@' . $path] = true;
+                    $out[] = $path;
+                }
+            }
         }
+        return $out;
     }
 
     /**
