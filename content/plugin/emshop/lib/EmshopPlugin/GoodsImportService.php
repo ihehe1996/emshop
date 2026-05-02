@@ -249,6 +249,10 @@ final class GoodsImportService
             'remote_site_id'       => $siteId,
             'remote_goods_id'      => $remoteId,
             'upstream_goods_type'  => $upstreamType,
+            'upstream_delivery_type' => (string) ($item['delivery_type'] ?? ''),
+            'fulfillment_mode'       => strtolower((string) ($item['delivery_type'] ?? '')) === 'auto'
+                ? 'upstream_auto'
+                : 'manual',
         ];
 
         $minBuyRaw = $item['min_buy'] ?? null;
@@ -419,6 +423,10 @@ final class GoodsImportService
             $keepCfg = [];
             if (!empty($cfgArr['images']) && is_array($cfgArr['images'])) {
                 $keepCfg['images'] = array_values(array_filter($cfgArr['images'], 'is_string'));
+            }
+            $upstreamSpecId = (int) ($sp['upstream_spec_id'] ?? 0);
+            if ($upstreamSpecId > 0) {
+                $keepCfg['emshop_import'] = ['upstream_spec_id' => $upstreamSpecId];
             }
             $cfgJson = $keepCfg !== []
                 ? json_encode($keepCfg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)

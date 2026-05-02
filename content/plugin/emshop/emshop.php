@@ -79,21 +79,7 @@ addAction('goods_type_emshop_remote_save', function ($goodsId, $postData): void 
 });
 
 addAction('goods_type_emshop_remote_order_paid', function ($orderId, $orderGoodsId, $pluginData): void {
-    $prefix = Database::prefix();
-    $og = Database::fetchOne(
-        "SELECT spec_id, quantity FROM `{$prefix}order_goods` WHERE id = ? LIMIT 1",
-        [(int) $orderGoodsId]
-    );
-    if ($og) {
-        $specId = (int) ($og['spec_id'] ?? 0);
-        $qty = (int) ($og['quantity'] ?? 0);
-        if ($specId > 0 && $qty > 0) {
-            GoodsModel::incrementSoldCount($specId, $qty);
-        }
-    }
-    if (function_exists('log_message')) {
-        log_message('info', "[emshop_remote] order_paid order={$orderId} order_goods={$orderGoodsId} (manual / upstream fulfillment)");
-    }
+    \EmshopPlugin\DeliveryService::handle((int) $orderId, (int) $orderGoodsId, (string) $pluginData);
 });
 
 addFilter('goods_type_emshop_remote_manual_delivery_form', function ($html, $og) {
