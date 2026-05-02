@@ -87,7 +87,7 @@ if (!defined('EM_ROOT')) {
                     <button type="button" class="uc-btn uc-btn--copy" data-copy="apiGoodsListUrl" title="复制"><i class="fa fa-copy"></i></button>
                 </div>
                 <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
-                    不分页；不传筛选参数则返回全部已开启 API 的商品。可选 <code>goods_id</code>、<code>goods_ids</code>（逗号或 JSON 数组）、<code>category_id</code> 等，详见接口注释。
+                    不分页；不传筛选参数则返回全部已开启 API 的商品。可选 <code>goods_id</code>、<code>goods_ids</code>（逗号或 JSON 数组）、<code>category_id</code>、<code>category_ids</code>（多分类并集，逗号或 JSON 数组）等，详见接口注释。
                 </div>
             </div>
         </div>

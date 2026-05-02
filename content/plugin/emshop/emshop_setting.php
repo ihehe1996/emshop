@@ -11,6 +11,7 @@ defined('EM_ROOT') || exit('Access Denied');
 require_once __DIR__ . '/emshop.php';
 emshop_plugin_ensure_schema();
 
+use EmshopPlugin\GoodsImportService;
 use EmshopPlugin\RemoteApiClient;
 use EmshopPlugin\RemoteSiteModel;
 
@@ -54,32 +55,104 @@ function plugin_setting_view(): void
     $csrfToken = Csrf::token();
     ?>
     <style>
-    .ems-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; background: #fff; }
-    .ems-toolbar__left { font-size: 12px; color: #9ca3af; max-width: 70%; line-height: 1.5; }
+    .ems-toolbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #eef0f4; background: #fff; flex-shrink: 0; }
+    .ems-toolbar__left { font-size: 12px; color: #8b92a0; max-width: min(72%, 520px); line-height: 1.55; }
+    .ems-site-list-area { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; background: linear-gradient(180deg, #f4f6fa 0%, #eef1f7 100%); padding: 14px; }
+    .ems-site-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 14px; align-content: start; }
+    .ems-site-card {
+        position: relative;
+        background: #fff;
+        border-radius: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.06);
+        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+        overflow: hidden;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .ems-site-card::before {
+        content: '';
+        display: block;
+        height: 3px;
+        background: linear-gradient(90deg, #cbd5e1, #94a3b8);
+    }
+    .ems-site-card--on::before {
+        background: linear-gradient(90deg, #1e9fff, #36cfc9);
+    }
+    .ems-site-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1), 0 2px 6px rgba(15, 23, 42, 0.06);
+    }
+    .ems-site-card__head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 14px 14px 10px;
+        border-bottom: 1px solid #f0f2f5;
+    }
+    .ems-site-card__title { font-size: 15px; font-weight: 600; color: #1e293b; line-height: 1.35; word-break: break-word; flex: 1; min-width: 0; }
+    .ems-site-card__id { font-size: 11px; font-weight: 500; color: #94a3b8; margin-top: 4px; letter-spacing: 0.02em; }
+    .ems-site-card__switch-wrap { flex-shrink: 0; padding-top: 2px; }
+    .ems-site-card__body { padding: 12px 14px 10px; font-size: 12px; color: #64748b; }
+    .ems-site-card__row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; line-height: 1.45; }
+    .ems-site-card__row:last-child { margin-bottom: 0; }
+    .ems-site-card__row > i.fa { width: 14px; text-align: center; color: #94a3b8; margin-top: 2px; flex-shrink: 0; }
+    .ems-site-card__row-val { flex: 1; min-width: 0; word-break: break-all; color: #475569; }
+    .ems-site-card__remark { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e8ecf1; font-size: 12px; color: #94a3b8; line-height: 1.45; word-break: break-word; }
+    .ems-site-card__remark:empty { display: none; }
+    .ems-site-card__footer {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 10px 14px 14px;
+    }
+    .ems-site-card__footer .layui-btn { border-radius: 6px; }
+    .ems-site-empty {
+        text-align: center;
+        padding: 48px 20px 56px;
+        color: #94a3b8;
+    }
+    .ems-site-empty__icon {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 16px;
+        border-radius: 50%;
+        background: #fff;
+        border: 1px solid #e8ecf1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 28px;
+        color: #cbd5e1;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+    }
+    .ems-site-empty__title { font-size: 15px; color: #64748b; margin-bottom: 6px; }
+    .ems-site-empty__hint { font-size: 12px; color: #adb5c9; }
+    .popup-inner.ems-plugin-inner { display: flex; flex-direction: column; padding: 0; }
     </style>
-    <div class="popup-inner">
+    <div class="popup-inner ems-plugin-inner">
         <div class="ems-toolbar">
             <span class="ems-toolbar__left">配置与本商城对接的其他 EMSHOP 站点（对方需在用户中心生成 API SECRET）。保存时将请求对方 <code>base_info</code> 接口并自动写入站点名。后续同步/下单能力将逐步接入。</span>
             <button type="button" class="popup-btn popup-btn--primary" id="emsAddSiteBtn"><i class="fa fa-plus"></i> 新增站点</button>
         </div>
-        <table id="emsSiteTable" lay-filter="emsSiteTable"></table>
+        <div class="layui-form ems-site-list-area">
+            <div id="emsSiteEmpty" class="ems-site-empty">
+                <div class="ems-site-empty__icon"><i class="fa fa-link"></i></div>
+                <div class="ems-site-empty__title ems-site-empty__title-text">正在加载…</div>
+                <div class="ems-site-empty__hint">点击上方「新增站点」开始配置</div>
+            </div>
+            <div id="emsSiteCardWrap" class="ems-site-cards" style="display: none;"></div>
+        </div>
     </div>
-
-    <script type="text/html" id="emsSiteRowActionTpl">
-        <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="edit"><i class="fa fa-pencil"></i> 编辑</a>
-        <a class="layui-btn layui-btn-xs layui-btn-danger" lay-event="delete"><i class="fa fa-trash"></i> 删除</a>
-    </script>
-    <script type="text/html" id="emsSiteEnabledTpl">
-        <input type="checkbox" lay-skin="switch" lay-text="启用|停用" lay-filter="emsSiteEnabled" value="{{ d.id }}" {{ d.enabled == 1 ? 'checked' : '' }}>
-    </script>
 
     <script>
     var EMS_CSRF = <?= json_encode($csrfToken) ?>;
 
-    layui.use(['layer', 'form', 'table'], function(){
-        var $ = layui.$, layer = layui.layer, table = layui.table, form = layui.form;
+    layui.use(['layer', 'form'], function(){
+        var $ = layui.$, layer = layui.layer, form = layui.form;
 
-        // 新增/编辑表单在顶层窗口打开，避免嵌在「插件设置」iframe 里过挤；表单 DOM 在 winShell 内，序列化须用 $top
+        // 弹层挂在顶层窗口；新增/编辑为 iframe 独立页，避免嵌在设置页里过挤
         var winShell = (function () {
             try {
                 if (typeof top !== 'undefined' && top !== window && top.layui && top.layui.layer) {
@@ -89,8 +162,6 @@ function plugin_setting_view(): void
             return window;
         })();
         var layerShell = winShell.layui.layer;
-        var $top = winShell.layui.$;
-        var formShell = winShell.layui.form;
 
         function call(subAction, payload, done) {
             payload = payload || {};
@@ -117,138 +188,237 @@ function plugin_setting_view(): void
             });
         }
 
-        function renderSiteTable(rows) {
-            table.render({
-                elem: '#emsSiteTable',
-                id: 'emsSiteTable',
-                data: rows,
-                page: false,
-                cellMinWidth: 80,
-                cols: [[
-                    { field: 'id', title: 'ID', width: 60, align: 'center' },
-                    { field: 'name', title: '站点名', minWidth: 120 },
-                    { field: 'base_url', title: '接口地址', minWidth: 200 },
-                    { field: 'appid', title: 'appid', width: 100, align: 'center' },
-                    { field: 'secret_masked', title: 'SECRET', width: 120, align: 'center' },
-                    { field: 'enabled', title: '启用', width: 100, templet: '#emsSiteEnabledTpl', align: 'center', unresize: true },
-                    { field: 'remark', title: '备注', minWidth: 100 },
-                    { title: '操作', width: 160, align: 'center', toolbar: '#emsSiteRowActionTpl' }
-                ]]
-            });
+        var siteListRows = [];
+
+        function escHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function renderSiteCards(rows) {
+            siteListRows = rows || [];
+            var $wrap = $('#emsSiteCardWrap');
+            var $empty = $('#emsSiteEmpty');
+            if (!siteListRows.length) {
+                $wrap.hide().empty();
+                $empty.find('.ems-site-empty__title-text').text('暂无对接站点');
+                $empty.find('.ems-site-empty__hint').text('点击上方「新增站点」开始配置').show();
+                $empty.show();
+                return;
+            }
+            $empty.hide();
+            var parts = [];
+            for (var i = 0; i < siteListRows.length; i++) {
+                var d = siteListRows[i];
+                var id = parseInt(d.id, 10) || 0;
+                var on = parseInt(d.enabled, 10) === 1;
+                var name = escHtml(d.name != null ? d.name : ('站点 #' + id));
+                var baseUrl = escHtml(d.base_url != null ? d.base_url : '');
+                var appid = escHtml(d.appid != null ? d.appid : '');
+                var sec = escHtml(d.secret_masked != null ? d.secret_masked : '—');
+                var remark = (d.remark != null && String(d.remark).trim() !== '')
+                    ? escHtml(String(d.remark).trim())
+                    : '';
+                var remarkBlock = remark
+                    ? '<div class="ems-site-card__remark">' + remark + '</div>'
+                    : '';
+                var chk = on ? ' checked' : '';
+                parts.push(
+                    '<div class="ems-site-card' + (on ? ' ems-site-card--on' : '') + '" data-site-id="' + id + '">' +
+                    '<div class="ems-site-card__head">' +
+                    '<div><div class="ems-site-card__title">' + name + '</div>' +
+                    '<div class="ems-site-card__id">ID ' + id + '</div></div>' +
+                    '<div class="ems-site-card__switch-wrap">' +
+                    '<input type="checkbox" lay-skin="switch" lay-text="启用|停用" lay-filter="emsSiteEnabled" value="' + id + '"' + chk + '>' +
+                    '</div></div>' +
+                    '<div class="ems-site-card__body">' +
+                    '<div class="ems-site-card__row"><i class="fa fa-link"></i><span class="ems-site-card__row-val" title="' + baseUrl + '">' + baseUrl + '</span></div>' +
+                    '<div class="ems-site-card__row"><i class="fa fa-id-card-o"></i><span class="ems-site-card__row-val">appid ' + appid + '</span></div>' +
+                    '<div class="ems-site-card__row"><i class="fa fa-lock"></i><span class="ems-site-card__row-val">' + sec + '</span></div>' +
+                    '</div>' + remarkBlock +
+                    '<div class="ems-site-card__footer">' +
+                    '<button type="button" class="layui-btn layui-btn-xs layui-btn-normal ems-site-card__edit" data-site-id="' + id + '"><i class="fa fa-pencil"></i> 编辑</button>' +
+                    '<button type="button" class="layui-btn layui-btn-xs ems-site-card__import" data-site-id="' + id + '"><i class="fa fa-cloud-download"></i> 导入商品</button>' +
+                    '<button type="button" class="layui-btn layui-btn-xs layui-btn-danger ems-site-card__del" data-site-id="' + id + '"><i class="fa fa-trash"></i> 删除</button>' +
+                    '</div></div>'
+                );
+            }
+            $wrap.html(parts.join('')).show();
             form.render('checkbox');
         }
 
         function loadSites() {
-            call('site_list', {}, function(err, data){
-                if (err) { layer.msg(err.message); return; }
-                renderSiteTable(data.list || []);
+            $('#emsSiteCardWrap').hide().empty();
+            $('#emsSiteEmpty').show();
+            $('#emsSiteEmpty').find('.ems-site-empty__title-text').text('正在加载…');
+            $('#emsSiteEmpty').find('.ems-site-empty__hint').hide();
+            call('site_list', {}, function (err, data) {
+                if (err) {
+                    $('#emsSiteEmpty').find('.ems-site-empty__title-text').text(err.message || '加载失败');
+                    $('#emsSiteEmpty').find('.ems-site-empty__hint').text('请稍后重试或刷新页面').show();
+                    return;
+                }
+                renderSiteCards(data.list || []);
             });
         }
+
+        try {
+            if (!winShell.__emsShopSiteReloadBound) {
+                winShell.__emsShopSiteReloadBound = true;
+                winShell.addEventListener('emshop_site_list_reload', function () {
+                    loadSites();
+                });
+            }
+        } catch (e) {}
+
         loadSites();
 
-        function escHtml(s) {
-            return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
-                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-            });
-        }
-        function serializeFormRoot($root) {
-            var out = {};
-            $root.find('input,textarea,select').each(function(){
-                var $el = $(this), name = $el.attr('name');
-                if (!name) return;
-                if ($el.attr('type') === 'radio') { if ($el.prop('checked')) out[name] = $el.val(); }
-                else if ($el.attr('type') === 'checkbox') { out[name] = $el.prop('checked') ? 1 : 0; }
-                else { out[name] = $el.val(); }
-            });
-            return out;
-        }
-
         function openSiteForm(row) {
-            var isEdit = !!(row && row.id);
-            var r = row || { enabled: 1 };
-            var formId = 'emsSiteForm_' + Date.now();
-            var html =
-              '<div class="popup-inner" style="padding:14px 20px;">' +
-                '<form class="layui-form" lay-filter="' + formId + '" id="' + formId + '">' +
-                  '<input type="hidden" name="id" value="' + (r.id || '') + '">' +
-                  '<div class="layui-form-item"><label class="layui-form-label">接口地址</label>' +
-                    '<div class="layui-input-block"><input class="layui-input" name="base_url" required lay-verify="required" value="' + escHtml(r.base_url || '') + '" placeholder="https://对方域名/"></div>' +
-                    '<div class="layui-form-mid layui-word-aux" style="margin-left:0;">对方对外 API 的根 URL；若末尾未带 /，保存时会自动补上</div></div>' +
-                  '<div class="layui-form-item"><label class="layui-form-label">appid</label>' +
-                    '<div class="layui-input-block"><input class="layui-input" name="appid" required lay-verify="required" value="' + escHtml(r.appid || '') + '" placeholder="对方用户中心 API 的 APPID"></div></div>' +
-                  '<div class="layui-form-item"><label class="layui-form-label">SECRET</label>' +
-                    '<div class="layui-input-block"><input type="password" class="layui-input" name="secret" value="' + escHtml(r.secret || '') + '" placeholder="' + (isEdit ? '留空表示不修改' : '必填') + '" autocomplete="new-password"></div></div>' +
-                  '<div class="layui-form-item"><label class="layui-form-label">启用</label>' +
-                    '<div class="layui-input-block"><input type="checkbox" name="enabled" lay-skin="switch" lay-text="启用|停用"' + ((r.enabled == 1 || r.enabled === undefined) ? ' checked' : '') + '></div></div>' +
-                  '<div class="layui-form-item"><label class="layui-form-label">备注</label>' +
-                    '<div class="layui-input-block"><textarea class="layui-textarea" name="remark" rows="2">' + escHtml(r.remark || '') + '</textarea></div></div>' +
-                '</form>' +
-              '</div>';
-
+            var id = (row && row.id) ? parseInt(row.id, 10) : 0;
+            if (id < 0) id = 0;
+            var url = '/content/plugin/emshop/emshop_site_form_page.php?id=' + id;
+            if (id > 0) {
+                try {
+                    var sk = 'emshop_site_form_' + id + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+                    var pkg = {
+                        id: row.id,
+                        base_url: row.base_url ? String(row.base_url) : '',
+                        appid: row.appid != null ? String(row.appid) : '',
+                        enabled: parseInt(row.enabled, 10) === 1 ? 1 : 0,
+                        remark: row.remark != null ? String(row.remark) : ''
+                    };
+                    winShell.sessionStorage.setItem(sk, JSON.stringify(pkg));
+                    url += '&sk=' + encodeURIComponent(sk);
+                } catch (e) {
+                    layerShell.msg('无法写入浏览器会话（请禁用拦截后重试）');
+                    return;
+                }
+            }
             layerShell.open({
-                type: 1,
-                title: (isEdit ? '编辑' : '新增') + '对接站点',
+                type: 2,
+                title: (id ? '编辑' : '新增') + '对接站点',
                 skin: 'admin-modal',
-                area: ['560px', 'auto'],
+                area: ['640px', '560px'],
                 shadeClose: false,
-                content: html,
-                btn: ['保存', '取消'],
-                success: function () {
-                    formShell.render(null, formId);
-                },
-                yes: function (index) {
-                    var $form = $top('#' + formId);
-                    if (!$form.length) {
-                        layerShell.msg('表单异常，请关闭后重试');
-                        return;
+                content: url,
+                success: function (layero, layerIndex) {
+                    var iframe = layero.find('iframe')[0];
+                    if (!iframe) return;
+                    function stamp() {
+                        try {
+                            var cw = iframe.contentWindow;
+                            if (!cw) return;
+                            cw.__EMS_LAYER_INDEX__ = layerIndex;
+                            cw.__EMS_LAYER_HOST__ = winShell;
+                        } catch (e) {}
                     }
-                    var data = serializeFormRoot($form);
-                    call('site_save', data, function(err){
-                        if (err) { layerShell.msg(err.message); return; }
-                        layerShell.close(index);
-                        layerShell.msg('已保存');
-                        loadSites();
-                    });
-                },
-                btn2: function (index) {
-                    layerShell.close(index);
+                    try {
+                        if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+                            stamp();
+                        } else {
+                            $(iframe).one('load', stamp);
+                        }
+                    } catch (e2) {
+                        $(iframe).one('load', stamp);
+                    }
                 }
             });
         }
 
         $('#emsAddSiteBtn').on('click', function() { openSiteForm(null); });
 
-        table.on('tool(emsSiteTable)', function(obj){
-            if (obj.event === 'edit') {
-                var loading = layerShell.load(2, { shade: 0.15 });
-                call('site_get', { id: obj.data.id }, function(err, data){
-                    layerShell.close(loading);
-                    if (err) { layer.msg(err.message); return; }
-                    openSiteForm(data.row || {});
-                });
-            } else if (obj.event === 'delete') {
-                layerShell.confirm('确定删除该对接站点？', function(i){
-                    layerShell.close(i);
-                    call('site_delete', { id: obj.data.id }, function(err){
-                        if (err) { layerShell.msg(err.message); return; }
-                        layerShell.msg('已删除');
-                        loadSites();
-                    });
-                });
+        function findSiteRow(siteId) {
+            var sid = parseInt(siteId, 10) || 0;
+            for (var i = 0; i < siteListRows.length; i++) {
+                if (parseInt(siteListRows[i].id, 10) === sid) {
+                    return siteListRows[i];
+                }
             }
+            return null;
+        }
+
+        $('#emsSiteCardWrap').on('click', '.ems-site-card__edit', function () {
+            var id = $(this).data('site-id');
+            openSiteForm(findSiteRow(id) || { id: id });
         });
 
-        form.on('switch(emsSiteEnabled)', function(obj){
+        function openImportGoods(siteId) {
+            siteId = parseInt(siteId, 10) || 0;
+            if (siteId <= 0) return;
+            var url = '/content/plugin/emshop/emshop_import_goods_page.php?site_id=' + siteId;
+            layerShell.open({
+                type: 2,
+                title: '导入商品',
+                skin: 'admin-modal',
+                area: ['960px', '90%'],
+                shadeClose: false,
+                content: url,
+                success: function (layero, layerIndex) {
+                    var iframe = layero.find('iframe')[0];
+                    if (!iframe) return;
+                    function stamp() {
+                        try {
+                            var cw = iframe.contentWindow;
+                            if (!cw) return;
+                            cw.__EMS_LAYER_INDEX__ = layerIndex;
+                            cw.__EMS_LAYER_HOST__ = winShell;
+                        } catch (e) {}
+                    }
+                    try {
+                        if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+                            stamp();
+                        } else {
+                            $(iframe).one('load', stamp);
+                        }
+                    } catch (e2) {
+                        $(iframe).one('load', stamp);
+                    }
+                }
+            });
+        }
+
+        $('#emsSiteCardWrap').on('click', '.ems-site-card__import', function () {
+            openImportGoods($(this).data('site-id'));
+        });
+
+        $('#emsSiteCardWrap').on('click', '.ems-site-card__del', function () {
+            var id = $(this).data('site-id');
+            layerShell.confirm('确定删除该对接站点？', function (i) {
+                layerShell.close(i);
+                call('site_delete', { id: id }, function (err) {
+                    if (err) { layerShell.msg(err.message); return; }
+                    layerShell.msg('已删除');
+                    loadSites();
+                });
+            });
+        });
+
+        form.on('switch(emsSiteEnabled)', function (obj) {
             var id = parseInt(obj.value, 10);
             var enabled = obj.elem.checked ? 1 : 0;
-            call('site_toggle', { id: id, enabled: enabled }, function(err){
+            var $card = $(obj.elem).closest('.ems-site-card');
+            call('site_toggle', { id: id, enabled: enabled }, function (err) {
                 if (err) {
-                    layer.msg(err.message);
+                    layerShell.msg(err.message);
                     obj.elem.checked = !obj.elem.checked;
                     form.render('checkbox');
                     return;
                 }
-                layer.msg('已更新');
+                if (enabled) {
+                    $card.addClass('ems-site-card--on');
+                } else {
+                    $card.removeClass('ems-site-card--on');
+                }
+                for (var i = 0; i < siteListRows.length; i++) {
+                    if (parseInt(siteListRows[i].id, 10) === id) {
+                        siteListRows[i].enabled = enabled;
+                        break;
+                    }
+                }
+                layerShell.msg('已更新');
             });
         });
     });
@@ -268,19 +438,6 @@ function plugin_setting(): void
                 $list[] = RemoteSiteModel::rowForList($row);
             }
             Response::success('', ['list' => $list, 'csrf_token' => Csrf::refresh()]);
-            break;
-        }
-
-        case 'site_get': {
-            $id = (int) Input::post('id', 0);
-            if ($id <= 0) {
-                Response::error('参数错误');
-            }
-            $row = RemoteSiteModel::find($id);
-            if ($row === null) {
-                Response::error('记录不存在');
-            }
-            Response::success('', ['row' => $row, 'csrf_token' => Csrf::refresh()]);
             break;
         }
 
@@ -357,6 +514,126 @@ function plugin_setting(): void
             }
             RemoteSiteModel::update($id, ['enabled' => $enabled], true);
             Response::success('', ['csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
+        case 'import_local_categories': {
+            Response::success('', [
+                'list'       => GoodsImportService::localCategoryOptions(),
+                'csrf_token' => Csrf::refresh(),
+            ]);
+            break;
+        }
+
+        case 'import_remote_categories': {
+            $sid = (int) Input::post('site_id', 0);
+            $site = RemoteSiteModel::find($sid);
+            if ($site === null) {
+                Response::error('对接站点不存在');
+            }
+            if ((int) ($site['enabled'] ?? 0) !== 1) {
+                Response::error('该对接站点已停用');
+            }
+            try {
+                $list = RemoteApiClient::fetchGoodsCategory(
+                    (string) ($site['base_url'] ?? ''),
+                    (string) ($site['appid'] ?? ''),
+                    (string) ($site['secret'] ?? '')
+                );
+            } catch (Throwable $e) {
+                Response::error('拉取对方分类失败：' . $e->getMessage());
+            }
+            Response::success('', ['list' => $list, 'csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
+        case 'import_remote_goods': {
+            $sid = (int) Input::post('site_id', 0);
+            $site = RemoteSiteModel::find($sid);
+            if ($site === null) {
+                Response::error('对接站点不存在');
+            }
+            if ((int) ($site['enabled'] ?? 0) !== 1) {
+                Response::error('该对接站点已停用');
+            }
+            $rawIds = trim((string) Input::post('category_ids', ''));
+            $query = [];
+            if ($rawIds !== '') {
+                $decoded = json_decode($rawIds, true);
+                if (is_array($decoded)) {
+                    $ids = [];
+                    foreach ($decoded as $v) {
+                        $id = (int) $v;
+                        if ($id > 0) {
+                            $ids[] = $id;
+                        }
+                    }
+                    if ($ids !== []) {
+                        $query['category_ids'] = implode(',', $ids);
+                    }
+                }
+            }
+            try {
+                $list = RemoteApiClient::fetchGoodsList(
+                    (string) ($site['base_url'] ?? ''),
+                    (string) ($site['appid'] ?? ''),
+                    (string) ($site['secret'] ?? ''),
+                    $query
+                );
+            } catch (Throwable $e) {
+                Response::error('拉取对方商品失败：' . $e->getMessage());
+            }
+            Response::success('', ['list' => $list, 'csrf_token' => Csrf::refresh()]);
+            break;
+        }
+
+        case 'import_goods_sync': {
+            $sid = (int) Input::post('site_id', 0);
+            $site = RemoteSiteModel::find($sid);
+            if ($site === null) {
+                Response::error('对接站点不存在');
+            }
+            if ((int) ($site['enabled'] ?? 0) !== 1) {
+                Response::error('该对接站点已停用');
+            }
+            $targetCat = (int) Input::post('target_category_id', 0);
+            $markupMode = trim((string) Input::post('markup_mode', 'percent'));
+            $markupValue = (float) Input::post('markup_value', 0);
+            $imageMode = trim((string) Input::post('image_mode', 'remote'));
+            $goodsRaw = Input::post('goods_ids', '');
+            $goodsIds = [];
+            if (is_string($goodsRaw) && $goodsRaw !== '') {
+                $decoded = json_decode($goodsRaw, true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $v) {
+                        $gid = (int) $v;
+                        if ($gid > 0) {
+                            $goodsIds[] = $gid;
+                        }
+                    }
+                }
+            }
+            $goodsIds = array_values(array_unique($goodsIds));
+            try {
+                $result = GoodsImportService::syncGoods(
+                    $site,
+                    $targetCat,
+                    $markupMode,
+                    $markupValue,
+                    $imageMode,
+                    $goodsIds
+                );
+            } catch (Throwable $e) {
+                Response::error($e->getMessage());
+            }
+            $msg = '完成：成功 ' . $result['ok'] . ' 条';
+            if ($result['fail'] > 0) {
+                $msg .= '，失败 ' . $result['fail'] . ' 条';
+            }
+            Response::success($msg, [
+                'result'     => $result,
+                'csrf_token' => Csrf::refresh(),
+            ]);
             break;
         }
 
