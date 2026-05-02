@@ -9,7 +9,7 @@ declare(strict_types=1);
  *       /?c=api&act=query_order    (GET/POST)
  *       /?c=api&act=base_info      (GET/POST)
  *       /?c=api&act=goods_category (GET/POST)
- *       /?c=api&act=goods_list      (GET/POST，不分页；可选 goods_id / goods_ids / category_id)
+ *       /?c=api&act=goods_list      (GET/POST，不分页；可选 goods_id / goods_ids / category_id / category_ids)
  *
  * 鉴权参数（所有 act 通用）：
  *   appid      = user.id
@@ -370,8 +370,9 @@ class ApiController extends BaseController
      * 可选（可组合，均为 AND）：
      *   goods_id        单个商品 id
      *   goods_ids       多个 id：逗号分隔字符串 "1,2,3"，或 JSON 数组 [1,2,3]（与 goods_id 二选一时可混用，合并去重）
-     *   category_id     分类 id（需配合 category_source 区分主站/商户分类）
-     *   category_source = main|merchant（有 category_id 时生效，默认 main）
+     *   category_id     单个分类 id（需配合 category_source；与 category_ids 二选一优先 category_ids）
+     *   category_ids    多个分类 id：逗号分隔或 JSON 数组（用于一级分类下含多个二级时的并集筛选）
+     *   category_source = main|merchant（有 category_id 或 category_ids 时生效，默认 main）
      *   keyword         标题/简介模糊
      *
      * 不传 goods_id(s)、category_id、keyword 时：返回当前账号可见范围内全部已开启 API 对接的商品。
@@ -392,11 +393,18 @@ class ApiController extends BaseController
             $where['goods_ids'] = $goodsIds;
         }
 
-        $categoryId = (int) ($params['category_id'] ?? 0);
-        if ($categoryId > 0) {
-            $where['category_id'] = $categoryId;
+        $categoryIds = $this->parseRequestCategoryIds($params);
+        if ($categoryIds !== []) {
+            $where['category_ids'] = $categoryIds;
             $catSource = strtolower(trim((string) ($params['category_source'] ?? 'main')));
             $where['category_source'] = $catSource === 'merchant' ? 'merchant' : 'main';
+        } else {
+            $categoryId = (int) ($params['category_id'] ?? 0);
+            if ($categoryId > 0) {
+                $where['category_id'] = $categoryId;
+                $catSource = strtolower(trim((string) ($params['category_source'] ?? 'main')));
+                $where['category_source'] = $catSource === 'merchant' ? 'merchant' : 'main';
+            }
         }
         $keyword = trim((string) ($params['keyword'] ?? ''));
         if ($keyword !== '') {
@@ -423,6 +431,7 @@ class ApiController extends BaseController
                 'goods_type'      => (string) ($row['goods_type'] ?? ''),
                 'delivery_type'   => (string) ($row['delivery_type'] ?? ''),
                 'jump_url'        => (string) ($row['jump_url'] ?? ''),
+                'category_id'     => (int) ($row['category_id'] ?? 0),
             ];
         }
 
@@ -430,6 +439,34 @@ class ApiController extends BaseController
             'list'  => $outList,
             'total' => count($outList),
         ]);
+    }
+
+    /**
+     * 解析请求中的分类 id 列表（与 goods_ids 传法一致，去重，>0）。
+     *
+     * @param array<string, mixed> $params
+     * @return list<int>
+     */
+    private function parseRequestCategoryIds(array $params): array
+    {
+        $acc = [];
+        $rawIds = $params['category_ids'] ?? null;
+        if (is_array($rawIds)) {
+            foreach ($rawIds as $v) {
+                $id = (int) $v;
+                if ($id > 0) {
+                    $acc[$id] = true;
+                }
+            }
+        } elseif (is_string($rawIds) && trim($rawIds) !== '') {
+            foreach (preg_split('/\s*,\s*/', $rawIds, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $part) {
+                $id = (int) $part;
+                if ($id > 0) {
+                    $acc[$id] = true;
+                }
+            }
+        }
+        return array_map('intval', array_keys($acc));
     }
 
     /**

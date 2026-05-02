@@ -251,7 +251,7 @@ abstract class BaseController
             $limit = max(1, $limit);
             $limitTail = " LIMIT {$limit}";
         }
-        $sql = "SELECT g.id, g.title, g.cover_images, g.min_price, g.max_price,
+        $sql = "SELECT g.id, g.title, g.category_id, g.cover_images, g.min_price, g.max_price,
                     g.total_stock, g.goods_type, g.plugin_data, g.owner_id, g.jump_url" . $selectExtra . ",
                     (SELECT market_price FROM {$prefix}goods_spec
                      WHERE goods_id = g.id AND is_default = 1 AND status = 1 LIMIT 1) as default_market_price,
@@ -285,6 +285,7 @@ abstract class BaseController
             }
             $list[] = [
                 'id'             => (int) $row['id'],
+                'category_id'    => (int) ($row['category_id'] ?? 0),
                 'name'           => $row['title'],
                 'image'          => $covers[0] ?? '',
                 'price'          => $minPrice,
@@ -381,7 +382,7 @@ abstract class BaseController
         $offset = ($page - 1) * $perPage;
 
         // 查询当前页数据
-        $sql = "SELECT g.id, g.title, g.cover_images, g.min_price, g.max_price,
+        $sql = "SELECT g.id, g.title, g.category_id, g.cover_images, g.min_price, g.max_price,
                     g.total_stock, g.goods_type, g.plugin_data, g.owner_id, g.jump_url" . $selectExtra . ",
                     (SELECT market_price FROM {$prefix}goods_spec
                      WHERE goods_id = g.id AND is_default = 1 AND status = 1 LIMIT 1) as default_market_price,
@@ -414,6 +415,7 @@ abstract class BaseController
             }
             $list[] = [
                 'id'             => (int) $row['id'],
+                'category_id'    => (int) ($row['category_id'] ?? 0),
                 'name'           => $row['title'],
                 'image'          => $covers[0] ?? '',
                 'price'          => $minPrice,

@@ -84,7 +84,79 @@ final class RemoteApiClient
         return $data;
     }
 
-    private static function httpPost(string $url, string $body): string|false
+    /**
+     * 通用 POST 调用对方 `?c=api&act=...`（与 base_info 相同鉴权）。
+     *
+     * @param array<string, mixed> $bodyParams 除 appid/timestamp/sign 外的业务参数
+     * @return array<string, mixed> 对方 JSON 的 data 段（整段为数组时）
+     */
+    public static function apiPost(string $baseUrl, string $act, array $bodyParams, string $appid, string $secret): array
+    {
+        $baseUrl = rtrim(trim($baseUrl), '/') . '/';
+        $appidInt = (int) preg_replace('/\D/', '', $appid);
+        if ($appidInt <= 0) {
+            throw new \RuntimeException('appid 无效');
+        }
+        $secret = trim($secret);
+        if ($secret === '') {
+            throw new \RuntimeException('SECRET 不能为空');
+        }
+        $act = trim($act);
+        if ($act === '') {
+            throw new \RuntimeException('act 不能为空');
+        }
+
+        $params = array_merge($bodyParams, [
+            'appid'     => $appidInt,
+            'timestamp' => time(),
+            'sign_type' => 'MD5',
+        ]);
+        $params['sign'] = self::sign($params, $secret);
+
+        $url = $baseUrl . '?c=api&act=' . rawurlencode($act);
+        $body = http_build_query($params);
+        $raw = self::httpPost($url, $body);
+        if ($raw === '' || $raw === false) {
+            throw new \RuntimeException('对方接口无响应或网络失败');
+        }
+        $json = json_decode($raw, true);
+        if (!is_array($json)) {
+            throw new \RuntimeException('对方返回非 JSON');
+        }
+        $code = (int) ($json['code'] ?? 0);
+        if ($code !== 200) {
+            $msg = trim((string) ($json['msg'] ?? '请求失败'));
+            throw new \RuntimeException($msg !== '' ? $msg : '对方接口返回错误');
+        }
+        $data = $json['data'] ?? null;
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public static function fetchGoodsCategory(string $baseUrl, string $appid, string $secret): array
+    {
+        $data = self::apiPost($baseUrl, 'goods_category', [], $appid, $secret);
+        $list = $data['list'] ?? [];
+        return is_array($list) ? $list : [];
+    }
+
+    /**
+     * @param array<string, mixed> $query 如 category_id、category_ids（逗号串）、goods_ids、keyword
+     * @return list<array<string, mixed>>
+     */
+    public static function fetchGoodsList(string $baseUrl, string $appid, string $secret, array $query = []): array
+    {
+        $data = self::apiPost($baseUrl, 'goods_list', $query, $appid, $secret);
+        $list = $data['list'] ?? [];
+        return is_array($list) ? $list : [];
+    }
+
+    /**
+     * @return string|false
+     */
+    private static function httpPost(string $url, string $body)
     {
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
