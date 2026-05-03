@@ -207,8 +207,7 @@ $server->on('workerStart', function (Swoole\Http\Server $server, int $workerId) 
     @touch(SW_HEARTBEAT_FILE);
 
     // ----- 启动时记一次代码版本号快照 -----
-    // 后台启用/禁用/安装/卸载带 Swoole:true 标记的插件时，会调 PluginModel::bumpSwooleCodeVersion()
-    // 推进 swoole_code_version。timer 里会对比当前值 vs 此 boot 快照，
+    // timer 里会对比当前值 vs 此 boot 快照，
     // 不一致就 $server->reload()，让 worker 重新 require init.php 加载新代码。
     Config::reload();
     $bootCodeVersion = (string) (Config::get('swoole_code_version') ?? '');
