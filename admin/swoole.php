@@ -82,7 +82,6 @@ if (Request::isPost()) {
 
         // ===== 重启（实际是 reload：平滑替换 worker，不丢请求）=====
         case 'reload': {
-            assertShellAvailable();
             if (PHP_OS_FAMILY !== 'Linux') {
                 Response::error('重启操作仅在 Linux 环境可用');
             }
@@ -90,12 +89,10 @@ if (Request::isPost()) {
             if (swooleApiGetAny($swooleApiUrls, '/status') === null && !swoolePidRunning()) {
                 Response::error('Swoole 未运行，请先启动');
             }
-            $php = swoolePhpBinary();
-            $script = escapeshellarg(EM_ROOT . '/swoole/server.php');
-            $output = []; $rc = 0;
-            @exec("{$php} {$script} reload 2>&1", $output, $rc);
-            $msg = trim(implode("\n", $output));
-            Response::success($msg !== '' ? $msg : '已发送 reload 信号', ['csrf_token' => Csrf::refresh()]);
+            if (!swooleReloadWorkers()) {
+                Response::error('发送 Swoole reload 信号失败，请检查 posix 扩展或进程权限');
+            }
+            Response::success('已发送 Swoole reload 信号（SIGUSR1）', ['csrf_token' => Csrf::refresh()]);
             break;
         }
 
@@ -303,12 +300,7 @@ function swooleApiPostAny(array $baseUrls, string $path, array $data): ?array
  */
 function swoolePidRunning(): bool
 {
-    $pidFile = EM_ROOT . '/swoole/swoole.pid';
-    if (!is_file($pidFile)) {
-        return false;
-    }
-
-    $pid = (int) trim((string) @file_get_contents($pidFile));
+    $pid = swooleReadPid();
     if ($pid <= 0) {
         return false;
     }
@@ -322,4 +314,31 @@ function swoolePidRunning(): bool
         return is_dir('/proc/' . $pid);
     }
     return false;
+}
+
+/**
+ * 发送 Swoole 内置的 worker reload 信号（SIGUSR1）。
+ */
+function swooleReloadWorkers(): bool
+{
+    $pid = swooleReadPid();
+    if ($pid <= 0) {
+        return false;
+    }
+    if (!function_exists('posix_kill') || !defined('SIGUSR1')) {
+        return false;
+    }
+    return @posix_kill($pid, SIGUSR1);
+}
+
+/**
+ * 读取 Swoole 主进程 PID。
+ */
+function swooleReadPid(): int
+{
+    $pidFile = EM_ROOT . '/swoole/swoole.pid';
+    if (!is_file($pidFile)) {
+        return 0;
+    }
+    return (int) trim((string) @file_get_contents($pidFile));
 }
