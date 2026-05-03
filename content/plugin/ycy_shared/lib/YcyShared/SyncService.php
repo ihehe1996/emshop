@@ -56,7 +56,11 @@ final class SyncService
             try {
                 self::syncStockOne($row);
             } catch (Throwable $e) {
-                error_log('[ycy_shared] syncStock #' . $row['id'] . ' ' . $e->getMessage());
+                Logger::warning('库存同步失败', $e->getMessage(), [
+                    'mapping_id' => (int) ($row['id'] ?? 0),
+                    'site_id' => (int) ($row['site_id'] ?? 0),
+                    'goods_id' => (int) ($row['goods_id'] ?? 0),
+                ]);
             }
         }
     }
@@ -77,7 +81,11 @@ final class SyncService
             try {
                 self::syncPriceOne($row);
             } catch (Throwable $e) {
-                error_log('[ycy_shared] syncPrice #' . $row['id'] . ' ' . $e->getMessage());
+                Logger::warning('价格同步失败', $e->getMessage(), [
+                    'mapping_id' => (int) ($row['id'] ?? 0),
+                    'site_id' => (int) ($row['site_id'] ?? 0),
+                    'goods_id' => (int) ($row['goods_id'] ?? 0),
+                ]);
             }
         }
     }

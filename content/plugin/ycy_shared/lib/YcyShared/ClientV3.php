@@ -95,12 +95,24 @@ final class ClientV3 extends Client
 
     public function placeOrder(string $ref, int $quantity, array $extra = []): array
     {
-        $resp = $this->call('/?s=/shared/commodity/trade', array_merge([
+        $payload = array_merge([
             'shared_code' => $ref,
             'num'         => $quantity,
             'contact'     => (string) ($extra['contact'] ?? 'emshop@auto'),
             'pay_id'      => (int) ($extra['pay_id'] ?? 1), // 上游支付方式 id；通常 1 = 余额
-        ], $extra['sku_fields'] ?? []));
+        ], $extra['sku_fields'] ?? []);
+        if (!empty($extra['trade_no'])) {
+            $payload['trade_no'] = (string) $extra['trade_no'];
+        }
+        if (!empty($extra['sku_id'])) {
+            // 部分 V3 对接端支持 sku_id / category 其中一种；都透传以提高兼容性
+            $payload['sku_id'] = (int) $extra['sku_id'];
+            if (!isset($payload['category'])) {
+                $payload['category'] = (int) $extra['sku_id'];
+            }
+        }
+
+        $resp = $this->call('/?s=/shared/commodity/trade', $payload);
 
         $data = $resp['data'] ?? [];
         return [

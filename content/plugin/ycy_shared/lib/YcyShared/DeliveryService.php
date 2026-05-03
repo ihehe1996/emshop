@@ -106,7 +106,11 @@ final class DeliveryService
                 }
             } catch (\Throwable $e) {
                 // 查询失败不阻塞，继续走重下流程
-                error_log('[ycy_shared] queryOrder fallback: ' . $e->getMessage());
+                Logger::warning('查询上游订单失败，转重下', $e->getMessage(), [
+                    'order_id' => $orderId,
+                    'order_goods_id' => $orderGoodsId,
+                    'upstream_trade_no' => (string) $trade['upstream_trade_no'],
+                ]);
             }
         }
 
