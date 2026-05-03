@@ -37,6 +37,9 @@ final class ClientV3 extends Client
         return $resp;
     }
 
+    /**
+     * 连接店铺
+    */
     public function connect(): array
     {
         $resp = $this->call('/?s=/shared/authentication/connect');
@@ -50,12 +53,52 @@ final class ClientV3 extends Client
     public function fetchItems(): array
     {
         $resp = $this->call('/?s=/shared/commodity/items');
-        // print_r($resp); die;
         $list = $resp['data'] ?? [];
-        $out  = [];
+        if (!is_array($list)) {
+            return [];
+        }
+
+        $out = [];
+        $seenRef = [];
         foreach ($list as $cat) {
-            foreach (($cat['commodity'] ?? $cat['items'] ?? []) as $item) {
-                $out[] = $this->normalizeItem($item, (string) ($cat['name'] ?? ''));
+            if (!is_array($cat)) {
+                continue;
+            }
+            $categoryName = (string) ($cat['name'] ?? '');
+
+            // 兼容不同版本目录结构：children / commodity / items
+            $items = [];
+            if (!empty($cat['children']) && is_array($cat['children'])) {
+                $items = $cat['children'];
+            } elseif (!empty($cat['commodity']) && is_array($cat['commodity'])) {
+                $items = $cat['commodity'];
+            } elseif (!empty($cat['items']) && is_array($cat['items'])) {
+                $items = $cat['items'];
+            } elseif (!empty($cat['code'])) {
+                // 兼容某些实现直接返回平铺商品数组
+                $items = [$cat];
+            }
+
+            foreach ($items as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $ref = trim((string) ($item['code'] ?? ''));
+                if ($ref === '' || isset($seenRef[$ref])) {
+                    continue;
+                }
+                // 不可售商品过滤：关闭/隐藏/API关闭均不导入
+                if (array_key_exists('status', $item) && (int) ($item['status'] ?? 0) !== 1) {
+                    continue;
+                }
+                if (array_key_exists('api_status', $item) && (int) ($item['api_status'] ?? 0) !== 1) {
+                    continue;
+                }
+                if ((int) ($item['hide'] ?? 0) === 1) {
+                    continue;
+                }
+                $seenRef[$ref] = true;
+                $out[] = $this->normalizeItem($item, $categoryName);
             }
         }
         return $out;
@@ -69,7 +112,13 @@ final class ClientV3 extends Client
 
     public function fetchStock(string $ref, $skuId = null): int
     {
-        $resp = $this->call('/?s=/shared/commodity/stock', ['code' => $ref]);
+        $payload = ['code' => $ref];
+        // V3 多维规格库存查询：透传 sku 数组（如 ['颜色'=>'黑','容量'=>'256G']）
+        if (is_array($skuId) && !empty($skuId['sku']) && is_array($skuId['sku'])) {
+            $payload['sku'] = $skuId['sku'];
+        }
+        $resp = $this->call('/?s=/shared/commodity/stock', $payload);
+        // print_r($resp); die;
         return (int) (($resp['data']['stock'] ?? 0) ?: 0);
     }
 
@@ -128,6 +177,7 @@ final class ClientV3 extends Client
      */
     private function normalizeItem(array $item, string $categoryName): array
     {
+        $skuRows = $this->parseConfigSkuRows($item);
         return [
             'ref'          => (string) ($item['code'] ?? ''),
             'name'         => (string) ($item['name'] ?? ''),
@@ -135,9 +185,104 @@ final class ClientV3 extends Client
             'price'        => (float) ($item['user_price'] ?? $item['price'] ?? 0), // 用户等级价优先
             'stock'        => (int)   ($item['stock'] ?? 0),
             'delivery_way' => (int)   ($item['delivery_way'] ?? 0),  // 0 自动 1 人工
-            'config_raw'   => (string) ($item['config'] ?? ''),     // INI 格式 SKU 配置
-            'sku'          => [], // V3 的 SKU 需要解析 config，解析交给 SyncService
+            'config_raw'   => is_array($item['config'] ?? null)
+                ? json_encode($item['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : (string) ($item['config'] ?? ''),
+            'sku'          => $skuRows,
             'raw'          => $item,
         ];
+    }
+
+    /**
+     * 解析 V3 config.sku 多维规格矩阵，展开为 SKU 组合列表。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function parseConfigSkuRows(array $item): array
+    {
+        // print_r($item); die;
+        $cfg = $item['config'] ?? null;
+        if (is_string($cfg) && trim($cfg) !== '') {
+            $decoded = json_decode($cfg, true);
+            if (is_array($decoded)) {
+                $cfg = $decoded;
+            }
+        }
+        if (!is_array($cfg) || empty($cfg['sku']) || !is_array($cfg['sku'])) {
+            return [];
+        }
+
+        $dims = [];
+        foreach ($cfg['sku'] as $dimName => $options) {
+            if (!is_array($options)) {
+                continue;
+            }
+            $cleanOpts = [];
+            foreach ($options as $optName => $premium) {
+                $name = trim((string) $optName);
+                if ($name === '') {
+                    continue;
+                }
+                $cleanOpts[] = ['name' => $name, 'premium' => (float) $premium];
+            }
+            if ($cleanOpts !== []) {
+                $dims[] = ['name' => (string) $dimName, 'options' => $cleanOpts];
+            }
+        }
+        if ($dims === []) {
+            return [];
+        }
+
+        $basePrice = (float) ($item['user_price'] ?? $item['price'] ?? 0);
+        $stock = max(0, (int) ($item['stock'] ?? 0));
+        // print_r($stock); 
+        $rows = [];
+        $combos = [[]];
+        foreach ($dims as $dim) {
+            $next = [];
+            foreach ($combos as $combo) {
+                foreach ($dim['options'] as $opt) {
+                    $c = $combo;
+                    $c[] = [
+                        'dim' => (string) ($dim['name'] ?? ''),
+                        'name' => (string) ($opt['name'] ?? ''),
+                        'premium' => (float) ($opt['premium'] ?? 0),
+                    ];
+                    $next[] = $c;
+                }
+            }
+            $combos = $next;
+        }
+
+        foreach ($combos as $combo) {
+            $parts = [];
+            $skuPayload = [];
+            $premiumSum = 0.0;
+            foreach ($combo as $part) {
+                $dim = (string) ($part['dim'] ?? '');
+                $opt = (string) ($part['name'] ?? '');
+                if ($dim === '' || $opt === '') {
+                    continue;
+                }
+                $parts[] = $opt;
+                $skuPayload[$dim] = $opt;
+                $premiumSum += (float) ($part['premium'] ?? 0);
+            }
+            if ($skuPayload === []) {
+                continue;
+            }
+            $price = $basePrice + $premiumSum;
+            if ($price < 0) {
+                $price = 0;
+            }
+            $rows[] = [
+                'sku_id' => null,
+                'name'   => implode(' / ', $parts),
+                'price'  => $price,
+                'stock'  => $stock,
+                'sku_fields' => ['sku' => $skuPayload],
+            ];
+        }
+        return $rows;
     }
 }

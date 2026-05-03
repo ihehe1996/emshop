@@ -16,11 +16,7 @@ $swooleApiUrls = swooleApiCandidates(Config::get('swoole_api_url', 'http://127.0
 // AJAX 请求：代理转发到 Swoole HTTP API
 if (Request::isPost()) {
     $action = (string) Input::post('_action', '');
-    $csrf = (string) Input::post('csrf_token', '');
-
-    if (!Csrf::validate($csrf)) {
-        Response::error('请求已失效，请刷新页面后重试');
-    }
+    
 
     switch ($action) {
         case 'status':

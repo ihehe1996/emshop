@@ -23,10 +23,14 @@ spl_autoload_register(function (string $class): void {
 });
 
 // ============================================================
-// 定时同步：每 1 分钟拉一次库存+价格
-//   依赖核心 swoole_timer_tick（60s 一次）钩子。插件内部做节流(暂时不做节流)
+// 定时同步：插件内节流为每 30 分钟跑一轮库存+价格同步
+//   依赖核心 swoole_goods_sync_tick（60s 一次）钩子，是否执行由插件自行控制。
 // ============================================================
-addAction('swoole_timer_tick', function (): void {
+addAction('swoole_goods_sync_tick', function (): void {
+    $gate = emshop_try_enter_sync_window(1800);
+    if (empty($gate['ok'])) {
+        return;
+    }
     try {
         $summary = emshop_sync_remote_price_stock();
         emshop_write_system_log(
@@ -42,8 +46,84 @@ addAction('swoole_timer_tick', function (): void {
             $e->getMessage(),
             ['trace' => mb_substr($e->getTraceAsString(), 0, 2000, 'UTF-8')]
         );
+    } finally {
+        emshop_leave_sync_window((string) ($gate['token'] ?? ''));
     }
 });
+
+/**
+ * 尝试进入商品同步窗口：
+ * - 同步最小间隔 intervalSeconds（默认 30 分钟）
+ * - 若上一次仍在执行（锁未释放），本次直接跳过
+ *
+ * @return array{ok:bool, token:string}
+ */
+function emshop_try_enter_sync_window(int $intervalSeconds = 1800): array
+{
+    if (!isset($GLOBALS['emshop_goods_sync_local_state']) || !is_array($GLOBALS['emshop_goods_sync_local_state'])) {
+        $GLOBALS['emshop_goods_sync_local_state'] = ['lock' => false, 'last' => 0];
+    }
+    $state = &$GLOBALS['emshop_goods_sync_local_state'];
+
+    $now = time();
+    if (!class_exists('Cache')) {
+        if (!empty($state['lock'])) {
+            return ['ok' => false, 'token' => ''];
+        }
+        if ((int) ($state['last'] ?? 0) > 0 && ($now - (int) $state['last']) < $intervalSeconds) {
+            return ['ok' => false, 'token' => ''];
+        }
+        $state['lock'] = true;
+        $state['last'] = $now;
+        return ['ok' => true, 'token' => '__local__'];
+    }
+
+    $ns = 'emshop_goods_sync';
+    $lastKey = 'last_started_at';
+    $lockKey = 'lock_token';
+    $lastStarted = (int) (Cache::get($lastKey, $ns) ?? 0);
+    if ($lastStarted > 0 && ($now - $lastStarted) < $intervalSeconds) {
+        return ['ok' => false, 'token' => ''];
+    }
+
+    $existingToken = trim((string) (Cache::get($lockKey, $ns) ?? ''));
+    if ($existingToken !== '') {
+        return ['ok' => false, 'token' => ''];
+    }
+
+    try {
+        $token = bin2hex(random_bytes(16));
+    } catch (Throwable $e) {
+        $token = md5(uniqid((string) mt_rand(), true));
+    }
+    Cache::set($lockKey, $token, 21600, $ns); // 锁 6 小时，防止超大规模同步中重复进入
+    $current = trim((string) (Cache::get($lockKey, $ns) ?? ''));
+    if ($current !== $token) {
+        return ['ok' => false, 'token' => ''];
+    }
+    Cache::set($lastKey, $now, 86400, $ns);
+    return ['ok' => true, 'token' => $token];
+}
+
+function emshop_leave_sync_window(string $token): void
+{
+    if ($token === '__local__') {
+        if (!isset($GLOBALS['emshop_goods_sync_local_state']) || !is_array($GLOBALS['emshop_goods_sync_local_state'])) {
+            $GLOBALS['emshop_goods_sync_local_state'] = ['lock' => false, 'last' => 0];
+        }
+        $GLOBALS['emshop_goods_sync_local_state']['lock'] = false;
+        return;
+    }
+    if (!class_exists('Cache') || $token === '') {
+        return;
+    }
+    $ns = 'emshop_goods_sync';
+    $lockKey = 'lock_token';
+    $current = trim((string) (Cache::get($lockKey, $ns) ?? ''));
+    if ($current === $token) {
+        Cache::set($lockKey, '', 1, $ns);
+    }
+}
 
 /**
  * 同步对接商品库存/价格并自动上下架。

@@ -212,6 +212,7 @@ function plugin_setting_view(): void
     <!-- 商品同步 - 行操作 -->
     <script type="text/html" id="ycyCatalogActionTpl">
         {{# if(d.imported){ }}
+            <a class="layui-btn layui-btn-xs layui-btn-blue" lay-event="importOne"><i class="fa fa-download"></i> 重导</a>
             <a class="layui-btn layui-btn-xs" lay-event="syncOne"><i class="fa fa-refresh"></i> 同步</a>
             <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="setMarkup"><i class="fa fa-percent"></i> 加价</a>
         {{# } else { }}
@@ -337,6 +338,7 @@ function plugin_setting_view(): void
             if (withTest) {
                 call('site_test', data, function(err, resp){
                     if (err) { layer.msg('测试失败：' + err.message); return; }
+                    console.log(resp);
                     layer.msg('连接成功：' + (resp.username||'-') + ' · 余额 ' + (resp.balance||0));
                     doSave(data, layerIdx);
                 });
@@ -451,7 +453,7 @@ function plugin_setting_view(): void
                     layer.close(loading);
                     if (err) { layer.msg(err.message); return; }
                     var s = resp.stats || {};
-                    layer.msg('新增 ' + (s.ok||0) + ' · 已存在 ' + (s.duplicated||0) + ' · 失败 ' + (s.fail||0));
+                    layer.msg('新增 ' + (s.ok||0) + ' · 更新 ' + (s.duplicated||0) + ' · 失败 ' + (s.fail||0));
                     loadCatalog();
                 });
             } else if (obj.event === 'syncOne') {
@@ -484,11 +486,10 @@ function plugin_setting_view(): void
             var siteId = $('#ycyCatalogSite').val();
             var checked = table.checkStatus('ycyCatalogTable').data;
             if (!siteId || !checked.length) return;
-            // 过滤掉已经导入的（防止无谓调用）
-            var refs = checked.filter(function(r){ return !r.imported; }).map(function(r){ return r.ref; });
-            if (!refs.length) { layer.msg('选中项全部已导入'); return; }
+            var refs = checked.map(function(r){ return r.ref; });
+            if (!refs.length) { layer.msg('未选中任何商品'); return; }
 
-            layer.confirm('将导入 ' + refs.length + ' 个上游商品到本地，确认继续？', {
+            layer.confirm('将导入/更新 ' + refs.length + ' 个上游商品到本地，确认继续？', {
                 icon: 3, title: '导入确认', skin: 'admin-modal'
             }, function(idx){
                 layer.close(idx);
@@ -497,7 +498,7 @@ function plugin_setting_view(): void
                     layer.close(loading);
                     if (err) { layer.msg('导入失败：' + err.message); return; }
                     var s = data.stats || {};
-                    layer.msg('新增 ' + (s.ok||0) + ' · 已存在 ' + (s.duplicated||0) + ' · 失败 ' + (s.fail||0));
+                    layer.msg('新增 ' + (s.ok||0) + ' · 更新 ' + (s.duplicated||0) + ' · 失败 ' + (s.fail||0));
                     // 刷新目录：重新拉取以更新 imported 状态
                     loadCatalog();
                 });
@@ -882,7 +883,7 @@ function plugin_setting(): void
                         $fail++;
                     }
                 }
-                Response::success('导入完成：新增 ' . $ok . ' · 已存在 ' . $dup . ' · 失败 ' . $fail, [
+                Response::success('导入完成：新增 ' . $ok . ' · 更新 ' . $dup . ' · 失败 ' . $fail, [
                     'result' => $result,
                     'stats'  => ['ok' => $ok, 'fail' => $fail, 'duplicated' => $dup],
                     'csrf_token' => Csrf::refresh(),

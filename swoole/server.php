@@ -151,9 +151,12 @@ $startTime = time();
 
 // 运行统计（内存中维护，服务重启后归零）
 $stats = [
-    'queue_processed' => 0,  // 队列任务成功处理数
-    'queue_failed'    => 0,  // 队列任务失败数
-    'timers_run'      => 0,  // 定时任务执行次数
+    'queue_processed'    => 0,  // 队列任务成功处理数
+    'queue_failed'       => 0,  // 队列任务失败数
+    'timers_run'         => 0,  // 定时任务总执行次数
+    'order_timeout_runs' => 0,  // 订单超时检查执行次数
+    'goods_sync_runs'    => 0,  // 商品同步任务执行次数
+    'order_poll_runs'    => 0,  // 订单轮询任务执行次数
 ];
 
 // ============================================================
@@ -241,7 +244,7 @@ $server->on('workerStart', function (Swoole\Http\Server $server, int $workerId) 
 
     // ----- 定时器 2：定时任务 + 代码版本检测自动 reload -----
     // 每 60 秒执行一次：先检查代码版本号有没有被后台 bump（插件改动），变了就 reload；
-    // 否则继续走 runTimerTasks()。runTimerTasks 内部还会再 Config::reload()，影响极小。
+    // 否则依次执行：订单超时检查 / 商品同步钩子 / 订单轮询钩子。
     Swoole\Timer::tick(SW_TIMER_INTERVAL * 1000, function () use (&$stats, $server, $bootCodeVersion) {
         try {
             // bootCodeVersion 是 use by-value 的快照，只在 worker 启动时采样一次；
@@ -253,7 +256,10 @@ $server->on('workerStart', function (Swoole\Http\Server $server, int $workerId) 
                 $server->reload();
                 return; // 此 tick 不再继续，老 worker 会被替换
             }
-            runTimerTasks($stats);
+            runOrderTimeoutChecks($stats);
+            runGoodsSyncTasks($stats);
+            runOrderPollingTasks($stats);
+            $stats['timers_run']++;
         } catch (Throwable $e) {
             error_log("[Timer Error] " . $e->getMessage());
         }
@@ -604,17 +610,12 @@ function processQueue(array &$stats): void
 }
 
 /**
- * 定时任务函数。
+ * 定时任务：订单超时检查
  *
  * 目前包含：
- * - 订单超时检查：将超过指定时间未支付的订单自动标记为 expired（已过期）
- *
- * 后续可在此函数中添加更多定时任务，如：
- * - 主动查询型发货的轮询
- * - 数据统计汇总
- * - 缓存清理
+ * - 将超过指定时间未支付的订单自动标记为 expired（已过期）
  */
-function runTimerTasks(array &$stats): void
+function runOrderTimeoutChecks(array &$stats): void
 {
     // 常驻进程跑定时任务前也刷新一次 Config 缓存
     Config::reload();
@@ -634,14 +635,35 @@ function runTimerTasks(array &$stats): void
     if ($expired > 0) {
         error_log("[Timer] Expired {$expired} orders");
     }
+    $stats['order_timeout_runs']++;
+}
 
-    // 插件可通过 addAction('swoole_timer_tick') 注册周期任务
-    // （这里是每 60 秒一次；插件内部如需更长间隔自行做节流）
+/**
+ * 定时任务：商品同步（库存/价格/规格等）。
+ *
+ * 插件可通过 addAction('swoole_goods_sync_tick') 注册任务。
+ */
+function runGoodsSyncTasks(array &$stats): void
+{
     try {
-        doAction('swoole_timer_tick');
+        doAction('swoole_goods_sync_tick');
     } catch (Throwable $e) {
-        error_log('[Timer Hook] ' . $e->getMessage());
+        error_log('[Timer Hook][goods_sync] ' . $e->getMessage());
     }
+    $stats['goods_sync_runs']++;
+}
 
-    $stats['timers_run']++;
+/**
+ * 定时任务：订单轮询（主动查询上游发货结果等）。
+ *
+ * 插件可通过 addAction('swoole_order_poll_tick') 注册任务。
+ */
+function runOrderPollingTasks(array &$stats): void
+{
+    try {
+        doAction('swoole_order_poll_tick');
+    } catch (Throwable $e) {
+        error_log('[Timer Hook][order_poll] ' . $e->getMessage());
+    }
+    $stats['order_poll_runs']++;
 }
