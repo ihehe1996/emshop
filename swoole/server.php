@@ -571,6 +571,9 @@ function processQueue(array &$stats): void
         );
         $stats['queue_processed']++;
 
+        // 若订单设置了异步回调地址，推送本条商品发货结果给下游
+        OrderModel::notifyDeliveryCallback($orderGoodsId);
+
         // 检查该订单所有商品是否都已发货完成，完成则更新订单状态
         OrderModel::checkDeliveryComplete($orderId);
 

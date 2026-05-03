@@ -317,6 +317,7 @@ class OrderModel
                 'display_currency_code' => $displayCurrencyCode,
                 'display_rate'        => $displayRate,
                 'shipping_address_snapshot' => $addressSnapshot,
+                'delivery_callback_url' => !empty($orderData['delivery_callback_url']) ? (string) $orderData['delivery_callback_url'] : null,
                 'created_at'          => $now,
                 'updated_at'          => $now,
             ]);
@@ -660,6 +661,9 @@ class OrderModel
             ]
         );
 
+        // 如存在异步回调地址，推送发货结果给下游
+        self::notifyDeliveryCallback($orderGoodsId);
+
         // 检查同订单其他行是否也都已发货，齐了就整单流转 delivered → completed
         $orderId = (int) $og['order_id'];
         $remaining = Database::fetchOne(
@@ -723,6 +727,156 @@ class OrderModel
             self::changeStatus($orderId, 'completed');
         } catch (Throwable $e) {
             // 忽略
+        }
+    }
+
+    /**
+     * 若订单配置了 delivery_callback_url，则把订单商品发货结果异步回调给下游。
+     * 失败仅记录日志，不影响主流程状态流转。
+     */
+    public static function notifyDeliveryCallback(int $orderGoodsId): void
+    {
+        self::tables();
+        $prefix = Database::prefix();
+        $row = Database::fetchOne(
+            "SELECT og.`id` AS order_goods_id, og.`order_id`, og.`delivery_content`, og.`delivery_at`,
+                    o.`order_no`, o.`delivery_callback_url`
+             FROM `{$prefix}order_goods` og
+             INNER JOIN `{$prefix}order` o ON o.`id` = og.`order_id`
+             WHERE og.`id` = ? LIMIT 1",
+            [$orderGoodsId]
+        );
+        if (!$row) {
+            return;
+        }
+        $callbackUrl = trim((string) ($row['delivery_callback_url'] ?? ''));
+        $deliveryContent = (string) ($row['delivery_content'] ?? '');
+        if ($callbackUrl === '' || $deliveryContent === '') {
+            return;
+        }
+
+        $payload = [
+            'order_no'        => (string) ($row['order_no'] ?? ''),
+            'order_goods_id'  => (int) ($row['order_goods_id'] ?? 0),
+            'delivery_content'=> $deliveryContent,
+            'delivery_at'     => (string) ($row['delivery_at'] ?? ''),
+        ];
+        $httpCode = 0;
+        $responseBody = '';
+        $ok = self::postJson($callbackUrl, $payload, $httpCode, $responseBody);
+        if ($ok) {
+            self::writeSystemLog(
+                'info',
+                '订单发货回调推送成功',
+                '已向下游推送发货结果',
+                [
+                    'order_no' => (string) ($row['order_no'] ?? ''),
+                    'order_goods_id' => (int) ($row['order_goods_id'] ?? 0),
+                    'callback_url' => $callbackUrl,
+                    'http_code' => $httpCode,
+                    'response' => mb_substr((string) $responseBody, 0, 500),
+                ]
+            );
+        } else {
+            self::writeSystemLog(
+                'warning',
+                '订单发货回调推送失败',
+                '向下游推送发货结果失败',
+                [
+                    'order_no' => (string) ($row['order_no'] ?? ''),
+                    'order_goods_id' => (int) ($row['order_goods_id'] ?? 0),
+                    'callback_url' => $callbackUrl,
+                    'http_code' => $httpCode,
+                    'response' => mb_substr((string) $responseBody, 0, 500),
+                ]
+            );
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private static function postJson(string $url, array $payload, int &$httpCode = 0, string &$responseBody = ''): bool
+    {
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            $responseBody = 'invalid_url';
+            return false;
+        }
+        $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!is_string($body)) {
+            $responseBody = 'json_encode_failed';
+            return false;
+        }
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            if ($ch === false) {
+                $responseBody = 'curl_init_failed';
+                return false;
+            }
+            curl_setopt_array($ch, [
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => $body,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS      => 2,
+                CURLOPT_TIMEOUT        => 8,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json; charset=UTF-8'],
+            ]);
+            $out = curl_exec($ch);
+            $errno = curl_errno($ch);
+            $httpCode = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            curl_close($ch);
+            if ($errno !== 0 && function_exists('log_message')) {
+                log_message('error', '[order_callback] push failed errno=' . $errno . ' url=' . $url);
+                $responseBody = 'curl_errno:' . $errno;
+                return false;
+            }
+            $responseBody = is_string($out) ? $out : '';
+            return $httpCode >= 200 && $httpCode < 300;
+        }
+        $ctx = stream_context_create([
+            'http' => [
+                'method'  => 'POST',
+                'header'  => "Content-Type: application/json\r\n",
+                'content' => $body,
+                'timeout' => 8.0,
+            ],
+        ]);
+        $result = @file_get_contents($url, false, $ctx);
+        $responseBody = is_string($result) ? $result : '';
+        $headerLine = isset($http_response_header[0]) ? (string) $http_response_header[0] : '';
+        if (preg_match('#\s(\d{3})\s#', $headerLine, $m)) {
+            $httpCode = (int) $m[1];
+        }
+        if ($httpCode === 0) {
+            return $result !== false;
+        }
+        return $httpCode >= 200 && $httpCode < 300;
+    }
+
+    /**
+     * @param array<string, mixed> $detail
+     */
+    private static function writeSystemLog(string $level, string $action, string $message, array $detail = []): void
+    {
+        try {
+            if (!defined('EM_ROOT')) {
+                return;
+            }
+            require_once EM_ROOT . '/include/model/SystemLogModel.php';
+            if (!class_exists('SystemLogModel')) {
+                return;
+            }
+            $m = new SystemLogModel();
+            if ($level === 'error') {
+                $m->error('system', $action, $message, $detail);
+            } elseif ($level === 'warning' || $level === 'warn') {
+                $m->warning('system', $action, $message, $detail);
+            } else {
+                $m->info('system', $action, $message, $detail);
+            }
+        } catch (Throwable $e) {
+            // 系统日志写入失败不影响业务主流程
         }
     }
 

@@ -9,6 +9,7 @@ declare(strict_types=1);
  *       /?c=api&act=real_order     (POST，真实下单)
  *       /?c=api&act=create_order   (POST，兼容旧调用，等价 real_order)
  *       /?c=api&act=query_order    (GET/POST)
+ *       /?c=api&act=delivery_callback (GET/POST，上游发货回调下游)
  *       /?c=api&act=base_info      (GET/POST)
  *       /?c=api&act=goods_category (GET/POST)
  *       /?c=api&act=goods_list      (GET/POST，不分页；可选 goods_id / goods_ids / category_id / category_ids)
@@ -43,6 +44,10 @@ class ApiController extends BaseController
             case 'query_order':
                 $this->queryOrder();
                 return;
+            case 'delivery_callback':
+            case 'order_delivery_callback':
+                $this->deliveryCallback();
+                return;
             case 'base_info':
             case 'get_base_info':
                 $this->baseInfo();
@@ -76,6 +81,7 @@ class ApiController extends BaseController
      *   extra_json（JSON 对象，附加字段键值）
      *   extra_{name}（附加字段，和 extra_json 二选一或混用）
      *   address_json（JSON：recipient/mobile/province/city/district/detail）
+     *   delivery_callback_url（可选；上游发货后回调地址，同系统对接使用）
      */
     private function createOrder(): void
     {
@@ -934,6 +940,20 @@ class ApiController extends BaseController
             'source'              => 'api',
             'guest_address'       => $guestAddress,
         ];
+        $callbackUrl = trim((string) ($params['delivery_callback_url'] ?? ''));
+        if ($callbackUrl !== '') {
+            if (!preg_match('#^https?://#i', $callbackUrl)) {
+                throw new RuntimeException('delivery_callback_url 必须是 http(s) 地址');
+            }
+            if (function_exists('mb_strlen')) {
+                if (mb_strlen($callbackUrl, 'UTF-8') > 500) {
+                    throw new RuntimeException('delivery_callback_url 过长');
+                }
+            } elseif (strlen($callbackUrl) > 500) {
+                throw new RuntimeException('delivery_callback_url 过长');
+            }
+            $createData['delivery_callback_url'] = $callbackUrl;
+        }
         if ($contactQuery !== '') {
             if ($extraFields !== []) {
                 $extraFields['guest_find_contact'] = $contactQuery;
@@ -975,6 +995,114 @@ class ApiController extends BaseController
             'spec_id'                   => $specId,
             'estimated_pay_amount_raw'  => $estimatedPayRaw,
         ];
+    }
+
+    /**
+     * 上游发货异步回调接收（同系统对接）。
+     * 通过 callback_token + local_order_goods_id 做鉴权。
+     */
+    private function deliveryCallback(): void
+    {
+        $params = $this->requestParams();
+        $localOrderGoodsId = (int) ($params['local_order_goods_id'] ?? $params['order_goods_id'] ?? 0);
+        $callbackToken = trim((string) ($params['callback_token'] ?? ''));
+        $deliveryContent = trim((string) ($params['delivery_content'] ?? ''));
+        if ($localOrderGoodsId <= 0 || $callbackToken === '' || $deliveryContent === '') {
+            $this->writeSystemLog('warning', '发货回调参数缺失', '收到的发货回调参数不完整', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('回调参数缺失');
+        }
+
+        $prefix = Database::prefix();
+        $og = Database::fetchOne(
+            "SELECT `id`, `order_id`, `spec_id`, `quantity`, `delivery_content`, `plugin_data`
+             FROM `{$prefix}order_goods` WHERE `id` = ? LIMIT 1",
+            [$localOrderGoodsId]
+        );
+        if (!$og) {
+            $this->writeSystemLog('warning', '发货回调目标不存在', '收到发货回调但本地订单商品不存在', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('订单商品不存在');
+        }
+
+        $pd = json_decode((string) ($og['plugin_data'] ?? '{}'), true);
+        if (!is_array($pd)) {
+            $pd = [];
+        }
+        $em = $pd['emshop_remote'] ?? [];
+        if (!is_array($em)) {
+            $em = [];
+        }
+        $savedToken = (string) ($em['callback_token'] ?? '');
+        if ($savedToken === '' || !hash_equals($savedToken, $callbackToken)) {
+            $this->writeSystemLog('warning', '发货回调鉴权失败', '收到发货回调但鉴权不通过', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('回调鉴权失败');
+        }
+
+        // 幂等：已写过发货内容直接返回成功
+        if (!empty($og['delivery_content'])) {
+            $this->writeSystemLog('info', '发货回调重复通知', '发货回调重复到达，按幂等返回成功', [
+                'local_order_goods_id' => $localOrderGoodsId,
+                'order_id' => (int) ($og['order_id'] ?? 0),
+            ]);
+            Response::success('ok', ['handled' => true, 'duplicate' => true]);
+        }
+
+        $em['upstream_status'] = trim((string) ($params['upstream_status'] ?? ''));
+        $em['upstream_order_no'] = trim((string) ($params['order_no'] ?? ($em['upstream_order_no'] ?? '')));
+        $pd['emshop_remote'] = $em;
+
+        Database::execute(
+            "UPDATE `{$prefix}order_goods`
+             SET `delivery_content` = ?, `delivery_at` = NOW(), `plugin_data` = ?
+             WHERE `id` = ?",
+            [
+                $deliveryContent,
+                json_encode($pd, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $localOrderGoodsId,
+            ]
+        );
+
+        $specId = (int) ($og['spec_id'] ?? 0);
+        $qty = (int) ($og['quantity'] ?? 0);
+        if ($specId > 0 && $qty > 0) {
+            GoodsModel::incrementSoldCount($specId, $qty);
+        }
+
+        OrderModel::checkDeliveryComplete((int) ($og['order_id'] ?? 0));
+        $this->writeSystemLog('info', '发货回调处理成功', '已处理上游发货回调并写入发货内容', [
+            'local_order_goods_id' => $localOrderGoodsId,
+            'order_id' => (int) ($og['order_id'] ?? 0),
+            'upstream_order_no' => (string) ($em['upstream_order_no'] ?? ''),
+        ]);
+        Response::success('ok', ['handled' => true]);
+    }
+
+    /**
+     * @param array<string, mixed> $detail
+     */
+    private function writeSystemLog(string $level, string $action, string $message, array $detail = []): void
+    {
+        try {
+            require_once EM_ROOT . '/include/model/SystemLogModel.php';
+            if (!class_exists('SystemLogModel')) {
+                return;
+            }
+            $m = new SystemLogModel();
+            if ($level === 'error') {
+                $m->error('system', $action, $message, $detail);
+            } elseif ($level === 'warning' || $level === 'warn') {
+                $m->warning('system', $action, $message, $detail);
+            } else {
+                $m->info('system', $action, $message, $detail);
+            }
+        } catch (Throwable $e) {
+            // 日志失败不影响 API 主流程
+        }
     }
 
     /**

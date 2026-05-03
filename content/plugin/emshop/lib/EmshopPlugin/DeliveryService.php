@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EmshopPlugin;
 
 use Database;
+use Config;
 use GoodsModel;
 use PermanentDeliveryException;
 use RuntimeException;
@@ -81,6 +82,9 @@ final class DeliveryService
             $createPayload['spec_id'] = $remoteSpecId;
         }
 
+        $callbackToken = bin2hex(random_bytes(16));
+        $createPayload['delivery_callback_url'] = self::buildDeliveryCallbackUrl($orderGoodsId, $callbackToken);
+
         $order = Database::fetchOne(
             "SELECT `contact_info`, `address_info` FROM `{$prefix}order` WHERE `id` = ? LIMIT 1",
             [$orderId]
@@ -116,13 +120,6 @@ final class DeliveryService
         } catch (Throwable $e) {
             // 查询失败不阻断主流程，避免因查询偶发错误导致反复重下
         }
-
-        $lines = ['上游自动发货已触发', '上游订单号：' . $upstreamOrderNo];
-        if ($upStatus !== '') {
-            $lines[] = '上游状态：' . $upStatus;
-        }
-        $deliveryContent = implode("\n", $lines);
-
         $pluginData = [
             'emshop_remote' => [
                 'fulfillment_mode' => 'upstream_auto',
@@ -131,14 +128,14 @@ final class DeliveryService
                 'remote_spec_id'   => $remoteSpecId,
                 'upstream_order_no'=> $upstreamOrderNo,
                 'upstream_status'  => $upStatus,
+                'callback_token'   => $callbackToken,
             ],
         ];
 
         Database::execute(
-            "UPDATE `{$prefix}order_goods` SET `delivery_content` = ?, `delivery_at` = NOW(), `plugin_data` = ? WHERE `id` = ?",
-            [$deliveryContent, json_encode($pluginData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $orderGoodsId]
+            "UPDATE `{$prefix}order_goods` SET `plugin_data` = ? WHERE `id` = ?",
+            [json_encode($pluginData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $orderGoodsId]
         );
-        self::markSold($specId, $qty);
     }
 
     private static function markSold(int $specId, int $qty): void
@@ -222,6 +219,39 @@ final class DeliveryService
             return null;
         }
         return $out;
+    }
+
+    private static function buildDeliveryCallbackUrl(int $localOrderGoodsId, string $token): string
+    {
+        $host = self::detectCurrentHost();
+        $scheme = self::detectCurrentScheme();
+        if ($host === '') {
+            $host = (string) (Config::get('main_domain') ?? '');
+        }
+        $base = rtrim($scheme . '://' . $host, '/');
+        return $base . '/?c=api&act=delivery_callback'
+            . '&local_order_goods_id=' . rawurlencode((string) $localOrderGoodsId)
+            . '&callback_token=' . rawurlencode($token);
+    }
+
+    private static function detectCurrentHost(): string
+    {
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '');
+        if ($host === '') return '';
+        $pos = strpos($host, ':');
+        if ($pos !== false) {
+            $host = substr($host, 0, $pos);
+        }
+        return trim($host);
+    }
+
+    private static function detectCurrentScheme(): string
+    {
+        $https = strtolower((string) ($_SERVER['HTTPS'] ?? ''));
+        if ($https === 'on' || $https === '1') return 'https';
+        $proto = strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+        if ($proto === 'https') return 'https';
+        return 'http';
     }
 }
 

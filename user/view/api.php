@@ -103,6 +103,9 @@ if (!defined('EM_ROOT')) {
                 <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
                     下单接口将<strong>直接扣除对接账号余额</strong>完成支付，不走第三方支付收银台，不需要传 <code>payment_code</code>。
                 </div>
+                <div class="uc-form-hint" style="margin-top:8px;line-height:1.8;">
+                    对接同系统时，可在下单请求中传 <code>delivery_callback_url</code>。上游发货后会向该地址推送 <code>delivery_content</code>（建议带业务令牌参数做鉴权）。
+                </div>
             </div>
         </div>
     </div>

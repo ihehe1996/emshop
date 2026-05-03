@@ -308,6 +308,7 @@ final class InstallService
                 `inviter_l2` BIGINT UNSIGNED DEFAULT NULL COMMENT \'下单时二级上级（快照）\',
                 `contact_info` TEXT COMMENT \'下单联系信息：JSON（附加选项）或纯字符串（游客联系方式）\',
                 `shipping_address_snapshot` TEXT COMMENT \'收货地址快照 JSON（recipient/mobile/province/city/district/detail）；仅需地址的商品类型有值\',
+                `delivery_callback_url` VARCHAR(500) DEFAULT NULL COMMENT \'发货异步回调地址（同系统对接）\',
                 `order_password` VARCHAR(255) DEFAULT NULL COMMENT \'游客查单订单密码（明文存储）\',
                 `pay_time` DATETIME DEFAULT NULL,
                 `delivery_time` DATETIME DEFAULT NULL,
@@ -976,6 +977,11 @@ final class InstallService
             $orderTable,
             'shipping_address_snapshot',
             'TEXT COMMENT \'收货地址快照 JSON；仅需地址的商品类型有值\''
+        );
+        $this->addColumnIfMissing(
+            $orderTable,
+            'delivery_callback_url',
+            'VARCHAR(500) DEFAULT NULL COMMENT \'发货异步回调地址（同系统对接）\''
         );
         // em_currency.is_frontend_default：老库升级也要补上
         //   迁移原则：优先保留老用户在 Config('currency_display') 里的选择；
