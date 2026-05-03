@@ -86,15 +86,26 @@ final class DeliveryService
         $createPayload['delivery_callback_url'] = self::buildDeliveryCallbackUrl($orderGoodsId, $callbackToken);
 
         $order = Database::fetchOne(
-            "SELECT `contact_info`, `address_info` FROM `{$prefix}order` WHERE `id` = ? LIMIT 1",
+            "SELECT `order_no`, `contact_info`, `order_password`, `shipping_address_snapshot`
+             FROM `{$prefix}order` WHERE `id` = ? LIMIT 1",
             [$orderId]
         );
         if ($order) {
             $contact = self::extractContact($order['contact_info'] ?? '');
-            if ($contact !== '') {
-                $createPayload['contact'] = $contact;
+            if ($contact === '') {
+                // 上游若开启游客查单联系方式必填，给稳定兜底值避免被该校验拦截
+                $contact = 'emshop-' . (string) ($order['order_no'] ?? $orderId);
             }
-            $address = self::extractAddress($order['address_info'] ?? '');
+            $createPayload['contact'] = $contact;
+
+            $pwd = trim((string) ($order['order_password'] ?? ''));
+            if ($pwd === '') {
+                // 上游若开启游客查单密码必填，给稳定兜底值避免被该校验拦截
+                $pwd = 'emshop-' . substr(md5((string) ($order['order_no'] ?? $orderId)), 0, 12);
+            }
+            $createPayload['order_password'] = $pwd;
+
+            $address = self::extractAddress($order['shipping_address_snapshot'] ?? '');
             if ($address !== null) {
                 $createPayload['address_json'] = json_encode($address, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             }
