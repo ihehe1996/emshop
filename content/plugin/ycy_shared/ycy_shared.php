@@ -28,6 +28,7 @@ addAction('goods_type_register', function (array &$types): void {
         'name'            => '异次元共享',
         'description'     => '来自异次元共享店铺的商品，价格和库存由上游同步，不可手动修改',
         'delivery_type'   => 'auto',           // 自动发货（代付上游获取卡密）
+        'needs_address'   => false,            // 自动发货类商品，不要求收货地址
         'icon'            => 'fa-link',
         'plugin'          => 'ycy_shared',
         // 占位：后续由 YcyShared\GoodsType 注册各阶段钩子
@@ -42,7 +43,9 @@ addAction('swoole_timer_tick', function (): void {
     try {
         YcyShared\SyncService::tick();
     } catch (Throwable $e) {
-        error_log('[ycy_shared] tick error: ' . $e->getMessage());
+        YcyShared\Logger::error('定时同步失败', $e->getMessage(), [
+            'scene' => 'swoole_timer_tick',
+        ]);
     }
 });
 
@@ -95,6 +98,9 @@ addAction('goods_type_ycy_shared_stock_form', function ($goods, $specs): void {
 // ============================================================
 addFilter('goods_type_ycy_shared_order_submit', function ($currentError, array $ctx) {
     if (is_string($currentError) && $currentError !== '') return $currentError; // 已有其他插件报错
+    $goods = [];
+    $spec = [];
+    $qty = 0;
     try {
         $goods = $ctx['goods'] ?? [];
         $spec  = $ctx['spec']  ?? [];
@@ -130,7 +136,11 @@ addFilter('goods_type_ycy_shared_order_submit', function ($currentError, array $
         }
     } catch (Throwable $e) {
         // 网络异常不阻塞下单（保守放行，代付阶段上游会再兜一次）
-        error_log('[ycy_shared] pre-order check: ' . $e->getMessage());
+        YcyShared\Logger::warning('下单前实时校验异常', $e->getMessage(), [
+            'goods_id' => (int) ($goods['id'] ?? 0),
+            'spec_id'  => (int) ($spec['id'] ?? 0),
+            'quantity' => $qty,
+        ]);
     }
     return '';
 });
@@ -216,7 +226,10 @@ addAction('goods_type_ycy_shared_order_paid', function (int $orderId, int $order
         YcyShared\DeliveryService::handle($orderId, $orderGoodsId, $payloadJson);
     } catch (Throwable $e) {
         // 抛出去让 swoole 队列标记为 failed 并按策略重试
-        error_log('[ycy_shared] deliver error: ' . $e->getMessage());
+        YcyShared\Logger::error('代付发货失败', $e->getMessage(), [
+            'order_id' => $orderId,
+            'order_goods_id' => $orderGoodsId,
+        ]);
         throw $e;
     }
 });

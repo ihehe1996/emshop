@@ -1,9 +1,9 @@
 <?php
 /**
 Plugin Name: EMSHOP共享店铺
-Version: 0.1.0
+Version: 1.0.0
 Plugin URL:
-Description: 与同系统（EMSHOP）其他站点对接：管理对接站点凭证，后续可同步商品、代下单等。
+Description: 与同系统（EMSHOP）其他站点对接：管理对接站点凭证，可同步商品、代下单等。
 Author: EMSHOP
 Author URL:
 Category: 对接插件
@@ -21,6 +21,274 @@ spl_autoload_register(function (string $class): void {
         require_once $file;
     }
 });
+
+// ============================================================
+// 定时同步：每 1 分钟拉一次库存+价格
+//   依赖核心 swoole_timer_tick（60s 一次）钩子。插件内部做节流(暂时不做节流)
+// ============================================================
+addAction('swoole_timer_tick', function (): void {
+    try {
+        $summary = emshop_sync_remote_price_stock();
+        emshop_write_system_log(
+            'info',
+            'EMSHOP 定时同步完成',
+            '已执行对接商品库存/价格同步',
+            $summary
+        );
+    } catch (Throwable $e) {
+        emshop_write_system_log(
+            'error',
+            'EMSHOP 定时同步失败',
+            $e->getMessage(),
+            ['trace' => mb_substr($e->getTraceAsString(), 0, 2000, 'UTF-8')]
+        );
+    }
+});
+
+/**
+ * 同步对接商品库存/价格并自动上下架。
+ *
+ * 规则：
+ * 1) 规格库存：用上游对应规格库存覆盖本地库存
+ * 2) 成本价：用上游规格售价覆盖本地成本价
+ * 3) 销售价：按上游规格售价 * 1.10（四舍五入保留两位）覆盖本地售价
+ * 4) 上下架：总库存<=0 自动下架；库存恢复自动上架
+ *
+ * @return array<string, mixed>
+ */
+function emshop_sync_remote_price_stock(): array
+{
+    $prefix = Database::prefix();
+    $goodsRows = Database::query(
+        "SELECT `id`, `title`, `source_id`, `configs`, `is_on_sale`
+         FROM `{$prefix}goods`
+         WHERE `source_type` = ? AND `deleted_at` IS NULL",
+        ['emshop_remote']
+    );
+    if ($goodsRows === []) {
+        return ['total_goods' => 0, 'changed_specs' => 0, 'auto_up' => 0, 'auto_down' => 0];
+    }
+
+    $bySite = [];
+    $goodsMeta = [];
+    foreach ($goodsRows as $g) {
+        $goodsId = (int) ($g['id'] ?? 0);
+        if ($goodsId <= 0) {
+            continue;
+        }
+        $sourceId = trim((string) ($g['source_id'] ?? ''));
+        [$siteIdBySource, $remoteGoodsBySource] = emshop_parse_source_id($sourceId);
+
+        $cfg = json_decode((string) ($g['configs'] ?? '{}'), true);
+        if (!is_array($cfg)) {
+            $cfg = [];
+        }
+        $imp = $cfg['emshop_import'] ?? [];
+        if (!is_array($imp)) {
+            $imp = [];
+        }
+        $siteId = (int) ($imp['remote_site_id'] ?? $siteIdBySource);
+        $remoteGoodsId = (int) ($imp['remote_goods_id'] ?? $remoteGoodsBySource);
+        if ($siteId <= 0 || $remoteGoodsId <= 0) {
+            continue;
+        }
+
+        $goodsMeta[$goodsId] = [
+            'id'            => $goodsId,
+            'title'         => (string) ($g['title'] ?? ''),
+            'is_on_sale'    => (int) ($g['is_on_sale'] ?? 0),
+            'site_id'       => $siteId,
+            'remote_goods_id' => $remoteGoodsId,
+        ];
+        $bySite[$siteId][$remoteGoodsId] = $goodsId;
+    }
+
+    if ($bySite === []) {
+        return ['total_goods' => 0, 'changed_specs' => 0, 'auto_up' => 0, 'auto_down' => 0];
+    }
+
+    $changedSpecs = 0;
+    $autoUp = 0;
+    $autoDown = 0;
+    $warn = [];
+
+    foreach ($bySite as $siteId => $map) {
+        $site = \EmshopPlugin\RemoteSiteModel::find((int) $siteId);
+        if ($site === null || (int) ($site['enabled'] ?? 0) !== 1) {
+            $warn[] = "site#{$siteId} 不存在或已停用";
+            continue;
+        }
+        $baseUrl = (string) ($site['base_url'] ?? '');
+        $appid = (string) ($site['appid'] ?? '');
+        $secret = (string) ($site['secret'] ?? '');
+        if ($baseUrl === '' || $appid === '' || $secret === '') {
+            $warn[] = "site#{$siteId} 凭证不完整";
+            continue;
+        }
+
+        $remoteGoodsIds = array_keys($map);
+        foreach (array_chunk($remoteGoodsIds, 40) as $chunk) {
+            try {
+                $list = \EmshopPlugin\RemoteApiClient::fetchGoodsList($baseUrl, $appid, $secret, [
+                    'goods_ids' => implode(',', $chunk),
+                ]);
+            } catch (Throwable $e) {
+                $warn[] = "site#{$siteId} 拉取失败：" . $e->getMessage();
+                continue;
+            }
+
+            $remoteById = [];
+            foreach ($list as $row) {
+                $rid = (int) ($row['goods_id'] ?? 0);
+                if ($rid > 0) {
+                    $remoteById[$rid] = $row;
+                }
+            }
+
+            foreach ($chunk as $remoteGoodsId) {
+                $localGoodsId = (int) ($map[(int) $remoteGoodsId] ?? 0);
+                if ($localGoodsId <= 0) {
+                    continue;
+                }
+                $remote = $remoteById[(int) $remoteGoodsId] ?? null;
+                if (!is_array($remote)) {
+                    $warn[] = "goods#{$localGoodsId}/up#{$remoteGoodsId} 上游未返回";
+                    continue;
+                }
+
+                $specRows = Database::query(
+                    "SELECT `id`, `price`, `cost_price`, `stock`, `configs`
+                     FROM `{$prefix}goods_spec`
+                     WHERE `goods_id` = ? AND `status` = 1
+                     ORDER BY `sort` ASC, `id` ASC",
+                    [$localGoodsId]
+                );
+                if ($specRows === []) {
+                    continue;
+                }
+
+                $remoteSpecsRaw = $remote['specs'] ?? [];
+                $remoteSpecs = is_array($remoteSpecsRaw) ? $remoteSpecsRaw : [];
+                $remoteSpecById = [];
+                foreach ($remoteSpecs as $rs) {
+                    if (!is_array($rs)) {
+                        continue;
+                    }
+                    $upSpecId = (int) ($rs['upstream_spec_id'] ?? 0);
+                    if ($upSpecId > 0) {
+                        $remoteSpecById[$upSpecId] = $rs;
+                    }
+                }
+
+                $sumStock = 0;
+                $hasMappedSpec = false;
+                foreach ($specRows as $idx => $sp) {
+                    $specId = (int) ($sp['id'] ?? 0);
+                    if ($specId <= 0) {
+                        continue;
+                    }
+                    $cfg = json_decode((string) ($sp['configs'] ?? '{}'), true);
+                    if (!is_array($cfg)) {
+                        $cfg = [];
+                    }
+                    $imp = $cfg['emshop_import'] ?? [];
+                    $upSpecId = is_array($imp) ? (int) ($imp['upstream_spec_id'] ?? 0) : 0;
+
+                    $upSpec = null;
+                    if ($upSpecId > 0 && isset($remoteSpecById[$upSpecId]) && is_array($remoteSpecById[$upSpecId])) {
+                        $upSpec = $remoteSpecById[$upSpecId];
+                    } elseif (count($specRows) === 1 && count($remoteSpecs) === 1 && is_array($remoteSpecs[0])) {
+                        // 单规格兜底：上游/本地都只有一个规格时直接映射
+                        $upSpec = $remoteSpecs[0];
+                    }
+                    if (!is_array($upSpec)) {
+                        $sumStock += max(0, (int) ($sp['stock'] ?? 0));
+                        continue;
+                    }
+                    $hasMappedSpec = true;
+
+                    $upPrice = max(0.0, (float) ($upSpec['price'] ?? 0));
+                    $newCost = GoodsModel::moneyToDb(number_format($upPrice, 2, '.', ''));
+                    $newSale = GoodsModel::moneyToDb(number_format($upPrice * 1.10, 2, '.', ''));
+                    $newStock = max(0, (int) ($upSpec['stock'] ?? 0));
+                    $sumStock += $newStock;
+
+                    $oldPrice = (int) ($sp['price'] ?? 0);
+                    $oldCost = (int) ($sp['cost_price'] ?? 0);
+                    $oldStock = (int) ($sp['stock'] ?? 0);
+                    if ($oldPrice !== $newSale || $oldCost !== $newCost || $oldStock !== $newStock) {
+                        Database::update('goods_spec', [
+                            'price' => $newSale,
+                            'cost_price' => $newCost,
+                            'stock' => $newStock,
+                        ], $specId);
+                        $changedSpecs++;
+                    }
+                }
+
+                if (!$hasMappedSpec) {
+                    $sumStock = max(0, (int) ($remote['stock'] ?? 0));
+                }
+
+                $meta = $goodsMeta[$localGoodsId] ?? null;
+                $oldOnSale = (int) ($meta['is_on_sale'] ?? 0);
+                $newOnSale = $sumStock > 0 ? 1 : 0;
+                if ($oldOnSale !== $newOnSale) {
+                    Database::update('goods', ['is_on_sale' => $newOnSale], $localGoodsId);
+                    if ($newOnSale === 1) {
+                        $autoUp++;
+                    } else {
+                        $autoDown++;
+                    }
+                }
+                GoodsModel::updatePriceStockCache($localGoodsId);
+            }
+        }
+    }
+
+    return [
+        'total_goods' => count($goodsMeta),
+        'changed_specs' => $changedSpecs,
+        'auto_up' => $autoUp,
+        'auto_down' => $autoDown,
+        'warnings' => $warn,
+    ];
+}
+
+/**
+ * @return array{0:int,1:int}
+ */
+function emshop_parse_source_id(string $sourceId): array
+{
+    $parts = explode(':', $sourceId, 2);
+    return [
+        (int) ($parts[0] ?? 0),
+        (int) ($parts[1] ?? 0),
+    ];
+}
+
+/**
+ * @param array<string,mixed> $detail
+ */
+function emshop_write_system_log(string $level, string $action, string $message, array $detail = []): void
+{
+    try {
+        require_once EM_ROOT . '/include/model/SystemLogModel.php';
+        if (!class_exists('SystemLogModel')) {
+            return;
+        }
+        $m = new SystemLogModel();
+        if ($level === 'error') {
+            $m->error('system', $action, $message, $detail);
+        } elseif ($level === 'warning' || $level === 'warn') {
+            $m->warning('system', $action, $message, $detail);
+        } else {
+            $m->info('system', $action, $message, $detail);
+        }
+    } catch (Throwable $e) {
+        // 日志写入失败不影响主流程
+    }
+}
 
 /**
  * 保证插件数据表存在（幂等）。后台设置弹窗在未走前台 init 时也可调用。
