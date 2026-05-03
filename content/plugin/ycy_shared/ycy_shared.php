@@ -19,6 +19,23 @@ spl_autoload_register(function (string $class): void {
     if (is_file($file)) require_once $file;
 });
 
+require_once __DIR__ . '/ycy_shared_callback.php';
+
+/**
+ * 运行时兜底：确保插件表结构和新增字段都已存在。
+ */
+function ycy_shared_ensure_schema(): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+    callback_init();
+}
+
+ycy_shared_ensure_schema();
+
 // ============================================================
 // 注册新的 goods_type：ycy_shared
 //   由 YcyShared\GoodsType 处理：商品编辑锁价/锁量、发货代付上游
@@ -35,16 +52,56 @@ addAction('goods_type_register', function (array &$types): void {
     ];
 });
 
+// 发货类型展示：按上游 delivery_way 动态显示（1=manual，0=auto）
+addFilter('goods_delivery_type', function ($deliveryType, $goods) {
+    if (($goods['goods_type'] ?? '') !== 'ycy_shared') {
+        return $deliveryType;
+    }
+    $cfg = $goods['configs'] ?? null;
+    if (is_string($cfg)) {
+        $decoded = json_decode($cfg, true);
+        if (is_array($decoded)) {
+            $cfg = $decoded;
+        }
+    }
+    if (is_array($cfg) && !empty($cfg['ycy_shared']) && is_array($cfg['ycy_shared'])) {
+        if (array_key_exists('delivery_way', $cfg['ycy_shared'])) {
+            $way = (int) ($cfg['ycy_shared']['delivery_way'] ?? 0);
+            if ($way === 1) {
+                return 'manual';
+            }
+            if ($way === 0) {
+                return 'auto';
+            }
+        }
+    }
+    return $deliveryType !== '' ? $deliveryType : 'auto';
+});
+
 // ============================================================
-// 定时同步：每 3 分钟拉一次库存+价格；每 60 分钟全量同步商品目录
-//   依赖核心 swoole_timer_tick（60s 一次）钩子，插件内部做节流
+// 定时同步：库存/价格同步周期由 SyncService 控制（当前 30 分钟）
+//   依赖核心 swoole_goods_sync_tick（60s 一次）钩子，插件内部做分片
 // ============================================================
-addAction('swoole_timer_tick', function (): void {
+addAction('swoole_goods_sync_tick', function (): void {
     try {
         YcyShared\SyncService::tick();
     } catch (Throwable $e) {
         YcyShared\Logger::error('定时同步失败', $e->getMessage(), [
-            'scene' => 'swoole_timer_tick',
+            'scene' => 'swoole_goods_sync_tick',
+        ]);
+    }
+});
+
+// ============================================================
+// 订单轮询：每 60 秒检查一次“待上游发货”的流水，拉取发货内容
+//   依赖核心 swoole_order_poll_tick（60s 一次）钩子
+// ============================================================
+addAction('swoole_order_poll_tick', function (): void {
+    try {
+        YcyShared\SyncService::pollPendingTrades();
+    } catch (Throwable $e) {
+        YcyShared\Logger::error('订单轮询失败', $e->getMessage(), [
+            'scene' => 'swoole_order_poll_tick',
         ]);
     }
 });

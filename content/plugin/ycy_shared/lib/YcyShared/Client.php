@@ -89,7 +89,8 @@ abstract class Client
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_TIMEOUT        => $timeout,
             CURLOPT_CONNECTTIMEOUT => 8,
-            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_FOLLOWLOCATION => true,
         ]);
         $body = curl_exec($ch);

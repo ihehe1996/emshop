@@ -17,6 +17,8 @@ use RuntimeException;
 
 final class DeliveryService
 {
+    private const POLL_INTERVAL_SECONDS = 60;
+
     /**
      * 代付上游 → 写流水 → 回写卡密到 order_goods.delivery_content。
      *
@@ -46,6 +48,7 @@ final class DeliveryService
         if ($goodsId <= 0 || $specId <= 0 || $qty <= 0) {
             throw new RuntimeException('[ycy_shared] 订单行字段异常');
         }
+        $deliveryWay = self::resolveDeliveryWay($goodsId); // 1=人工发货，0=自动发货
 
         // 找上游映射
         $mapping = Database::fetchOne(
@@ -86,7 +89,7 @@ final class DeliveryService
         if ($trade && !empty($trade['upstream_trade_no'])) {
             try {
                 $q = $client->queryOrder((string) $trade['upstream_trade_no']);
-                if (!empty($q['found']) && !empty($q['contents'])) {
+                if ($deliveryWay !== 1 && !empty($q['found']) && !empty($q['contents'])) {
                     // 上次其实已经成功，直接复用不再下单
                     self::upsertTrade(
                         $orderGoodsId, $site['id'], $upstreamRef, $qty, $hitSku,
@@ -102,6 +105,22 @@ final class DeliveryService
                     );
                     GoodsModel::incrementSoldCount($specId, $qty);
                     GoodsModel::updatePriceStockCache($goodsId);
+                    return;
+                }
+                if (!empty($q['found'])) {
+                    // 订单已存在但尚未返回发货内容（常见于手动发货），转轮询而不是重下。
+                    self::upsertTrade(
+                        $orderGoodsId,
+                        (int) $site['id'],
+                        $upstreamRef,
+                        $qty,
+                        $hitSku,
+                        (string) $trade['upstream_trade_no'],
+                        '',
+                        'pending',
+                        '等待上游发货中',
+                        $q
+                    );
                     return;
                 }
             } catch (\Throwable $e) {
@@ -122,6 +141,9 @@ final class DeliveryService
                 'contact'  => 'emshop-order-' . $orderId,
                 'pay_id'   => 1, // v3 默认余额支付
             ];
+            if (!empty($hitSku['sku_fields']) && is_array($hitSku['sku_fields'])) {
+                $extra['sku_fields'] = $hitSku['sku_fields'];
+            }
             $resp = $client->placeOrder($upstreamRef, $qty, $extra);
         } catch (\Throwable $e) {
             $msg = $e->getMessage();
@@ -138,10 +160,22 @@ final class DeliveryService
         }
 
         $contents = (string) ($resp['contents'] ?? '');
-        $tradeNo  = (string) ($resp['trade_no'] ?? '');
-        if ($contents === '') {
-            self::upsertTrade($orderGoodsId, $site['id'], $upstreamRef, $qty, $hitSku, $tradeNo, '', 'failed', '上游未返回发货内容', $resp);
-            throw new RuntimeException('[ycy_shared] 上游未返回发货内容');
+        $tradeNo  = self::extractTradeNo($resp);
+        if ($deliveryWay === 1 || $contents === '') {
+            // 人工发货商品：默认进入 pending，后续通过轮询比对发货内容变化来确认真实发货。
+            self::upsertTrade(
+                $orderGoodsId,
+                (int) $site['id'],
+                $upstreamRef,
+                $qty,
+                $hitSku,
+                $tradeNo,
+                '',
+                'pending',
+                '等待上游发货中',
+                $resp
+            );
+            return;
         }
 
         // 成功：写流水 + 回写 delivery_content + 扣本地库存
@@ -199,6 +233,16 @@ final class DeliveryService
             [$orderGoodsId]
         );
         $responseText = $raw !== null ? json_encode($raw, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : $response;
+        $nextPollAt = null;
+        $pollAttempts = 0;
+        $lastPollError = '';
+        if ($status === 'pending') {
+            $nextPollAt = date('Y-m-d H:i:s', time() + self::POLL_INTERVAL_SECONDS);
+            $lastPollError = $err;
+        }
+        if ($status === 'failed') {
+            $lastPollError = $err;
+        }
 
         if ($existing) {
             Database::update('ycy_trade', [
@@ -207,6 +251,9 @@ final class DeliveryService
                 'response'          => $responseText,
                 'error_message'     => $err,
                 'cost_amount_raw'   => $costRaw,
+                'next_poll_at'      => $nextPollAt,
+                'poll_attempts'     => $pollAttempts,
+                'last_poll_error'   => $lastPollError,
             ], (int) $existing['id']);
         } else {
             Database::insert('ycy_trade', [
@@ -219,7 +266,54 @@ final class DeliveryService
                 'status'            => $status,
                 'response'          => $responseText,
                 'error_message'     => $err,
+                'next_poll_at'      => $nextPollAt,
+                'poll_attempts'     => $pollAttempts,
+                'last_poll_error'   => $lastPollError,
             ]);
         }
+    }
+
+    /**
+     * 兼容不同上游返回字段：trade_no / tradeNo / raw.data.tradeNo
+     *
+     * @param array<string,mixed> $resp
+     */
+    private static function extractTradeNo(array $resp): string
+    {
+        $tradeNo = trim((string) ($resp['trade_no'] ?? $resp['tradeNo'] ?? ''));
+        if ($tradeNo !== '') {
+            return $tradeNo;
+        }
+        if (!empty($resp['raw']) && is_array($resp['raw'])) {
+            $raw = $resp['raw'];
+            if (!empty($raw['data']) && is_array($raw['data'])) {
+                $tradeNo = trim((string) ($raw['data']['tradeNo'] ?? $raw['data']['trade_no'] ?? ''));
+                if ($tradeNo !== '') {
+                    return $tradeNo;
+                }
+            }
+        }
+        return '';
+    }
+
+    private static function resolveDeliveryWay(int $goodsId): int
+    {
+        if ($goodsId <= 0) {
+            return 0;
+        }
+        $prefix = Database::prefix();
+        $row = Database::fetchOne(
+            "SELECT `configs` FROM `{$prefix}goods` WHERE `id` = ? LIMIT 1",
+            [$goodsId]
+        );
+        if (!$row) {
+            return 0;
+        }
+        $cfg = json_decode((string) ($row['configs'] ?? '{}'), true);
+        if (!is_array($cfg)) {
+            return 0;
+        }
+        $way = (int) ($cfg['ycy_shared']['delivery_way'] ?? 0);
+        return $way === 1 ? 1 : 0;
     }
 }

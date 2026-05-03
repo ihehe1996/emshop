@@ -45,11 +45,16 @@ final class ClientV4 extends Client
 
     public function connect(): array
     {
-        $resp = $this->call('/plugin/open-api/connect');
+        // 按当前联调要求，萌次元测试连接先走个人信息接口（可直接返回余额）
+        $resp = $this->call('/user/personal/info');
+
+        // print_r($resp); die;
+
         $data = $resp['data'] ?? [];
+
         return [
-            'username' => (string) ($data['username'] ?? ''),
-            'balance'  => (float)  ($data['balance'] ?? 0),
+            'username' => (string) ($data['username'] ?? $data['nickname'] ?? $data['name'] ?? ''),
+            'balance'  => (float)  ($data['balance'] ?? $data['money'] ?? $data['shop_balance'] ?? 0),
         ];
     }
 
