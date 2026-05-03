@@ -91,7 +91,7 @@ class ApiController extends BaseController
 
         $params = $this->requestParams();
         $apiUser = $this->authUser($params);
-        $scope = $this->resolveScope($apiUser);
+        $scope = $this->resolveGoodsApiHostScope();
 
         $goodsId = (int) ($params['goods_id'] ?? 0);
         $specId = (int) ($params['spec_id'] ?? 0);
@@ -173,7 +173,7 @@ class ApiController extends BaseController
     {
         $params = $this->requestParams();
         $apiUser = $this->authUser($params);
-        $scope = $this->resolveScope($apiUser);
+        $scope = $this->resolveGoodsApiHostScope();
 
         $goodsId = (int) ($params['goods_id'] ?? 0);
         $specId = (int) ($params['spec_id'] ?? 0);
@@ -243,7 +243,7 @@ class ApiController extends BaseController
     {
         $params = $this->requestParams();
         $apiUser = $this->authUser($params);
-        $scope = $this->resolveScope($apiUser);
+        $scope = $this->resolveGoodsApiHostScope();
 
         $orderNo = trim((string) ($params['order_no'] ?? ''));
         if ($orderNo === '') {
