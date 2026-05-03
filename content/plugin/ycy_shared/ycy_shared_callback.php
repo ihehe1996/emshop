@@ -88,60 +88,6 @@ function callback_init(): void
         KEY `idx_trade_poll` (`status`, `next_poll_at`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='异次元共享店铺 - 代付流水'");
 
-    // 老库升级：补齐 ycy_goods 的任务调度字段
-    $tbl = $prefix . 'ycy_goods';
-    ycy_add_column_if_missing($tbl, 'next_stock_sync_at', "DATETIME DEFAULT NULL COMMENT '下次库存同步时间（任务化分片）'");
-    ycy_add_column_if_missing($tbl, 'next_price_sync_at', "DATETIME DEFAULT NULL COMMENT '下次价格同步时间（任务化分片）'");
-    ycy_add_column_if_missing($tbl, 'stock_fail_count', "INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '库存同步连续失败次数'");
-    ycy_add_column_if_missing($tbl, 'price_fail_count', "INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '价格同步连续失败次数'");
-    ycy_add_column_if_missing($tbl, 'last_stock_error', "VARCHAR(255) NOT NULL DEFAULT '' COMMENT '最近一次库存同步错误'");
-    ycy_add_column_if_missing($tbl, 'last_price_error', "VARCHAR(255) NOT NULL DEFAULT '' COMMENT '最近一次价格同步错误'");
-    ycy_add_column_if_missing($tbl, 'sync_lock_token', "VARCHAR(64) DEFAULT NULL COMMENT '同步锁 token'");
-    ycy_add_column_if_missing($tbl, 'sync_lock_until', "DATETIME DEFAULT NULL COMMENT '同步锁过期时间'");
-    ycy_add_index_if_missing($tbl, 'idx_stock_due', '(`next_stock_sync_at`)');
-    ycy_add_index_if_missing($tbl, 'idx_price_due', '(`next_price_sync_at`)');
-    ycy_add_index_if_missing($tbl, 'idx_sync_lock', '(`sync_lock_until`)');
-
-    // 老库升级：补齐 ycy_trade 轮询字段
-    $tradeTbl = $prefix . 'ycy_trade';
-    ycy_add_column_if_missing($tradeTbl, 'next_poll_at', "DATETIME DEFAULT NULL COMMENT '下次轮询时间'");
-    ycy_add_column_if_missing($tradeTbl, 'poll_attempts', "INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '轮询次数'");
-    ycy_add_column_if_missing($tradeTbl, 'last_poll_error', "VARCHAR(500) NOT NULL DEFAULT '' COMMENT '最近一次轮询错误'");
-    ycy_add_index_if_missing($tradeTbl, 'idx_trade_poll', '(`status`, `next_poll_at`)');
-}
-
-function ycy_add_column_if_missing(string $table, string $column, string $definition): void
-{
-    try {
-        $row = Database::fetchOne(
-            'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
-            [$table, $column]
-        );
-        if ($row) {
-            return;
-        }
-        Database::execute("ALTER TABLE `{$table}` ADD COLUMN `{$column}` {$definition}");
-    } catch (Throwable $e) {
-        // 升级补列失败不阻断插件加载；后续同步逻辑会在运行时暴露
-    }
-}
-
-function ycy_add_index_if_missing(string $table, string $indexName, string $indexExpr): void
-{
-    try {
-        $row = Database::fetchOne(
-            'SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1',
-            [$table, $indexName]
-        );
-        if ($row) {
-            return;
-        }
-        Database::execute("ALTER TABLE `{$table}` ADD INDEX `{$indexName}` {$indexExpr}");
-    } catch (Throwable $e) {
-        // 补索引失败不阻断插件加载
-    }
 }
 
 /**

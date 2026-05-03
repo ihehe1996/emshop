@@ -370,25 +370,6 @@ function emshop_write_system_log(string $level, string $action, string $message,
     }
 }
 
-/**
- * 保证插件数据表存在（幂等）。后台设置弹窗在未走前台 init 时也可调用。
- */
-function emshop_plugin_ensure_schema(): void
-{
-    static $done = false;
-    if ($done) {
-        return;
-    }
-    $done = true;
-    $cb = __DIR__ . '/emshop_callback.php';
-    if (is_file($cb)) {
-        require_once $cb;
-    }
-    if (function_exists('callback_init')) {
-        callback_init();
-    }
-}
-
 // ============================================================
 // 商品类型：对接导入商品（不与 virtual_card / physical 共用发货链）
 // Swoole processQueue 调 goods_type_{type}_order_paid，必须用独立 type 避免误触发卡密/实物逻辑

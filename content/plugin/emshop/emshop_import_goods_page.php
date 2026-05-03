@@ -11,7 +11,6 @@ require $emRoot . '/admin/global.php';
 adminRequireLogin();
 
 require_once __DIR__ . '/emshop.php';
-emshop_plugin_ensure_schema();
 
 use EmshopPlugin\RemoteSiteModel;
 

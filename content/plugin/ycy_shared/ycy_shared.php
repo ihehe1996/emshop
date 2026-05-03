@@ -19,23 +19,6 @@ spl_autoload_register(function (string $class): void {
     if (is_file($file)) require_once $file;
 });
 
-require_once __DIR__ . '/ycy_shared_callback.php';
-
-/**
- * 运行时兜底：确保插件表结构和新增字段都已存在。
- */
-function ycy_shared_ensure_schema(): void
-{
-    static $done = false;
-    if ($done) {
-        return;
-    }
-    $done = true;
-    callback_init();
-}
-
-ycy_shared_ensure_schema();
-
 // ============================================================
 // 注册新的 goods_type：ycy_shared
 //   由 YcyShared\GoodsType 处理：商品编辑锁价/锁量、发货代付上游

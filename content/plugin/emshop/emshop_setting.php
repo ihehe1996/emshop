@@ -9,7 +9,6 @@
 defined('EM_ROOT') || exit('Access Denied');
 
 require_once __DIR__ . '/emshop.php';
-emshop_plugin_ensure_schema();
 
 use EmshopPlugin\GoodsImportService;
 use EmshopPlugin\RemoteApiClient;
