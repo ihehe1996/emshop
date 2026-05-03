@@ -55,6 +55,11 @@ defined('EM_ROOT') || exit('access denied!');
             <!-- 信息区 -->
             <div class="detail-info">
                 <div class="detail-name"><?= htmlspecialchars($goods['name']) ?></div>
+                <?php if (($goods['delivery_type'] ?? '') === 'auto'): ?>
+                <div style="margin-top:6px;"><span class="goods-badge goods-badge--auto">自动发货</span></div>
+                <?php elseif (($goods['delivery_type'] ?? '') === 'manual'): ?>
+                <div style="margin-top:6px;"><span class="goods-badge goods-badge--manual">人工发货</span></div>
+                <?php endif; ?>
 
                 <?php if (!empty($goods['description'])): ?>
                 <div class="detail-intro"><?= nl2br(htmlspecialchars($goods['description'])) ?></div>

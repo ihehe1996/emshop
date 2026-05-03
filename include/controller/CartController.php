@@ -77,7 +77,9 @@ class CartController extends BaseController
         foreach ($items as $item) {
             if (!empty($item['is_valid']) && !empty($item['goods_type'])) {
                 $cfg = GoodsTypeManager::getTypeConfig((string) $item['goods_type']);
-                if (!empty($cfg['needs_address'])) {
+                $need = !empty($cfg['needs_address']);
+                $need = (bool) applyFilter('goods_needs_address', $need, $item);
+                if ($need) {
                     $needsAddress = true;
                     break;
                 }

@@ -5,8 +5,11 @@ declare(strict_types=1);
 /**
  * 外部下单 API 控制器。
  *
- * 路由：/?c=api&act=create_order   (POST)
+ * 路由：/?c=api&act=simulate_order (GET/POST，模拟下单校验)
+ *       /?c=api&act=real_order     (POST，真实下单)
+ *       /?c=api&act=create_order   (POST，兼容旧调用，等价 real_order)
  *       /?c=api&act=query_order    (GET/POST)
+ *       /?c=api&act=delivery_callback (GET/POST，上游发货回调下游)
  *       /?c=api&act=base_info      (GET/POST)
  *       /?c=api&act=goods_category (GET/POST)
  *       /?c=api&act=goods_list      (GET/POST，不分页；可选 goods_id / goods_ids / category_id / category_ids)
@@ -29,11 +32,21 @@ class ApiController extends BaseController
         }
 
         switch ($act) {
+            case 'simulate_order':
+            case 'preview_order':
+                $this->simulateOrder();
+                return;
+            case 'real_order':
+            case 'create_real_order':
             case 'create_order':
                 $this->createOrder();
                 return;
             case 'query_order':
                 $this->queryOrder();
+                return;
+            case 'delivery_callback':
+            case 'order_delivery_callback':
+                $this->deliveryCallback();
                 return;
             case 'base_info':
             case 'get_base_info':
@@ -68,6 +81,7 @@ class ApiController extends BaseController
      *   extra_json（JSON 对象，附加字段键值）
      *   extra_{name}（附加字段，和 extra_json 二选一或混用）
      *   address_json（JSON：recipient/mobile/province/city/district/detail）
+     *   delivery_callback_url（可选；上游发货后回调地址，同系统对接使用）
      */
     private function createOrder(): void
     {
@@ -99,113 +113,19 @@ class ApiController extends BaseController
                 $quantity,
                 $couponCode
             ) {
-            $goods = GoodsModel::getById($goodsId);
-            if (!$goods
-                || (int) ($goods['status'] ?? 0) !== 1
-                || (int) ($goods['is_on_sale'] ?? 0) !== 1
-                || ($goods['deleted_at'] ?? null) !== null
-            ) {
-                throw new RuntimeException('商品不存在或已下架');
-            }
+            $prepared = $this->prepareApiOrderDraft(
+                $scope,
+                $apiUser,
+                $params,
+                $goodsId,
+                $specId,
+                $quantity,
+                $couponCode
+            );
 
-            // 主站 API 只能下主站商品；商户 API 只能下本店可见商品（GoodsModel::getById 在商户 scope 已过滤）
-            if ((int) $scope['merchant_id'] === 0 && (int) ($goods['owner_id'] ?? 0) !== 0) {
-                throw new RuntimeException('该商品不支持当前 API 账号下单');
-            }
-
-            // API 开关：字段不存在则兼容为开启；存在时必须=1
-            if (array_key_exists('api_enabled', $goods) && (int) ($goods['api_enabled'] ?? 0) !== 1) {
-                throw new RuntimeException('该商品未开启 API 对接下单');
-            }
-
-            $allSpecs = GoodsModel::getSpecsByGoodsId((int) $goods['id']);
-            if ($allSpecs === []) {
-                throw new RuntimeException('商品规格不存在');
-            }
-
-            if (count($allSpecs) > 1 && $specId <= 0) {
-                throw new RuntimeException('该商品为多规格，请传 spec_id');
-            }
-
-            $pickedSpec = null;
-            foreach ($allSpecs as $s) {
-                if ((int) ($s['id'] ?? 0) === $specId) {
-                    $pickedSpec = $s;
-                    break;
-                }
-            }
-            if ($pickedSpec === null) {
-                $pickedSpec = $allSpecs[0];
-                $specId = (int) ($pickedSpec['id'] ?? 0);
-            }
-
-            $extraFields = $this->collectExtraFields($goods, $params);
-
-            $contactQuery = trim((string) ($params['guest_find_contact_query'] ?? $params['contact'] ?? ''));
-            $orderPassword = trim((string) ($params['guest_find_password_query'] ?? $params['order_password'] ?? ''));
-
-            if (GuestFindModel::isContactEnabled() && $contactQuery === '') {
-                throw new RuntimeException('请传 ' . GuestFindModel::getContactTypeLabel());
-            }
-            if (GuestFindModel::isPasswordEnabled() && $orderPassword === '') {
-                throw new RuntimeException('请传订单密码');
-            }
-
-            $guestAddress = $this->parseGuestAddress($params);
-
-            $createData = [
-                'user_id'             => 0, // 外部接口默认游客单
-                'guest_token'         => 'api_' . substr(md5((string) $apiUser['id'] . '|' . microtime(true) . '|' . random_int(1000, 9999)), 0, 32),
-                'merchant_id'         => (int) $scope['merchant_id'],
-                'owner_id'            => (int) $scope['owner_id'],
-                // API 对接单固定走"对接人余额支付"；不走第三方收银台
-                'payment_code'        => 'balance',
-                'payment_name'        => '余额支付',
-                'payment_plugin'      => 'built-in',
-                'payment_plugin_name' => '内置',
-                'payment_channel'     => 'balance',
-                'source'              => 'api',
-                'guest_address'       => $guestAddress,
-            ];
-
-            if ($contactQuery !== '') {
-                if ($extraFields !== []) {
-                    $extraFields['guest_find_contact'] = $contactQuery;
-                } else {
-                    $createData['contact_info'] = $contactQuery;
-                }
-            }
-            if ($extraFields !== []) {
-                $attach = trim((string) ($params['attach'] ?? ''));
-                if ($attach !== '') {
-                    $extraFields['api_attach'] = $attach;
-                }
-                $createData['contact_info'] = $extraFields;
-            }
-            if ($orderPassword !== '') {
-                $createData['order_password'] = $orderPassword;
-            }
-
-            // 可选优惠券
-            if ($couponCode !== '') {
-                $couponService = new CouponService();
-                $goodsAmountRaw = ((int) ($pickedSpec['price_raw'] ?? 0)) * $quantity;
-                $checkRes = $couponService->check($couponCode, [
-                    'goods_amount_raw' => $goodsAmountRaw,
-                    'goods_items'      => [[
-                        'goods_id'    => (int) $goods['id'],
-                        'category_id' => (int) ($goods['category_id'] ?? 0),
-                        'goods_type'  => (string) ($goods['goods_type'] ?? ''),
-                    ]],
-                    'user_id'          => 0,
-                ]);
-                $createData['coupon'] = $checkRes['coupon'];
-                $createData['coupon_discount'] = (int) $checkRes['discount_raw'];
-            }
-
-            $result = OrderModel::create($createData, [[
-                'goods_id'  => (int) $goods['id'],
-                'spec_id'   => $specId,
+            $result = OrderModel::create($prepared['create_data'], [[
+                'goods_id'  => (int) $prepared['goods_id'],
+                'spec_id'   => (int) $prepared['spec_id'],
                 'quantity'  => $quantity,
             ]]);
 
@@ -241,6 +161,77 @@ class ApiController extends BaseController
         }
 
         Response::success('下单成功', $orderResult);
+    }
+
+    /**
+     * 模拟下单：仅做可下单校验，不创建订单。
+     *
+     * 必填：appid, timestamp, sign, goods_id, quantity
+     * 可选参数与 create_order 一致。
+     */
+    private function simulateOrder(): void
+    {
+        $params = $this->requestParams();
+        $apiUser = $this->authUser($params);
+        $scope = $this->resolveScope($apiUser);
+
+        $goodsId = (int) ($params['goods_id'] ?? 0);
+        $specId = (int) ($params['spec_id'] ?? 0);
+        $quantity = max(1, (int) ($params['quantity'] ?? 1));
+        $couponCode = trim((string) ($params['coupon_code'] ?? ''));
+        if ($goodsId <= 0) {
+            Response::error('goods_id 参数错误');
+        }
+
+        $preview = [];
+        try {
+            $preview = $this->runWithMerchantScope($scope['merchant_row'], function () use (
+                $scope,
+                $apiUser,
+                $params,
+                $goodsId,
+                $specId,
+                $quantity,
+                $couponCode
+            ) {
+                $prepared = $this->prepareApiOrderDraft(
+                    $scope,
+                    $apiUser,
+                    $params,
+                    $goodsId,
+                    $specId,
+                    $quantity,
+                    $couponCode
+                );
+                $needRaw = (int) ($prepared['estimated_pay_amount_raw'] ?? 0);
+                $balanceRaw = (int) ($apiUser['money'] ?? 0);
+                if ($needRaw > 0 && $balanceRaw < $needRaw) {
+                    throw new RuntimeException('对接人余额不足');
+                }
+                return [
+                    'can_order'          => true,
+                    'goods_id'           => (int) $prepared['goods_id'],
+                    'spec_id'            => (int) $prepared['spec_id'],
+                    'quantity'           => $quantity,
+                    'estimated_pay'      => bcdiv((string) $needRaw, '1000000', 2),
+                    'balance'            => bcdiv((string) $balanceRaw, '1000000', 2),
+                    'estimated_pay_raw'  => $needRaw,
+                    'balance_raw'        => $balanceRaw,
+                ];
+            });
+        } catch (RuntimeException $e) {
+            Response::success($e->getMessage(), [
+                'can_order' => false,
+                'reason'    => $e->getMessage(),
+            ]);
+        } catch (Throwable $e) {
+            Response::success('模拟下单校验失败', [
+                'can_order' => false,
+                'reason'    => '模拟下单校验失败',
+            ]);
+        }
+
+        Response::success('校验通过', $preview);
     }
 
     /**
@@ -867,6 +858,250 @@ class ApiController extends BaseController
             return $fn();
         } finally {
             MerchantContext::setCurrent($saved);
+        }
+    }
+
+    /**
+     * 组装 API 下单草稿（校验商品/规格/附加参数，返回 OrderModel::create 所需数据）。
+     *
+     * @param array{merchant_id:int,owner_id:int,merchant_row:?array} $scope
+     * @param array<string, mixed> $apiUser
+     * @param array<string, mixed> $params
+     * @return array{create_data:array<string,mixed>,goods_id:int,spec_id:int,estimated_pay_amount_raw:int}
+     */
+    private function prepareApiOrderDraft(
+        array $scope,
+        array $apiUser,
+        array $params,
+        int $goodsId,
+        int $specId,
+        int $quantity,
+        string $couponCode
+    ): array {
+        $goods = GoodsModel::getById($goodsId);
+        if (!$goods
+            || (int) ($goods['status'] ?? 0) !== 1
+            || (int) ($goods['is_on_sale'] ?? 0) !== 1
+            || ($goods['deleted_at'] ?? null) !== null
+        ) {
+            throw new RuntimeException('商品不存在或已下架');
+        }
+
+        // 主站 API 只能下主站商品；商户 API 只能下本店可见商品（GoodsModel::getById 在商户 scope 已过滤）
+        if ((int) $scope['merchant_id'] === 0 && (int) ($goods['owner_id'] ?? 0) !== 0) {
+            throw new RuntimeException('该商品不支持当前 API 账号下单');
+        }
+
+        // API 开关：字段不存在则兼容为开启；存在时必须=1
+        if (array_key_exists('api_enabled', $goods) && (int) ($goods['api_enabled'] ?? 0) !== 1) {
+            throw new RuntimeException('该商品未开启 API 对接下单');
+        }
+
+        $allSpecs = GoodsModel::getSpecsByGoodsId((int) $goods['id']);
+        if ($allSpecs === []) {
+            throw new RuntimeException('商品规格不存在');
+        }
+        if (count($allSpecs) > 1 && $specId <= 0) {
+            throw new RuntimeException('该商品为多规格，请传 spec_id');
+        }
+        $pickedSpec = null;
+        foreach ($allSpecs as $s) {
+            if ((int) ($s['id'] ?? 0) === $specId) {
+                $pickedSpec = $s;
+                break;
+            }
+        }
+        if ($pickedSpec === null) {
+            $pickedSpec = $allSpecs[0];
+            $specId = (int) ($pickedSpec['id'] ?? 0);
+        }
+
+        $extraFields = $this->collectExtraFields($goods, $params);
+        $contactQuery = trim((string) ($params['guest_find_contact_query'] ?? $params['contact'] ?? ''));
+        $orderPassword = trim((string) ($params['guest_find_password_query'] ?? $params['order_password'] ?? ''));
+        if (GuestFindModel::isContactEnabled() && $contactQuery === '') {
+            throw new RuntimeException('请传 ' . GuestFindModel::getContactTypeLabel());
+        }
+        if (GuestFindModel::isPasswordEnabled() && $orderPassword === '') {
+            throw new RuntimeException('请传订单密码');
+        }
+        $guestAddress = $this->parseGuestAddress($params);
+
+        $createData = [
+            'user_id'             => 0, // 外部接口默认游客单
+            'guest_token'         => 'api_' . substr(md5((string) $apiUser['id'] . '|' . microtime(true) . '|' . random_int(1000, 9999)), 0, 32),
+            'merchant_id'         => (int) $scope['merchant_id'],
+            'owner_id'            => (int) $scope['owner_id'],
+            'payment_code'        => 'balance',
+            'payment_name'        => '余额支付',
+            'payment_plugin'      => 'built-in',
+            'payment_plugin_name' => '内置',
+            'payment_channel'     => 'balance',
+            'source'              => 'api',
+            'guest_address'       => $guestAddress,
+        ];
+        $callbackUrl = trim((string) ($params['delivery_callback_url'] ?? ''));
+        if ($callbackUrl !== '') {
+            if (!preg_match('#^https?://#i', $callbackUrl)) {
+                throw new RuntimeException('delivery_callback_url 必须是 http(s) 地址');
+            }
+            if (function_exists('mb_strlen')) {
+                if (mb_strlen($callbackUrl, 'UTF-8') > 500) {
+                    throw new RuntimeException('delivery_callback_url 过长');
+                }
+            } elseif (strlen($callbackUrl) > 500) {
+                throw new RuntimeException('delivery_callback_url 过长');
+            }
+            $createData['delivery_callback_url'] = $callbackUrl;
+        }
+        if ($contactQuery !== '') {
+            if ($extraFields !== []) {
+                $extraFields['guest_find_contact'] = $contactQuery;
+            } else {
+                $createData['contact_info'] = $contactQuery;
+            }
+        }
+        if ($extraFields !== []) {
+            $attach = trim((string) ($params['attach'] ?? ''));
+            if ($attach !== '') {
+                $extraFields['api_attach'] = $attach;
+            }
+            $createData['contact_info'] = $extraFields;
+        }
+        if ($orderPassword !== '') {
+            $createData['order_password'] = $orderPassword;
+        }
+
+        $estimatedPayRaw = ((int) ($pickedSpec['price_raw'] ?? 0)) * $quantity;
+        if ($couponCode !== '') {
+            $couponService = new CouponService();
+            $checkRes = $couponService->check($couponCode, [
+                'goods_amount_raw' => $estimatedPayRaw,
+                'goods_items'      => [[
+                    'goods_id'    => (int) $goods['id'],
+                    'category_id' => (int) ($goods['category_id'] ?? 0),
+                    'goods_type'  => (string) ($goods['goods_type'] ?? ''),
+                ]],
+                'user_id'          => 0,
+            ]);
+            $createData['coupon'] = $checkRes['coupon'];
+            $createData['coupon_discount'] = (int) $checkRes['discount_raw'];
+            $estimatedPayRaw = max(0, $estimatedPayRaw - (int) $checkRes['discount_raw']);
+        }
+
+        return [
+            'create_data'               => $createData,
+            'goods_id'                  => (int) $goods['id'],
+            'spec_id'                   => $specId,
+            'estimated_pay_amount_raw'  => $estimatedPayRaw,
+        ];
+    }
+
+    /**
+     * 上游发货异步回调接收（同系统对接）。
+     * 通过 callback_token + local_order_goods_id 做鉴权。
+     */
+    private function deliveryCallback(): void
+    {
+        $params = $this->requestParams();
+        $localOrderGoodsId = (int) ($params['local_order_goods_id'] ?? $params['order_goods_id'] ?? 0);
+        $callbackToken = trim((string) ($params['callback_token'] ?? ''));
+        $deliveryContent = trim((string) ($params['delivery_content'] ?? ''));
+        if ($localOrderGoodsId <= 0 || $callbackToken === '' || $deliveryContent === '') {
+            $this->writeSystemLog('warning', '发货回调参数缺失', '收到的发货回调参数不完整', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('回调参数缺失');
+        }
+
+        $prefix = Database::prefix();
+        $og = Database::fetchOne(
+            "SELECT `id`, `order_id`, `spec_id`, `quantity`, `delivery_content`, `plugin_data`
+             FROM `{$prefix}order_goods` WHERE `id` = ? LIMIT 1",
+            [$localOrderGoodsId]
+        );
+        if (!$og) {
+            $this->writeSystemLog('warning', '发货回调目标不存在', '收到发货回调但本地订单商品不存在', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('订单商品不存在');
+        }
+
+        $pd = json_decode((string) ($og['plugin_data'] ?? '{}'), true);
+        if (!is_array($pd)) {
+            $pd = [];
+        }
+        $em = $pd['emshop_remote'] ?? [];
+        if (!is_array($em)) {
+            $em = [];
+        }
+        $savedToken = (string) ($em['callback_token'] ?? '');
+        if ($savedToken === '' || !hash_equals($savedToken, $callbackToken)) {
+            $this->writeSystemLog('warning', '发货回调鉴权失败', '收到发货回调但鉴权不通过', [
+                'local_order_goods_id' => $localOrderGoodsId,
+            ]);
+            Response::error('回调鉴权失败');
+        }
+
+        // 幂等：已写过发货内容直接返回成功
+        if (!empty($og['delivery_content'])) {
+            $this->writeSystemLog('info', '发货回调重复通知', '发货回调重复到达，按幂等返回成功', [
+                'local_order_goods_id' => $localOrderGoodsId,
+                'order_id' => (int) ($og['order_id'] ?? 0),
+            ]);
+            Response::success('ok', ['handled' => true, 'duplicate' => true]);
+        }
+
+        $em['upstream_status'] = trim((string) ($params['upstream_status'] ?? ''));
+        $em['upstream_order_no'] = trim((string) ($params['order_no'] ?? ($em['upstream_order_no'] ?? '')));
+        $pd['emshop_remote'] = $em;
+
+        Database::execute(
+            "UPDATE `{$prefix}order_goods`
+             SET `delivery_content` = ?, `delivery_at` = NOW(), `plugin_data` = ?
+             WHERE `id` = ?",
+            [
+                $deliveryContent,
+                json_encode($pd, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $localOrderGoodsId,
+            ]
+        );
+
+        $specId = (int) ($og['spec_id'] ?? 0);
+        $qty = (int) ($og['quantity'] ?? 0);
+        if ($specId > 0 && $qty > 0) {
+            GoodsModel::incrementSoldCount($specId, $qty);
+        }
+
+        OrderModel::checkDeliveryComplete((int) ($og['order_id'] ?? 0));
+        $this->writeSystemLog('info', '发货回调处理成功', '已处理上游发货回调并写入发货内容', [
+            'local_order_goods_id' => $localOrderGoodsId,
+            'order_id' => (int) ($og['order_id'] ?? 0),
+            'upstream_order_no' => (string) ($em['upstream_order_no'] ?? ''),
+        ]);
+        Response::success('ok', ['handled' => true]);
+    }
+
+    /**
+     * @param array<string, mixed> $detail
+     */
+    private function writeSystemLog(string $level, string $action, string $message, array $detail = []): void
+    {
+        try {
+            require_once EM_ROOT . '/include/model/SystemLogModel.php';
+            if (!class_exists('SystemLogModel')) {
+                return;
+            }
+            $m = new SystemLogModel();
+            if ($level === 'error') {
+                $m->error('system', $action, $message, $detail);
+            } elseif ($level === 'warning' || $level === 'warn') {
+                $m->warning('system', $action, $message, $detail);
+            } else {
+                $m->info('system', $action, $message, $detail);
+            }
+        } catch (Throwable $e) {
+            // 日志失败不影响 API 主流程
         }
     }
 
