@@ -1,28 +1,18 @@
 <?php
-
 declare(strict_types=1);
-
-/**
- * 安装服务。
- *
- * 负责初始化数据库、创建用户表，并写入默认管理员。
- */
 final class InstallService
 {
-    /**
-     * 执行安装。
-     */
-    public function setup(): void
+    public function setup(array $options = []): void
     {
         $config = Database::config();
-        $userTable = Database::prefix() . 'user';
-        $configTable = Database::prefix() . 'config';
+        $prefix = Database::prefix();
 
         Database::statement(sprintf(
             'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
             $config['dbname']
         ), true);
 
+        // 系统配置表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -32,9 +22,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_config_name` (`config_name`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'系统配置表\'',
-            $configTable
+            $prefix . 'config'
         ));
 
+        // 用户表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -66,61 +57,10 @@ final class InstallService
                 KEY `idx_remember_token` (`remember_token`),
                 KEY `idx_inviter_l1` (`inviter_l1`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户表\'',
-            $userTable
-        ));
-
-        // 为已有用户表添加手机号码字段（如果不存在）
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `mobile` VARCHAR(20) NOT NULL DEFAULT \'\' COMMENT \'手机号码\' AFTER `avatar`',
-                $userTable
-            ));
-        } catch (Throwable $e) {
-            // 忽略错误，可能是字段已存在或 MySQL 版本不支持 IF NOT EXISTS
-        }
-
-        // 为已有用户表添加余额字段（如果不存在）
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `money` BIGINT NOT NULL DEFAULT 0 COMMENT \'账户余额（实际金额×1000000）\' AFTER `mobile`',
-                $userTable
-            ));
-        } catch (Throwable $e) {
-        }
-
-        // 为已有用户表添加API密钥字段（如果不存在）
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `secret` VARCHAR(64) DEFAULT NULL COMMENT \'API密钥\' AFTER `money`',
-                $userTable
-            ));
-        } catch (Throwable $e) {
-        }
-
-        // 购物车表
-        // 游客身份统一用 em_guest_token Cookie（与订单 guest_token 一致），不再用 session_id
-        $cartTable = Database::prefix() . 'cart';
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
-                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户ID（0=游客）\',
-                `guest_token` VARCHAR(64) DEFAULT NULL COMMENT \'游客令牌（与订单表保持一致）\',
-                `goods_id` INT UNSIGNED NOT NULL COMMENT \'商品ID\',
-                `spec_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'规格ID\',
-                `quantity` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT \'数量\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'添加时间\',
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
-                PRIMARY KEY (`id`),
-                KEY `idx_user` (`user_id`),
-                KEY `idx_guest_token` (`guest_token`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'购物车\'',
-            $cartTable
+            $prefix . 'user'
         ));
 
         // 优惠券定义表
-        // 金额字段统一 BIGINT ×1000000；
-        // value 字段含义因 type 而异：fixed_amount 存金额；percent 存百分比(0-100，如 85 表示 8.5 折)
-        $couponTable = Database::prefix() . 'coupon';
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -149,13 +89,10 @@ final class InstallService
                 KEY `idx_end_at` (`end_at`),
                 KEY `idx_enabled` (`is_enabled`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'优惠券定义\'',
-            $couponTable
+            $prefix . 'coupon'
         ));
 
-        // 用户已领取的优惠券
-        // (user_id, coupon_id) 唯一 —— 保证同一人同一券只能领一次
-        // 过期/失效不落表，查询时 join 动态判断
-        $userCouponTable = Database::prefix() . 'user_coupon';
+        // 用户优惠券表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -170,11 +107,10 @@ final class InstallService
                 KEY `idx_coupon` (`coupon_id`),
                 KEY `idx_user_status` (`user_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户持有的优惠券\'',
-            $userCouponTable
+            $prefix . 'user_coupon'
         ));
 
-        // 用户余额变动记录表
-        $balanceLogTable = Database::prefix() . 'user_balance_log';
+        // 用户余额流水表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -192,11 +128,10 @@ final class InstallService
                 KEY `idx_user_id` (`user_id`),
                 KEY `idx_created_at` (`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户余额变动记录\'',
-            $balanceLogTable
+            $prefix . 'user_balance_log'
         ));
 
-        // 佣金流水（返佣明细；status 落表只有 frozen/available/withdrawn/reverted 四种）
-        $commissionLogTable = Database::prefix() . 'commission_log';
+        // 佣金流水表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -219,11 +154,10 @@ final class InstallService
                 KEY `idx_order` (`order_id`),
                 KEY `idx_frozen_until` (`frozen_until`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'佣金流水\'',
-            $commissionLogTable
+            $prefix . 'commission_log'
         ));
 
-        // 用户钱包充值记录（通过支付插件充值到 user.money）
-        $userRechargeTable = Database::prefix() . 'user_recharge';
+        // 用户充值订单表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -241,11 +175,10 @@ final class InstallService
                 KEY `idx_user` (`user_id`),
                 KEY `idx_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'钱包充值订单\'',
-            $userRechargeTable
+            $prefix . 'user_recharge'
         ));
 
-        // 用户钱包提现申请（用户提交 → 管理员审核 → 通过后线下打款）
-        $userWithdrawTable = Database::prefix() . 'user_withdraw';
+        // 用户提现申请表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -264,11 +197,10 @@ final class InstallService
                 KEY `idx_user` (`user_id`),
                 KEY `idx_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'钱包提现申请\'',
-            $userWithdrawTable
+            $prefix . 'user_withdraw'
         ));
 
-        // 佣金提现记录（提现 = 从 commission_available 划到 em_user.money）
-        $commissionWithdrawTable = Database::prefix() . 'commission_withdraw';
+        // 佣金提现记录表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -282,11 +214,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 KEY `idx_user` (`user_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'佣金提现记录\'',
-            $commissionWithdrawTable
+            $prefix . 'commission_withdraw'
         ));
 
         // 订单主表
-        $orderTable = Database::prefix() . 'order';
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -328,11 +259,10 @@ final class InstallService
                 KEY `idx_owner_status` (`owner_id`, `status`),
                 KEY `idx_created` (`created_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'订单主表\'',
-            $orderTable
+            $prefix . 'order'
         ));
 
         // 订单商品表
-        $orderGoodsTable = Database::prefix() . 'order_goods';
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -353,11 +283,10 @@ final class InstallService
                 KEY `idx_order` (`order_id`),
                 KEY `idx_goods` (`goods_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'订单商品表\'',
-            $orderGoodsTable
+            $prefix . 'order_goods'
         ));
 
         // 订单支付记录表
-        $orderPaymentTable = Database::prefix() . 'order_payment';
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -374,12 +303,12 @@ final class InstallService
                 KEY `idx_order` (`order_id`),
                 KEY `idx_trade_no` (`trade_no`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'订单支付记录\'',
-            $orderPaymentTable
+            $prefix . 'order_payment'
         ));
 
-        $langTable = Database::prefix() . 'language';
-        // 发货队列任务表
-        $queueTable = Database::prefix() . 'delivery_queue';
+        // 语言表
+
+        // 发货队列表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -402,11 +331,10 @@ final class InstallService
                 KEY `idx_status` (`status`, `next_retry_at`),
                 KEY `idx_callback` (`callback_token`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'发货队列任务表\'',
-            $queueTable
+            $prefix . 'delivery_queue'
         ));
 
-        $transTable = Database::prefix() . 'lang';
-
+        // 翻译词条表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -420,9 +348,8 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_code` (`code`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'语言表\'',
-            $langTable
+            $prefix . 'language'
         ));
-
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -436,14 +363,15 @@ final class InstallService
                 KEY `idx_lang_id` (`lang_id`),
                 CONSTRAINT `fk_lang_id` FOREIGN KEY (`lang_id`) REFERENCES `%s`(`id`) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'翻译词条表\'',
-            $transTable,
-            $langTable
+            $prefix . 'lang',
+            $prefix . 'language'
         ));
 
-        $goodsCatTable = Database::prefix() . 'goods_category';
-        $blogCatTable = Database::prefix() . 'blog_category';
-        $naviTable = Database::prefix() . 'navi';
+        // 商品分类表
 
+        // 文章分类表
+
+        // 导航表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -466,9 +394,8 @@ final class InstallService
                 KEY `idx_slug` (`slug`),
                 KEY `idx_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商品分类表\'',
-            $goodsCatTable
+            $prefix . 'goods_category'
         ));
-
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -492,9 +419,8 @@ final class InstallService
                 KEY `idx_status` (`status`),
                 KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'文章分类表\'',
-            $blogCatTable
+            $prefix . 'blog_category'
         ));
-
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -517,11 +443,10 @@ final class InstallService
                 KEY `idx_status` (`status`),
                 KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'导航表\'',
-            $naviTable
+            $prefix . 'navi'
         ));
 
-        // 文章表（多租户：merchant_id=0 主站，>0 商户）
-        $blogTable = Database::prefix() . 'blog';
+        // 文章表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -548,11 +473,10 @@ final class InstallService
                 KEY `idx_deleted` (`deleted_at`),
                 KEY `idx_merchant_status` (`merchant_id`, `status`, `deleted_at`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'文章表\'',
-            $blogTable
+            $prefix . 'blog'
         ));
 
-        // 文章标签：商户和主站独立池（uk_merchant_name 允许同名）
-        $blogTagTable = Database::prefix() . 'blog_tag';
+        // 博客标签表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -567,10 +491,9 @@ final class InstallService
                 UNIQUE KEY `uk_merchant_name` (`merchant_id`, `name`),
                 KEY `idx_sort` (`sort`, `id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'博客标签表\'',
-            $blogTagTable
+            $prefix . 'blog_tag'
         ));
-
-        // 默认系统导航：仅当表内还没有同名系统导航时才插入，避免重复执行 install 脚本生成重复数据
+        $this->setupCoreSupportTables();
         $defaultNavi = [
             ['name' => '首页', 'type' => 'system', 'link' => '?',             'sort' => 1, 'is_system' => 1],
             ['name' => '商城', 'type' => 'system', 'link' => '?c=goods_list', 'sort' => 2, 'is_system' => 1],
@@ -578,84 +501,16 @@ final class InstallService
         ];
         foreach ($defaultNavi as $row) {
             $exists = Database::fetchOne(
-                'SELECT `id` FROM `' . $naviTable . '` WHERE `name` = ? AND `is_system` = 1 LIMIT 1',
+                'SELECT `id` FROM `' . $prefix . 'navi' . '` WHERE `name` = ? AND `is_system` = 1 LIMIT 1',
                 [$row['name']]
             );
             if ($exists === null) {
                 Database::insert('navi', $row);
             }
         }
+        $this->setupGoodsModule();
 
-        $this->executeSqlFile(EM_ROOT . '/install/goods_module.sql');
-
-        // ============ 正版授权 ============
-        // 站点级授权：emkey / emkey_type / main_host / alias_hosts 全部存 em_config。
-        // 详见 LicenseService。
-
-        // ============ 商户（分站）模块 ============
-        // 参考：a 系统文档/分站功能方案.md v1.1
-        $this->setupMerchantModule();
-
-        // 插入默认语言
-        Database::execute(sprintf(
-            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'y\', \'y\')',
-            $langTable
-        ), []);
-
-        $siteConfigSql = sprintf(
-            'INSERT INTO `%s` (`config_name`, `config_value`, `description`)
-             VALUES (:config_name, :config_value, :description)
-             ON DUPLICATE KEY UPDATE
-                `config_value` = VALUES(`config_value`),
-                `description` = VALUES(`description`)',
-            $configTable
-        );
-
-        Database::execute($siteConfigSql, [
-            'config_name' => 'sitename',
-            'config_value' => 'EMSHOP',
-            'description' => '站点名称',
-        ]);
-
-        $hasher = new PasswordHash(8, true);
-        $hash = $hasher->HashPassword('123456');
-
-        $sql = sprintf(
-            'INSERT INTO `%s` (`username`, `email`, `password`, `nickname`, `avatar`, `role`, `status`)
-             VALUES (:username, :email, :password, :nickname, :avatar, :role, :status)
-             ON DUPLICATE KEY UPDATE
-                `email` = VALUES(`email`),
-                `password` = VALUES(`password`),
-                `nickname` = VALUES(`nickname`),
-                `avatar` = VALUES(`avatar`),
-                `role` = VALUES(`role`),
-                `status` = VALUES(`status`),
-                `updated_at` = CURRENT_TIMESTAMP',
-            $userTable
-        );
-
-        Database::execute($sql, [
-            'username' => 'admin',
-            'email' => '10220739@qq.com',
-            'password' => $hash,
-            'nickname' => '管理员',
-            'avatar' => '',
-            'role' => 'admin',
-            'status' => 1,
-        ]);
-    }
-
-    /**
-     * 建立商户（分站）模块相关数据结构。
-     * 详见 a 系统文档/分站功能方案.md v1.1。
-     */
-    private function setupMerchantModule(): void
-    {
-        $prefix = Database::prefix();
-
-        // 商户等级：不含拿货折扣率（折扣率来自 user_levels.discount），
-        // 只存费率 + 功能开关 + 访问方式开关
-        $merchantLevelTable = $prefix . 'merchant_level';
+        // 商户等级表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -675,11 +530,10 @@ final class InstallService
                 UNIQUE KEY `uk_name` (`name`),
                 KEY `idx_enabled` (`is_enabled`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户等级\'',
-            $merchantLevelTable
+            $prefix . 'merchant_level'
         ));
 
-        // 商户主数据
-        $merchantTable = $prefix . 'merchant';
+        // 商户主表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -695,7 +549,7 @@ final class InstallService
                 `custom_domain` VARCHAR(200) DEFAULT NULL COMMENT \'自定义域名\',
                 `domain_verified` TINYINT(1) NOT NULL DEFAULT 0,
                 `theme` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'模板名（v1 不生效）\',
-                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%）；无商品级覆盖时采用\',
+                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%%）；无商品级覆盖时采用\',
                 `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=正常 0=禁用\',
                 `opened_at` DATETIME DEFAULT NULL,
                 `opened_via` VARCHAR(16) NOT NULL DEFAULT \'admin\' COMMENT \'admin=后台手动 self=自助\',
@@ -710,11 +564,10 @@ final class InstallService
                 KEY `idx_level` (`level_id`),
                 KEY `idx_status` (`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户主数据\'',
-            $merchantTable
+            $prefix . 'merchant'
         ));
 
-        // 主站商品 -> 商户的引用关系（"已推送到本店铺"）
-        $merchantGoodsRefTable = $prefix . 'goods_merchant_ref';
+        // 商户商品引用表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -733,11 +586,10 @@ final class InstallService
                 KEY `idx_goods` (`goods_id`),
                 KEY `idx_merchant_sale` (`merchant_id`, `is_on_sale`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户引用主站商品\'',
-            $merchantGoodsRefTable
+            $prefix . 'goods_merchant_ref'
         ));
 
-        // 商户自定义分类（支持二级）
-        $merchantCategoryTable = $prefix . 'merchant_category';
+        // 商户分类表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -752,11 +604,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 KEY `idx_merchant_parent` (`merchant_id`, `parent_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户自定义分类\'',
-            $merchantCategoryTable
+            $prefix . 'merchant_category'
         ));
 
-        // 主站分类在商户店的重命名映射
-        $merchantCategoryMapTable = $prefix . 'merchant_category_map';
+        // 商户分类映射表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -767,11 +618,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_merchant_master` (`merchant_id`, `master_category_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户分类重命名/隐藏映射\'',
-            $merchantCategoryMapTable
+            $prefix . 'merchant_category_map'
         ));
 
-        // 店铺余额变动流水
-        $merchantBalanceLogTable = $prefix . 'merchant_balance_log';
+        // 商户余额流水表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -791,11 +641,10 @@ final class InstallService
                 KEY `idx_merchant_time` (`merchant_id`, `created_at`),
                 KEY `idx_order` (`order_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户店铺余额流水\'',
-            $merchantBalanceLogTable
+            $prefix . 'merchant_balance_log'
         ));
 
-        // 店铺余额提现
-        $merchantWithdrawTable = $prefix . 'merchant_withdraw';
+        // 商户提现记录表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -816,11 +665,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户提现记录\'',
-            $merchantWithdrawTable
+            $prefix . 'merchant_withdraw'
         ));
 
-        // 自定义页面表（WordPress 式 Pages：静态页，可挂到导航）—— 多租户隔离
-        $pageTable = $prefix . 'page';
+        // 页面表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -846,11 +694,10 @@ final class InstallService
                 KEY `idx_merchant_status` (`merchant_id`, `status`, `deleted_at`),
                 KEY `idx_merchant_homepage` (`merchant_id`, `is_homepage`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'自定义页面（WordPress 式 Pages）\'',
-            $pageTable
+            $prefix . 'page'
         ));
 
-        // 商户隐藏的系统导航
-        $merchantNaviHiddenTable = $prefix . 'merchant_navi_hidden';
+        // 商户隐藏导航表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `merchant_id` INT UNSIGNED NOT NULL COMMENT \'商户 ID\',
@@ -859,11 +706,10 @@ final class InstallService
                 PRIMARY KEY (`merchant_id`, `navi_id`),
                 KEY `idx_navi` (`navi_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'商户隐藏的系统导航\'',
-            $merchantNaviHiddenTable
+            $prefix . 'merchant_navi_hidden'
         ));
 
-        // 货币表（方案 A 多币种：主货币 ×1000000 存，其他货币仅用于前台展示换算）
-        $currencyTable = $prefix . 'currency';
+        // 货币表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -880,13 +726,10 @@ final class InstallService
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_code` (`code`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'货币表（多币种：主货币 + 展示货币）\'',
-            $currencyTable
+            $prefix . 'currency'
         ));
 
-        // 收货地址表（用户级通用数据，供后续实物商品插件使用）
-        // 省市区以文本快照存储（避免后续行政区划表更新时历史地址错位）
-        // is_default 每个 user 仅能有一条为 1，由 UserAddressModel::setDefault 事务保证
-        $userAddressTable = $prefix . 'user_address';
+        // 用户地址表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -904,12 +747,10 @@ final class InstallService
                 KEY `idx_user` (`user_id`),
                 KEY `idx_user_default` (`user_id`, `is_default`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户收货地址（核心通用数据）\'',
-            $userAddressTable
+            $prefix . 'user_address'
         ));
 
-        // 插件安装记录：物理文件全站共享一份，DB 行按 scope（main / merchant_X）隔离
-        // 唯一索引必须 (name, scope) —— 同一个 epay 可以同时安装在主站和商户两套独立配置
-        $pluginTable = $prefix . 'plugin';
+        // 插件安装记录表
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -934,128 +775,9 @@ final class InstallService
                 KEY `idx_scope_enabled` (`scope`, `is_enabled`),
                 KEY `idx_category` (`category`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件安装记录\'',
-            $pluginTable
+            $prefix . 'plugin'
         ));
-
-        // ============ 既有表加字段 ============
-        $userTable = $prefix . 'user';
-        $this->addColumnIfMissing(
-            $userTable,
-            'merchant_id',
-            'INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'所属商户 id；0=非商户主\''
-        );
-        $this->addColumnIfMissing(
-            $userTable,
-            'shop_balance',
-            'BIGINT NOT NULL DEFAULT 0 COMMENT \'店铺余额 ×1000000（仅商户主有值）\''
-        );
-        // 用户等级（user_levels.id）：引用商品拿货折扣率的唯一来源（方案 Q13）
-        // 0 = 未设置等级；计算拿货价时等同于不打折（1.0）
-        $this->addColumnIfMissing(
-            $userTable,
-            'level_id',
-            'INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户等级 user_levels.id；0=未设置\''
-        );
-
-        $orderTable = $prefix . 'order';
-        $this->addColumnIfMissing(
-            $orderTable,
-            'merchant_id',
-            'INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'下单时所在商户 id；0=主站订单\''
-        );
-        $this->addColumnIfMissing(
-            $orderTable,
-            'display_currency_code',
-            'VARCHAR(3) NOT NULL DEFAULT \'\' COMMENT \'下单时访客选择的展示货币代码；空=主货币\''
-        );
-        $this->addColumnIfMissing(
-            $orderTable,
-            'display_rate',
-            'BIGINT NOT NULL DEFAULT 0 COMMENT \'下单时汇率快照 ×1000000\''
-        );
-        $this->addColumnIfMissing(
-            $orderTable,
-            'shipping_address_snapshot',
-            'TEXT COMMENT \'收货地址快照 JSON；仅需地址的商品类型有值\''
-        );
-        $this->addColumnIfMissing(
-            $orderTable,
-            'delivery_callback_url',
-            'VARCHAR(500) DEFAULT NULL COMMENT \'发货异步回调地址（同系统对接）\''
-        );
-        // em_currency.is_frontend_default：老库升级也要补上
-        //   迁移原则：优先保留老用户在 Config('currency_display') 里的选择；
-        //   没配过就 fallback 到主货币
-        $currencyTableExists = $prefix . 'currency';
-        $this->addColumnIfMissing(
-            $currencyTableExists,
-            'is_frontend_default',
-            'TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=前台默认；全站唯一\''
-        );
-        try {
-            $hasAny = Database::fetchOne("SELECT id FROM {$currencyTableExists} WHERE is_frontend_default = 1 LIMIT 1");
-            if ($hasAny === null) {
-                // 1) 先尝试从老的 Config('currency_display') 迁移
-                $legacyCode = '';
-                try {
-                    $legacyCode = strtoupper(trim((string) (Config::get('currency_display') ?? '')));
-                } catch (Throwable $e) {}
-                $migrated = false;
-                if ($legacyCode !== '' && preg_match('/^[A-Z]{3}$/', $legacyCode)) {
-                    $target = Database::fetchOne(
-                        "SELECT id FROM {$currencyTableExists} WHERE code = ? AND enabled = 1 LIMIT 1",
-                        [$legacyCode]
-                    );
-                    if ($target !== null) {
-                        Database::execute(
-                            "UPDATE {$currencyTableExists} SET is_frontend_default = 1 WHERE id = ?",
-                            [(int) $target['id']]
-                        );
-                        $migrated = true;
-                    }
-                }
-                // 2) 没迁移成功（配置为空 / 找不到对应 code / 已禁用）→ 回退到主货币
-                if (!$migrated) {
-                    Database::execute("UPDATE {$currencyTableExists} SET is_frontend_default = 1 WHERE is_primary = 1");
-                }
-                // 3) 无论成功与否都清空老配置，避免两套机制并存
-                try {
-                    Config::set('currency_display', '');
-                    Config::reload();
-                } catch (Throwable $e) {}
-            }
-        } catch (Throwable $e) {
-            // 极端情况（老库无 is_primary 字段等）忽略，后台可手动设
-        }
-        // 追加索引（若已存在会抛错，忽略）
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD INDEX `idx_merchant_status` (`merchant_id`, `status`)',
-                $orderTable
-            ));
-        } catch (Throwable $e) {
-        }
-
-        $orderGoodsTable = $prefix . 'order_goods';
-        $this->addColumnIfMissing(
-            $orderGoodsTable,
-            'goods_owner_id',
-            'INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'商品 owner_id 快照；0=主站货\''
-        );
-        $this->addColumnIfMissing(
-            $orderGoodsTable,
-            'cost_amount',
-            'BIGINT NOT NULL DEFAULT 0 COMMENT \'拿货价快照 ×1000000\''
-        );
-        $this->addColumnIfMissing(
-            $orderGoodsTable,
-            'fee_amount',
-            'BIGINT NOT NULL DEFAULT 0 COMMENT \'自建手续费快照 ×1000000\''
-        );
-
-        // ============ 默认商户等级 ============
-        // "普通商户"：仅开自建商品；不允许独立收款、自定义域名
-        $hasLevel = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $merchantLevelTable));
+        $hasLevel = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'merchant_level'));
         if ($hasLevel === null) {
             Database::insert('merchant_level', [
                 'name' => '普通商户',
@@ -1069,10 +791,7 @@ final class InstallService
                 'is_enabled' => 1,
             ]);
         }
-
-        // ============ 默认主货币（CNY） ============
-        // 数据库里所有金额都以主货币 ×1000000 存储；装完后主货币锁死不可切换
-        $hasCurrency = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $currencyTable));
+        $hasCurrency = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'currency'));
         if ($hasCurrency === null) {
             $now = time();
             Database::insert('currency', [
@@ -1081,122 +800,494 @@ final class InstallService
                 'symbol' => '¥',
                 'rate' => 1000000,
                 'is_primary' => 1,
-                'is_frontend_default' => 1, // 初装时主货币同时作为前台默认；后续可在后台切到其他货币
+                'is_frontend_default' => 1,
                 'enabled' => 1,
                 'sort_order' => 0,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
         }
-    }
-
-    /**
-     * 给既有表加列，字段已存在则忽略。
-     * 兼容旧版 MySQL 没有 ADD COLUMN IF NOT EXISTS 的情况。
-     */
-    private function addColumnIfMissing(string $table, string $column, string $definition): void
-    {
-        $config = Database::config();
-        $dbName = (string) $config['dbname'];
-
-        $exists = Database::fetchOne(
-            'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
-            [$dbName, $table, $column]
+        Database::execute(sprintf(
+            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'y\', \'y\')',
+            $prefix . 'language'
+        ), []);
+        $siteConfigSql = sprintf(
+            'INSERT INTO `%s` (`config_name`, `config_value`, `description`)
+             VALUES (:config_name, :config_value, :description)
+             ON DUPLICATE KEY UPDATE
+                `config_value` = VALUES(`config_value`),
+                `description` = VALUES(`description`)',
+            $prefix . 'config'
         );
-        if ($exists !== null) {
-            return;
-        }
-
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD COLUMN `%s` %s',
-                $table,
-                $column,
-                $definition
-            ));
-        } catch (Throwable $e) {
-            // 并发 / 已存在情况下忽略
-        }
-    }
-
-    /**
-     * 给既有表加索引，索引已存在则忽略。
-     *
-     * @param string $table       完整表名（含前缀）
-     * @param string $indexName   索引名
-     * @param string $columnsDef  列定义片段，如 "`col1`" 或 "`col1`, `col2`"
-     */
-    private function addIndexIfMissing(string $table, string $indexName, string $columnsDef): void
-    {
-        $config = Database::config();
-        $dbName = (string) $config['dbname'];
-
-        $exists = Database::fetchOne(
-            'SELECT INDEX_NAME FROM information_schema.STATISTICS
-              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ? LIMIT 1',
-            [$dbName, $table, $indexName]
+        Database::execute($siteConfigSql, [
+            'config_name' => 'sitename',
+            'config_value' => 'EMSHOP',
+            'description' => '站点名称',
+        ]);
+        $admin = isset($options['admin']) && is_array($options['admin']) ? $options['admin'] : [];
+        $adminUsername = isset($admin['username']) ? trim((string) $admin['username']) : 'admin';
+        $adminEmail = isset($admin['email']) ? trim((string) $admin['email']) : 'admin@example.com';
+        $adminPassword = isset($admin['password']) ? (string) $admin['password'] : '123456';
+        if ($adminUsername === '') $adminUsername = 'admin';
+        if ($adminEmail === '') $adminEmail = 'admin@example.com';
+        if ($adminPassword === '') $adminPassword = '123456';
+        $hasher = new PasswordHash(8, true);
+        $hash = $hasher->HashPassword($adminPassword);
+        $sql = sprintf(
+            'INSERT INTO `%s` (`username`, `email`, `password`, `nickname`, `avatar`, `role`, `status`)
+             VALUES (:username, :email, :password, :nickname, :avatar, :role, :status)
+             ON DUPLICATE KEY UPDATE
+                `email` = VALUES(`email`),
+                `password` = VALUES(`password`),
+                `nickname` = VALUES(`nickname`),
+                `avatar` = VALUES(`avatar`),
+                `role` = VALUES(`role`),
+                `status` = VALUES(`status`),
+                `updated_at` = CURRENT_TIMESTAMP',
+            $prefix . 'user'
         );
-        if ($exists !== null) {
-            return;
-        }
-
-        try {
-            Database::statement(sprintf(
-                'ALTER TABLE `%s` ADD INDEX `%s` (%s)',
-                $table,
-                $indexName,
-                $columnsDef
-            ));
-        } catch (Throwable $e) {
-            // 并发 / 已存在情况下忽略
-        }
+        Database::execute($sql, [
+            'username' => $adminUsername,
+            'email' => $adminEmail,
+            'password' => $hash,
+            'nickname' => '管理员',
+            'avatar' => '',
+            'role' => 'admin',
+            'status' => 1,
+        ]);
     }
-
-    /**
-     * 执行 SQL 文件中的多条建表语句。
-     */
-    private function executeSqlFile(string $filePath): void
+    private function setupCoreSupportTables(): void
     {
-        if (!is_file($filePath) || !is_readable($filePath)) {
-            return;
-        }
+        $prefix = Database::prefix();
 
-        $content = file_get_contents($filePath);
-        if ($content === false) {
-            return;
-        }
+        // 应用市场表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `remote_app_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'授权端应用ID\',
+                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码（插件名/模板名）\',
+                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
+                `title` VARCHAR(150) NOT NULL DEFAULT \'\' COMMENT \'应用标题\',
+                `version` VARCHAR(50) NOT NULL DEFAULT \'\' COMMENT \'版本号\',
+                `category` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'分类\',
+                `cover` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'封面图\',
+                `description` TEXT COMMENT \'应用描述\',
+                `cost_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'最近采购单价 ×1000000\',
+                `retail_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'分站售价 ×1000000\',
+                `total_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'累计采购配额\',
+                `consumed_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'已售配额\',
+                `is_listed` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=上架 0=下架\',
+                `remote_payload` MEDIUMTEXT COMMENT \'授权端返回原始数据 JSON\',
+                `last_purchased_at` DATETIME DEFAULT NULL COMMENT \'最后采购时间\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_app_code_type` (`app_code`, `type`),
+                KEY `idx_type_listed` (`type`, `is_listed`),
+                KEY `idx_updated_at` (`updated_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店上架清单\'',
+            $prefix . 'app_market'
+        ));
 
-        $statements = preg_split('/;\s*(?:\r?\n|$)/', $content);
-        if (!is_array($statements)) {
-            return;
-        }
+        // 应用市场流水表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `market_id` INT UNSIGNED NOT NULL COMMENT \'app_market.id\',
+                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
+                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
+                `purchase_qty` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT \'本次采购配额数量\',
+                `cost_per_unit` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次采购单价 ×1000000\',
+                `total_cost` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次采购总价 ×1000000\',
+                `remote_order_no` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'授权端订单号\',
+                `remark` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_market_id` (`market_id`),
+                KEY `idx_app_code_type` (`app_code`, `type`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店采购流水\'',
+            $prefix . 'app_market_log'
+        ));
 
-        foreach ($statements as $statement) {
-            $statement = trim($statement);
-            if ($statement === '' || str_starts_with($statement, '--')) {
-                continue;
-            }
+        // 应用购买记录表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `merchant_id` INT UNSIGNED NOT NULL COMMENT \'购买方商户ID\',
+                `user_id` BIGINT UNSIGNED NOT NULL COMMENT \'购买用户ID\',
+                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
+                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
+                `market_id` INT UNSIGNED DEFAULT NULL COMMENT \'来源 app_market.id\',
+                `paid_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'实付金额 ×1000000\',
+                `balance_log_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户余额流水ID\',
+                `purchased_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'购买时间\',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_merchant_app_type` (`merchant_id`, `app_code`, `type`),
+                KEY `idx_market_id` (`market_id`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_type` (`type`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户已购应用记录\'',
+            $prefix . 'app_purchase'
+        ));
 
-            $lines = preg_split('/\r?\n/', $statement);
-            if (!is_array($lines)) {
-                continue;
-            }
+        // 应用订单表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `order_no` VARCHAR(32) NOT NULL COMMENT \'应用订单号\',
+                `merchant_id` INT UNSIGNED NOT NULL COMMENT \'商户ID\',
+                `user_id` BIGINT UNSIGNED NOT NULL COMMENT \'购买用户ID\',
+                `market_id` INT UNSIGNED NOT NULL COMMENT \'app_market.id\',
+                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
+                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
+                `app_title` VARCHAR(150) NOT NULL DEFAULT \'\' COMMENT \'应用标题快照\',
+                `amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'订单金额 ×1000000\',
+                `pay_method` VARCHAR(20) NOT NULL DEFAULT \'balance\' COMMENT \'支付方式\',
+                `status` VARCHAR(20) NOT NULL DEFAULT \'paid\' COMMENT \'订单状态\',
+                `balance_log_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联余额流水ID\',
+                `before_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款前余额 ×1000000\',
+                `after_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款后余额 ×1000000\',
+                `note` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `paid_at` DATETIME DEFAULT NULL COMMENT \'支付时间\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_order_no` (`order_no`),
+                KEY `idx_merchant_time` (`merchant_id`, `created_at`),
+                KEY `idx_user_time` (`user_id`, `created_at`),
+                KEY `idx_market_id` (`market_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用订单\'',
+            $prefix . 'app_order'
+        ));
 
-            $filteredLines = [];
-            foreach ($lines as $line) {
-                $trimmed = trim($line);
-                if ($trimmed === '' || str_starts_with($trimmed, '--')) {
-                    continue;
-                }
-                $filteredLines[] = $line;
-            }
+        // 附件表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'上传用户ID\',
+                `file_name` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'原始文件名\',
+                `file_path` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'相对路径\',
+                `file_url` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'访问URL\',
+                `file_size` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'文件大小（字节）\',
+                `file_ext` VARCHAR(32) NOT NULL DEFAULT \'\' COMMENT \'扩展名\',
+                `mime_type` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'MIME 类型\',
+                `md5` CHAR(32) DEFAULT NULL COMMENT \'文件MD5（用于去重）\',
+                `driver` VARCHAR(32) NOT NULL DEFAULT \'local\' COMMENT \'存储驱动\',
+                `context` VARCHAR(64) NOT NULL DEFAULT \'default\' COMMENT \'业务场景\',
+                `context_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'场景关联ID\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_user_context` (`user_id`, `context`),
+                KEY `idx_context` (`context`, `context_id`),
+                KEY `idx_md5` (`md5`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'附件库\'',
+            $prefix . 'attachment'
+        ));
 
-            $sql = trim(implode("\n", $filteredLines));
-            if ($sql === '') {
-                continue;
-            }
+        // 博客评论表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `blog_id` INT UNSIGNED NOT NULL COMMENT \'文章ID\',
+                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'评论用户ID\',
+                `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'父评论ID，0=顶级评论\',
+                `reply_user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'被回复用户ID\',
+                `content` TEXT NOT NULL COMMENT \'评论内容\',
+                `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'0=待审 1=通过 2=拒绝\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `deleted_at` DATETIME DEFAULT NULL COMMENT \'软删除时间\',
+                PRIMARY KEY (`id`),
+                KEY `idx_blog_parent_status` (`blog_id`, `parent_id`, `status`),
+                KEY `idx_parent_status` (`parent_id`, `status`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_deleted_at` (`deleted_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'博客评论\'',
+            $prefix . 'blog_comment'
+        ));
 
-            Database::statement($sql);
-        }
+        // 博客标签关联表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `blog_id` INT UNSIGNED NOT NULL COMMENT \'文章ID\',
+                `tag_id` INT UNSIGNED NOT NULL COMMENT \'标签ID\',
+                PRIMARY KEY (`blog_id`, `tag_id`),
+                KEY `idx_tag_id` (`tag_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'博客文章-标签关联\'',
+            $prefix . 'blog_tag_relation'
+        ));
+
+        // 友情链接表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(100) NOT NULL COMMENT \'链接名称\',
+                `url` VARCHAR(500) NOT NULL COMMENT \'链接地址\',
+                `image` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'Logo 图片\',
+                `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'y=启用 n=禁用\',
+                `expire_time` DATETIME DEFAULT NULL COMMENT \'过期时间\',
+                `description` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'描述\',
+                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_enabled_expire` (`enabled`, `expire_time`),
+                KEY `idx_sort` (`sort`, `id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'友情链接\'',
+            $prefix . 'friend_link'
+        ));
+
+        // 迁移记录表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `filename` VARCHAR(255) NOT NULL COMMENT \'迁移文件名\',
+                `batch` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'迁移批次\',
+                `applied_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'执行时间\',
+                `checksum` CHAR(64) NOT NULL DEFAULT \'\' COMMENT \'文件校验\',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_filename` (`filename`),
+                KEY `idx_batch` (`batch`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'数据库迁移追踪表\'',
+            $prefix . 'migrations'
+        ));
+
+        // 配置项表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `type` VARCHAR(32) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template 等\',
+                `title` VARCHAR(120) NOT NULL DEFAULT \'\' COMMENT \'插件名/模板名\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'作用域商户ID，0=主站\',
+                `name` VARCHAR(120) NOT NULL COMMENT \'配置键\',
+                `content` MEDIUMTEXT COMMENT \'配置值\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_scope_name` (`type`, `title`, `merchant_id`, `name`),
+                KEY `idx_type_title` (`type`, `title`),
+                KEY `idx_merchant` (`merchant_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件/模板配置存储\'',
+            $prefix . 'options'
+        ));
+
+        // 系统日志表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `level` VARCHAR(16) NOT NULL DEFAULT \'info\' COMMENT \'info/warning/error\',
+                `type` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'业务类型\',
+                `action` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'动作\',
+                `message` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'日志摘要\',
+                `detail` TEXT COMMENT \'详细信息（JSON）\',
+                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'操作用户ID\',
+                `username` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'操作用户名\',
+                `ip` VARCHAR(45) NOT NULL DEFAULT \'\' COMMENT \'请求IP\',
+                `user_agent` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'客户端UA\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_level` (`level`),
+                KEY `idx_type` (`type`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'系统日志\'',
+            $prefix . 'system_log'
+        ));
+
+        // 用户等级表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(50) NOT NULL COMMENT \'等级名称\',
+                `level` INT UNSIGNED NOT NULL COMMENT \'等级数值\',
+                `discount` BIGINT NOT NULL DEFAULT 10000000 COMMENT \'折扣（展示值×1000000）\',
+                `self_open_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'自助开通价（展示值×1000000）\',
+                `unlock_exp` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'解锁经验\',
+                `remark` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'y=启用 n=禁用\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_name` (`name`),
+                UNIQUE KEY `uk_level` (`level`),
+                KEY `idx_enabled` (`enabled`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户等级\'',
+            $prefix . 'user_levels'
+        ));
+    }
+    private function setupGoodsModule(): void
+    {
+        $prefix = Database::prefix();
+
+        // 商品主表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `owner_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0=主站，>0=商户自建（owner user_id）',
+            `category_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            `category_source` VARCHAR(16) NOT NULL DEFAULT 'main' COMMENT 'main/merchant',
+            `title` VARCHAR(255) NOT NULL DEFAULT '',
+            `code` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '商品唯一编码',
+            `intro` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '简介',
+            `cover_images` TEXT COMMENT 'JSON 数组',
+            `min_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最低价 ×1000000（缓存）',
+            `max_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最高价 ×1000000（缓存）',
+            `total_stock` INT NOT NULL DEFAULT 0 COMMENT '总库存缓存',
+            `views_count` INT UNSIGNED NOT NULL DEFAULT 0,
+            `is_on_sale` TINYINT(1) NOT NULL DEFAULT 1,
+            `is_recommended` TINYINT(1) NOT NULL DEFAULT 0,
+            `is_top_category` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '分类置顶',
+            `api_enabled` TINYINT(1) DEFAULT NULL COMMENT 'NULL/1=允许API下单 0=禁止',
+            `jump_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '外链（可选）',
+            `goods_type` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '商品类型（插件注册）',
+            `plugin_data` MEDIUMTEXT COMMENT '插件数据 JSON',
+            `configs` MEDIUMTEXT COMMENT '配置 JSON',
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=正常 0=禁用',
+            `sort` INT NOT NULL DEFAULT 100,
+            `deleted_at` DATETIME DEFAULT NULL,
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_code` (`code`),
+            KEY `idx_owner_sale` (`owner_id`, `is_on_sale`, `deleted_at`),
+            KEY `idx_category` (`category_id`),
+            KEY `idx_goods_type` (`goods_type`),
+            KEY `idx_deleted` (`deleted_at`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品表'");
+
+        // 商品规格表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL,
+            `title` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '规格名（单规格可为空）',
+            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
+            `cost_price` BIGINT NOT NULL DEFAULT 0 COMMENT '成本价 ×1000000（可选）',
+            `market_price` BIGINT NOT NULL DEFAULT 0 COMMENT '划线价 ×1000000（可选）',
+            `stock` INT NOT NULL DEFAULT 0,
+            `sold_count` INT UNSIGNED NOT NULL DEFAULT 0,
+            `spec_no` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '规格编号',
+            `tags` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '标签（逗号分隔）',
+            `min_buy` INT UNSIGNED NOT NULL DEFAULT 1,
+            `max_buy` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0=不限',
+            `is_default` TINYINT(1) NOT NULL DEFAULT 0,
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=启用 0=禁用',
+            `sort` INT NOT NULL DEFAULT 0,
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods` (`goods_id`, `status`),
+            KEY `idx_default` (`goods_id`, `is_default`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品规格'");
+
+        // 商品规格维度表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_dim` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL,
+            `name` VARCHAR(50) NOT NULL DEFAULT '',
+            `sort` INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods_sort` (`goods_id`, `sort`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格维度'");
+
+        // 商品规格值表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_value` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `dim_id` INT UNSIGNED NOT NULL,
+            `goods_id` INT UNSIGNED NOT NULL,
+            `name` VARCHAR(50) NOT NULL DEFAULT '',
+            `cover_image` VARCHAR(512) NOT NULL DEFAULT '',
+            `sort` INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `idx_dim_sort` (`dim_id`, `sort`),
+            KEY `idx_goods` (`goods_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格维度值'");
+
+        // 商品规格组合表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_combo` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL,
+            `spec_id` INT UNSIGNED NOT NULL,
+            `combo_hash` CHAR(32) NOT NULL DEFAULT '' COMMENT 'value_ids 的 md5',
+            `combo_text` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '展示文本（如 红/64G）',
+            `value_ids` TEXT COMMENT 'JSON 数组（维度值 id 列表）',
+            `stock` INT NOT NULL DEFAULT 0 COMMENT '冗余库存（可选）',
+            `sort` INT NOT NULL DEFAULT 0,
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_goods_hash` (`goods_id`, `combo_hash`),
+            KEY `idx_goods_sort` (`goods_id`, `sort`),
+            KEY `idx_spec` (`spec_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='SKU 组合映射'");
+
+        // 商品标签表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `name` VARCHAR(50) NOT NULL DEFAULT '',
+            `color` VARCHAR(20) NOT NULL DEFAULT '',
+            `sort` INT NOT NULL DEFAULT 0,
+            `goods_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '冗余计数',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_name` (`name`),
+            KEY `idx_sort` (`sort`, `id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品标签'");
+
+        // 商品标签关联表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag_relation` (
+            `goods_id` INT UNSIGNED NOT NULL,
+            `tag_id` INT UNSIGNED NOT NULL,
+            PRIMARY KEY (`goods_id`, `tag_id`),
+            KEY `idx_tag` (`tag_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品标签关联'");
+
+        // 商品会员等级价格表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_level` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `spec_id` INT UNSIGNED NOT NULL,
+            `level_id` INT UNSIGNED NOT NULL,
+            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_spec_level` (`spec_id`, `level_id`),
+            KEY `idx_level` (`level_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格会员等级价'");
+
+        // 商品指定用户价格表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_user` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `spec_id` INT UNSIGNED NOT NULL,
+            `user_id` BIGINT UNSIGNED NOT NULL,
+            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_spec_user` (`spec_id`, `user_id`),
+            KEY `idx_user` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格指定用户价'");
+
+        // 虚拟商品卡密表
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_virtual_card` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `spec_id` INT UNSIGNED DEFAULT NULL COMMENT '所属规格ID（可选，关联 goods_spec.id）',
+            `card_no` TEXT NOT NULL COMMENT '卡号/卡密内容',
+            `card_pwd` TEXT DEFAULT NULL COMMENT '卡密密码（可选）',
+            `price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购价格（可选）',
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态：1=可用，0=已售出，2=已作废',
+            `order_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单ID',
+            `order_goods_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单商品记录ID',
+            `sold_at` DATETIME DEFAULT NULL COMMENT '售出时间',
+            `remark` VARCHAR(255) DEFAULT NULL COMMENT '备注',
+            `sell_priority` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '销售优先级（值越大越优先）',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods` (`goods_id`),
+            KEY `idx_goods_status` (`goods_id`, `status`),
+            KEY `idx_spec` (`spec_id`),
+            KEY `idx_status` (`status`),
+            KEY `idx_order` (`order_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='虚拟商品（卡密）库存表'");
     }
 }

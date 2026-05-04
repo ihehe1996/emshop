@@ -48,7 +48,6 @@ if ($isHomepage) {
 $navGoodsUrl = $isMallMode ? url_goods_list() : url_goods_index();
 $navBlogUrl  = $isBlogMode ? url_blog_list()  : url_blog_index();
 $navSearchUrl = url_search();
-$navCartUrl   = url_cart();
 
 // ============================================================
 // 4. 从数据库加载导航（NaviModel）—— 按当前 MerchantContext 过滤：
@@ -209,7 +208,6 @@ $this->assign([
     'nav_goods_url'         => $navGoodsUrl,
     'nav_blog_url'          => $navBlogUrl,
     'nav_search_url'        => $navSearchUrl,
-    'nav_cart_url'          => $navCartUrl,
     'front_user'            => $frontUser,
     'site_icp'              => $siteIcp,
     'site_statistical_code' => $siteStatisticalCode,

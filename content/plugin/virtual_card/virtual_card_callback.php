@@ -55,26 +55,5 @@ function callback_rm()
 // 更新插件时执行：处理表结构升级
 function callback_up()
 {
-    $prefix = Database::prefix();
-
-    // v1.1: 新增 sell_priority 字段（销售优先级）
-    try {
-        Database::statement(
-            "ALTER TABLE `{$prefix}goods_virtual_card` ADD COLUMN `sell_priority` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '销售优先级' AFTER `remark`"
-        );
-    } catch (Throwable $e) {
-        // 字段可能已存在，忽略
-    }
-
-    // v1.2: card_no / card_pwd 扩容为 TEXT，支持超长卡密
-    try {
-        Database::statement(
-            "ALTER TABLE `{$prefix}goods_virtual_card` MODIFY COLUMN `card_no` TEXT NOT NULL COMMENT '卡号/卡密内容'"
-        );
-        Database::statement(
-            "ALTER TABLE `{$prefix}goods_virtual_card` MODIFY COLUMN `card_pwd` TEXT DEFAULT NULL COMMENT '卡密密码（可选，部分卡密格式需要）'"
-        );
-    } catch (Throwable $e) {
-        // 忽略
-    }
+    // 新版本仅支持全新库安装，不再执行老库升级补丁
 }

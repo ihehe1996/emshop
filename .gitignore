@@ -14,6 +14,7 @@
 
 # 安装锁
 /install.lock
+/install/install.lock
 # 安装迁移记录/文件（本地执行安装后生成，不提交）
 /install/migrations/
 

@@ -358,22 +358,6 @@ $csrfToken = Csrf::token();
 $(function () {
     layui.use(['layer'], function () {
         var layer = layui.layer;
-        // 头像点击放大：用 Viewer.js（本文件已全局引入 viewer.min.css/js）
-        // 注意：头像 <img> 在 .admin-user-menu__trigger 按钮里，必须阻止冒泡 + 默认行为，
-        //       否则点击后下拉菜单会同时被触发展开
-        $(document).on('click', '.admin-avatar img', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            var src = $(this).attr('src');
-            if (!src) return;
-            var $tmp = $('<div style="display:none;"><img src="' + src + '" alt="头像"></div>').appendTo('body');
-            var viewer = new Viewer($tmp[0], {
-                navbar: false, title: false, toolbar: true,
-                hidden: function () { viewer.destroy(); $tmp.remove(); }
-            });
-            viewer.show();
-        });
-
         // ========== 授权服务器线路切换（toolbar 全局）==========
         var $lineWrap = $('#adminLineSwitch');
         if ($lineWrap.length) {

@@ -443,37 +443,6 @@ var GoodsDetail = (function () {
             $('#' + tab).addClass('active');
         });
 
-        // 加入购物车 —— 前端只收集数据不校验，所有校验交后端
-        $(document).on('click.goodsDetail', '#addToCartBtn', function () {
-            var $btn = $(this);
-            var goodsId = parseInt($btn.data('goods-id'));
-            var quantity = parseInt($('#qtyInput').val()) || 1;
-
-            var origHtml = $btn.html();
-            $btn.addClass('is-loading').prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i> 加入中...');
-
-            var postData = $.extend({
-                goods_id: goodsId,
-                spec_id: currentSpecId(),
-                quantity: quantity
-            }, collectExtraFields());
-
-            $.post('?c=cart&a=add', postData, function (res) {
-                $btn.removeClass('is-loading').prop('disabled', false).html(origHtml);
-                if (res.code === 200) {
-                    layui.layer.msg('已加入购物车');
-                    if (typeof updateCartBadge === 'function') {
-                        updateCartBadge(res.data.cart_count);
-                    }
-                } else {
-                    layui.layer.msg(res.msg || '添加失败');
-                }
-            }, 'json').fail(function () {
-                $btn.removeClass('is-loading').prop('disabled', false).html(origHtml);
-                layui.layer.msg('网络异常');
-            });
-        });
-
         // ======== 优惠券（详情页）========
         // detailCouponState 已提升到模块顶层（供 renderCurrentPrice 做数量变化后的重校验）
         detailCouponState = { applied: false, code: '' };
@@ -497,7 +466,7 @@ var GoodsDetail = (function () {
                 if (res.code !== 200) { layui.layer.msg(res.msg || '获取失败'); return; }
                 var list = (res.data && res.data.coupons) || [];
                 if (!list.length) { layui.layer.msg('您暂无可用优惠券'); return; }
-                var html = '<div class="cart-coupon-picker">';
+                var html = '<div class="detail-coupon-picker">';
                 // 券面额 / 门槛按访客币种展示（主货币值 × rate）
                 var _cur = (window.EMSHOP_CURRENCY || { symbol: '¥', rate: 1 });
                 list.forEach(function (c) {
@@ -507,14 +476,14 @@ var GoodsDetail = (function () {
                     var minTxt = parseFloat(c.min_amount) > 0
                         ? '满 ' + _cur.symbol + (parseFloat(c.min_amount) * _cur.rate).toFixed(2) + ' 可用'
                         : '无门槛';
-                    html += '<div class="cart-coupon-pick-item" data-code="'+c.code+'">';
-                    html += '<div class="cart-coupon-pick-value">'+v+'</div>';
-                    html += '<div class="cart-coupon-pick-main">';
-                    html += '<div class="cart-coupon-pick-title">'+(c.title||c.name)+'</div>';
-                    html += '<div class="cart-coupon-pick-meta">' + minTxt
+                    html += '<div class="detail-coupon-pick-item" data-code="'+c.code+'">';
+                    html += '<div class="detail-coupon-pick-value">'+v+'</div>';
+                    html += '<div class="detail-coupon-pick-main">';
+                    html += '<div class="detail-coupon-pick-title">'+(c.title||c.name)+'</div>';
+                    html += '<div class="detail-coupon-pick-meta">' + minTxt
                           + (c.end_at? ' · 至 '+String(c.end_at).substring(0,16):'')+'</div>';
                     html += '</div>';
-                    html += '<button type="button" class="cart-coupon-pick-btn">使用</button>';
+                    html += '<button type="button" class="detail-coupon-pick-btn">使用</button>';
                     html += '</div>';
                 });
                 html += '</div>';
@@ -523,8 +492,8 @@ var GoodsDetail = (function () {
                     area: [window.innerWidth >= 600 ? '520px':'92%', window.innerHeight >= 700 ? '520px':'80%'],
                     content: html,
                     success: function (layero) {
-                        layero.on('click', '.cart-coupon-pick-btn', function () {
-                            var code = $(this).closest('.cart-coupon-pick-item').data('code');
+                        layero.on('click', '.detail-coupon-pick-btn', function () {
+                            var code = $(this).closest('.detail-coupon-pick-item').data('code');
                             layui.layer.close(lay);
                             $('#detailCouponInput').val(code);
                             applyDetailCoupon(code);

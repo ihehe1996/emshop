@@ -100,9 +100,6 @@ if (Request::isPost()) {
                 if ($model->isEnabled($name, $scope)) Response::error('该插件已经是启用状态');
 
                 $model->enable($name, $scope);
-                if ($model->isSwoolePlugin($name, $scope)) {
-                    PluginModel::bumpSwooleCodeVersion();
-                }
                 Response::success('插件已启用', ['csrf_token' => Csrf::refresh()]);
                 break;
             }
@@ -110,9 +107,7 @@ if (Request::isPost()) {
             // 禁用 —— DB 行不存在 = no-op(本来就是默认禁用态)
             case 'disable': {
                 if (!$model->isEnabled($name, $scope)) Response::error('该插件已经是禁用状态');
-                $isSwoole = $model->isSwoolePlugin($name, $scope);
                 $model->disable($name, $scope);
-                if ($isSwoole) PluginModel::bumpSwooleCodeVersion();
                 Response::success('插件已禁用', ['csrf_token' => Csrf::refresh()]);
                 break;
             }
@@ -152,7 +147,6 @@ if (Request::isPost()) {
 
                 if (!$model->existsOnDisk($name)) Response::error('磁盘上未找到该插件');
                 if ($model->isEnabled($name, $scope)) Response::error('该插件正在启用中,请先禁用再卸载');
-                $isSwoole = $model->isSwoolePlugin($name, $scope);
 
                 // 触发插件 callback_rm 清理它自己的私有数据(建表清理 / 自定义资源等)
                 $callbackFile = EM_ROOT . '/content/plugin/' . $name . '/' . $name . '_callback.php';
@@ -178,8 +172,6 @@ if (Request::isPost()) {
                 if (is_dir($dir) && !$rmDir($dir)) {
                     Response::error('磁盘文件删除失败,请检查目录权限');
                 }
-
-                if ($isSwoole) PluginModel::bumpSwooleCodeVersion();
 
                 Response::success('插件已卸载', ['csrf_token' => Csrf::refresh()]);
                 break;

@@ -128,8 +128,6 @@ final class PluginModel
             'author' => '', 'author_url' => '',
             'description' => '', 'category' => '',
             'icon' => '', 'preview' => '',
-            // Swoole: true/yes/1/on  → 标记本插件会注册 swoole 钩子,启停后需要 swoole worker 重载
-            'swoole' => false,
             'setting_file' => '', 'show_file' => '',
         ];
 
@@ -150,11 +148,6 @@ final class PluginModel
                 if (preg_match('/^Author:\s*(.+)$/i', $line, $m))       { $header['author'] = trim($m[1]); continue; }
                 if (preg_match('/^Author\s+URL:\s*(.+)$/i', $line, $m)) { $header['author_url'] = trim($m[1]); continue; }
                 if (preg_match('/^Category:\s*(.+)$/i', $line, $m))     { $header['category'] = trim($m[1]); continue; }
-                if (preg_match('/^Swoole:\s*(.+)$/i', $line, $m)) {
-                    $v = strtolower(trim($m[1]));
-                    $header['swoole'] = in_array($v, ['true', 'yes', '1', 'on', 'y'], true);
-                    continue;
-                }
                 // @标签写法兼容
                 if (preg_match('/^@(?:PluginName|Title)\s+(.+)$/i', $line, $m)) {
                     if ($header['title'] === '') $header['title'] = trim($m[1]); continue;
@@ -411,30 +404,4 @@ final class PluginModel
         return $result;
     }
 
-    // -----------------------------------------------------------------
-    // Swoole 相关
-    // -----------------------------------------------------------------
-
-    /**
-     * 该插件是否在主文件 header 注释里声明了 `Swoole: true`。
-     *
-     * 用途:启停/装卸操作完成时,仅当此方法返回 true 才需要 bumpSwooleCodeVersion()
-     * 触发 swoole worker reload,避免每次操作"前端/UI 类"无关插件也白白 reload。
-     */
-    public function isSwoolePlugin(string $name, string $scope): bool
-    {
-        $header = $this->parseHeader($this->pluginRoot . '/' . $name . '/' . $name . '.php');
-        return $header !== null && !empty($header['swoole']);
-    }
-
-    /**
-     * 推进 swoole 代码版本号。swoole worker 在 timer tick 前对比此值,
-     * 发现变了就 $server->reload() 自我重启,加载新插件代码。
-     */
-    public static function bumpSwooleCodeVersion(): void
-    {
-        // 用毫秒+随机后缀避免同一秒内连续两次操作版本号相同
-        $version = sprintf('%d.%04d', time(), random_int(0, 9999));
-        Config::set('swoole_code_version', $version);
-    }
 }

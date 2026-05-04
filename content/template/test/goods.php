@@ -201,7 +201,7 @@ defined('EM_ROOT') || exit('access denied!');
                     <?php if ($wrap): ?></div><?php endif; ?>
                 <?php endforeach; ?>
 
-                <!-- 优惠券输入（与购物车结构一致，供下单时使用） -->
+                <!-- 优惠券输入 -->
                 <?php
                 if (session_status() === PHP_SESSION_NONE) session_start();
                 $isGuestDetail = empty($_SESSION['em_front_user']);
@@ -256,7 +256,6 @@ defined('EM_ROOT') || exit('access denied!');
 
                 <!-- 操作按钮 -->
                 <div class="detail-actions">
-                    <button class="btn btn-outline btn-lg" id="addToCartBtn" data-goods-id="<?= $goods['id'] ?>"><i class="fa fa-cart-plus"></i> 加入购物车</button>
                     <button class="btn btn-primary btn-lg" id="buyNowBtn" data-goods-id="<?= $goods['id'] ?>">立即购买</button>
                 </div>
 

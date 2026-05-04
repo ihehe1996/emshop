@@ -16,14 +16,12 @@ declare(strict_types=1);
  *   ?c=blog&id=1    → BlogController::_detail()    文章详情
  *   ?c=blog_index    → BlogController::_index()     博客首页
  *   ?c=search&q=关键词 → SearchController::_list()  搜索结果
- *   ?c=cart          → CartController::_index()     购物车
  *   ?c=notfound     → ErrorController::_index()    404
  *
  * URL 格式（pathinfo 模式）：
  *   /goods_list        → GoodsController::_list()
  *   /goods/1          → GoodsController::_detail()
  *   /blog_index       → BlogController::_index()
- *   /cart             → CartController::_index()
  *
  * 方法命名约定：
  *   _index()  首页
@@ -41,7 +39,6 @@ final class Dispatcher
     /** 单页控制器（默认动作为 _index） */
     private const INDEX_CONTROLLERS = [
         'index' => true,  // 首页
-        'cart' => true,
         'order' => true,
         'login' => true,
         'register' => true,
@@ -82,7 +79,6 @@ final class Dispatcher
         'goods_tag'   => 'GoodsTag',    // 商品标签页
         'page'        => 'Page',        // 自定义页面 /p/{slug}
         'search'      => 'Search',
-        'cart'        => 'Cart',
         'order'       => 'Order',
         'login'       => 'Login',
         'register'    => 'Register',
@@ -155,16 +151,7 @@ final class Dispatcher
             return;
         }
 
-        // 0.1 Swoole 存活检测：心跳文件 mtime 超过 15s 或文件不存在 → 服务挂了
-        //    原因：支付回调依赖 swoole 消费 em_delivery_queue 发货，swoole 不跑就会有
-        //    "用户付钱但永远收不到卡密"的致命链路。粗暴拦住整站比让用户盲付安全。
-        //    submit.php/return.php 等支付回调是独立入口不经 Dispatcher，不会被误拦。
-        $hbFile = EM_ROOT . '/swoole/swoole.heartbeat';
-        $mtime = @filemtime($hbFile);
-        if ($mtime === false || (time() - $mtime) > 15) {
-            $this->renderSwooleDownNotice();
-            return;
-        }
+        // 0.1 Swoole 存活检测已移除：即使 Swoole 未运行也允许前台访问。
 
         // 0.15 商户入口等级门控：host 命中了一个真实商户但商户等级不允许该入口方式（二级域名 /
         //      自定义顶级域名），显式渲染"店铺暂未开放"页，避免静默把主站内容露给访客。
@@ -202,7 +189,7 @@ final class Dispatcher
         // 3. 注册全局视图数据（module.php 依赖 _controller 和 homepage_mode 生成导航）
         // 货币展示三件套：符号 / 汇率因子 / code，前台模板与 JS 都通过它们把主货币数值换成访客币种
         //   - $currency_symbol：当前访客币种的符号（Cookie > is_frontend_default > 主货币）
-        //   - $currency_rate  ：1 主货币 = N 访客币种的 float 因子；JS 端用它做动态计算（购物车小计、详情页数量 × 单价）
+        //   - $currency_rate  ：1 主货币 = N 访客币种的 float 因子；JS 端用它做动态计算（详情页数量 × 单价）
         //   - 静态展示直接用 Currency::displayMain($floatInMain)，自动换算 + 加符号
         $primaryCurrency = Currency::getInstance()->getPrimary();
         $visitorCode = Currency::visitorCode();
@@ -275,8 +262,8 @@ final class Dispatcher
      *   query string   ?post=N  ?blog=N
      *   文件格式       /post-1.html /blog-1.html /post-list.html /tag-1.html ...
      *   目录格式       /post/1 /buy/1 /blog/1 /post/list /post/c/slug /blog/tag/1 ...
-     *   静态页面       /cart.html /coupon.html /search.html /blog.html
-     *   静态目录       /cart/ /coupon/ /search/xxx /blog/
+     *   静态页面       /coupon.html /search.html /blog.html
+     *   静态目录       /coupon/ /search/xxx /blog/
      *
      * 不匹配时返回 false，回落到原有 parseRoute 逻辑（保留老 URL 兼容）。
      */
@@ -333,8 +320,7 @@ final class Dispatcher
 
             // 静态页：cart / coupon / search / blog / post（商城首页）
             // post 显式指向 goods_index，避免被 HOMEPAGE_MODE 替换成博客首页
-            $staticMap = ['cart' => ['cart', '_index'],
-                          'coupon' => ['coupon', '_index'],
+            $staticMap = ['coupon' => ['coupon', '_index'],
                           'search' => ['search', '_index'],
                           'blog' => ['blog_index', '_index'],
                           'post' => ['goods_index', '_index']];
@@ -452,8 +438,8 @@ final class Dispatcher
         $first = $segments[0];
         $n = count($segments);
 
-        // /cart/ /coupon/（单段静态）
-        if ($n === 1 && in_array($first, ['cart', 'coupon'], true)) {
+        // /coupon/（单段静态）
+        if ($n === 1 && in_array($first, ['coupon'], true)) {
             $this->controller = $first; $this->action = '_index';
             $this->pathArgs = $extraQuery;
             return true;
