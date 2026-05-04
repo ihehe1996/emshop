@@ -196,9 +196,7 @@ function emshop_prompt_password(string $label): string
 {
     echo $label . '：';
     $sttyMode = trim((string) shell_exec('stty -g 2>/dev/null'));
-    if ($sttyMode !== '') {
-        system('stty -echo');
-    }
+    
 
     $value = rtrim((string) fgets(STDIN), "\r\n");
 
@@ -256,17 +254,21 @@ function emshop_find_admin_for_password(EmshopCliDb $db, string $userTable): ?ar
     }
 
     emshop_show_admins($db, $userTable);
-    $default = count($admins) === 1 ? (string) $admins[0]['id'] : '';
-    $input = emshop_prompt('请输入要修改密码的管理员 ID', $default);
-
-    foreach ($admins as $admin) {
-        if ((string) $admin['id'] === $input) {
-            return $admin;
+    while (true) {
+        $input = emshop_prompt('请输入要修改密码的管理员 ID');
+        if ($input === '') {
+            echo "请选择要修改密码的管理员 ID。\n";
+            continue;
         }
-    }
 
-    echo "未找到 ID 为 {$input} 的管理员。\n";
-    return null;
+        foreach ($admins as $admin) {
+            if ((string) $admin['id'] === $input) {
+                return $admin;
+            }
+        }
+
+        echo "未找到 ID 为 {$input} 的管理员，请重新输入。\n";
+    }
 }
 
 function emshop_change_admin_password(EmshopCliDb $db, string $userTable): void
