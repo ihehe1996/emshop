@@ -4,6 +4,7 @@
 .cursor/
 .claude/
 
+*.zip
 
 /install/install.lock
 /install/migrations/
