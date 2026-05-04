@@ -111,6 +111,8 @@ if (!defined('EM_ROOT')) {
 .plugin-card__action--install:hover { background: rgba(99, 102, 241, 0.18); }
 .plugin-card__action--settings { background: rgba(59, 130, 246, 0.08); color: #2563eb; }
 .plugin-card__action--settings:hover { background: rgba(59, 130, 246, 0.15); }
+.plugin-card__action--update { background: #f59e0b; color: #fff; }
+.plugin-card__action--update:hover { background: #d97706; color: #fff; }
 .plugin-card__action--price { background: rgba(245, 158, 11, 0.1); color: #d97706; }
 .plugin-card__action--price:hover { background: rgba(245, 158, 11, 0.18); }
 .plugin-card__action--disabled { background: rgba(0, 0, 0, 0.04) !important; color: #c9cdd4 !important; cursor: not-allowed !important; }
@@ -171,8 +173,10 @@ if (!defined('EM_ROOT')) {
 </div>
 
 <script>
-$(function(){
+layui.use(function(){
     'use strict';
+    var $ = layui.$;
+    var layer = layui.layer;
 
     var csrfToken = <?php echo json_encode($csrfToken); ?>;
     var allPlugins = [];
@@ -264,6 +268,7 @@ $(function(){
         var isInstalled = p.is_installed;
         var isEnabled = p.is_enabled;
         var hasSettings = !!p.setting_file && !isMerchant;
+        var hasUpdate = !!p.has_update && !!p.latest_version;
         var marketId = parseInt(p.market_id || p.id || 0, 10) || 0;
 
         var cls = 'plugin-card';
@@ -304,6 +309,8 @@ $(function(){
             actionHtml = '<button class="plugin-card__action plugin-card__action--price" data-action="merchantPrice" data-name="' + escHtml(p.name) + '" data-market-id="' + escHtml(marketId) + '"><i class="fa fa-cny"></i> 设置售价</button>';
         } else if (!isInstalled) {
             actionHtml = '<button class="plugin-card__action plugin-card__action--install" data-action="install" data-name="' + escHtml(p.name) + '"><i class="fa fa-download"></i> 安装</button>';
+        } else if (hasUpdate) {
+            actionHtml = '<button class="plugin-card__action plugin-card__action--update" data-action="update" data-name="' + escHtml(p.name) + '" data-file-path="' + escHtml(p.latest_file_path || '') + '" data-version="' + escHtml(p.latest_version || '') + '"><i class="fa fa-cloud-download"></i> 更新 v' + escHtml(p.latest_version || '') + '</button>';
         } else if (hasSettings) {
             actionHtml = '<button class="plugin-card__action plugin-card__action--settings" data-action="settings" data-name="' + escHtml(p.name) + '"><i class="fa fa-gear"></i> 配置</button>';
         } else {
@@ -335,7 +342,7 @@ $(function(){
                     '<div class="plugin-card__more-dropdown">' +
                         (isInstalled
                             ? '<button class="plugin-card__more-item plugin-card__more-item--danger" data-action="uninstall" data-name="' + escHtml(p.name) + '"><i class="fa fa-trash"></i> 卸载</button>'
-                              + (p.has_update ? '<button class="plugin-card__more-item" data-action="upgrade" data-name="' + escHtml(p.name) + '"><i class="fa fa-arrow-up"></i> 升级</button>' : '')
+                              + (hasUpdate ? '<button class="plugin-card__more-item" data-action="update" data-name="' + escHtml(p.name) + '" data-file-path="' + escHtml(p.latest_file_path || '') + '" data-version="' + escHtml(p.latest_version || '') + '"><i class="fa fa-arrow-up"></i> 升级 v' + escHtml(p.latest_version || '') + '</button>' : '')
                             : ''
                         ) +
                     '</div>' +
@@ -409,7 +416,7 @@ $(function(){
                 }
             },
             error: function() {
-                layui.use('layer', function(){ layui.layer.msg('加载插件列表失败'); });
+                layer.msg('加载插件列表失败');
                 $('#pluginSkeleton').hide();
             },
             complete: function() { loading = false; }
@@ -422,6 +429,10 @@ $(function(){
             action = $('#toggle_' + name).prop('checked') ? 'enable' : 'disable';
         }
         if (action === 'settings') { openSettings(name); return; }
+        if (action === 'update' || action === 'upgrade') {
+            doUpdatePlugin(name, extraData && extraData.file_path, String(extraData && extraData.version || ''));
+            return;
+        }
         if (action === 'merchantPrice') { openMerchantPrice(extraData && extraData.market_id); return; }
         if (action === 'merchantToggleList') {
             openMerchantToggleList(extraData && extraData.market_id, extraData && extraData.target_listed);
@@ -451,14 +462,11 @@ $(function(){
                 confirmMsg = '卸载将清除插件「' + pluginTitle + '」的配置数据并删除磁盘文件，无法恢复。确认卸载？';
             }
 
-            layui.use('layer', function(){
-                var layer = layui.layer;
-                layer.confirm(confirmMsg,
-                    {icon: 3, title: '卸载确认', skin: 'admin-modal'},
-                    function(idx){
-                        doRequest(action, name, postData, function(){ layer.close(idx); });
-                    });
-            });
+            layer.confirm(confirmMsg,
+                {icon: 3, title: '卸载确认', skin: 'admin-modal'},
+                function(idx){
+                    doRequest(action, name, postData, function(){ layer.close(idx); });
+                });
             return;
         }
 
@@ -539,14 +547,11 @@ $(function(){
         var tip = listed
             ? '确定要上架分站插件「' + title + '」吗？'
             : '确定要下架分站插件「' + title + '」吗？<br><small style="color:#94a3b8;">下架不影响已购分站,但分站市场不可见、不再售出。</small>';
-        layui.use('layer', function(){
-            var layer = layui.layer;
-            layer.confirm(tip, {icon: 3, title: listed ? '上架确认' : '下架确认', skin: 'admin-modal'}, function(idx){
-                doRequest('set_merchant_listed', plugin.name || '', {
-                    market_id: marketId,
-                    is_listed: listed ? 1 : 0
-                }, function(){ layer.close(idx); });
-            });
+        layer.confirm(tip, {icon: 3, title: listed ? '上架确认' : '下架确认', skin: 'admin-modal'}, function(idx){
+            doRequest('set_merchant_listed', plugin.name || '', {
+                market_id: marketId,
+                is_listed: listed ? 1 : 0
+            }, function(){ layer.close(idx); });
         });
     }
 
@@ -587,19 +592,46 @@ $(function(){
         });
     }
 
+    function doUpdatePlugin(name, filePath, version) {
+        var path = String(filePath || '').trim();
+        var ver = String(version || '').trim();
+        if (path === '' || ver === '') {
+            layer.msg('更新参数缺失，请刷新后重试');
+            return;
+        }
+        var loadingIdx = layui.layer.load(2, { shade: [0.3, '#000'] });
+        $.ajax({
+            url: '/admin/appstore.php',
+            type: 'POST',
+            dataType: 'json',
+            data: { csrf_token: csrfToken, _action: 'update', name: name, type: 'plugin', file_path: path, version: ver },
+            success: function(res) {
+                layui.layer.close(loadingIdx);
+                if (res && (res.code === 0 || res.code === 200)) {
+                    csrfToken = (res.data && res.data.csrf_token) ? res.data.csrf_token : csrfToken;
+                    layer.msg('插件已更新至 v' + ver);
+                    loadPlugins();
+                } else {
+                    layer.msg((res && res.msg) || '插件更新失败');
+                }
+            },
+            error: function() {
+                layui.layer.close(loadingIdx);
+                layer.msg('网络异常');
+            }
+        });
+    }
+
     function openSettings(name) {
-        layui.use('layer', function(){
-            var layer = layui.layer;
-            layer.open({
-                type: 2,
-                title: '插件设置',
-                skin: 'admin-modal',
-                maxmin: true,
-                area: [window.innerWidth >= 800 ? '600px' : '95%', window.innerHeight >= 600 ? '75%' : '90%'],
-                shadeClose: true,
-                content: '/admin/plugin.php?_popup=1&name=' + encodeURIComponent(name),
-                id: 'plugin_settings_' + name
-            });
+        layer.open({
+            type: 2,
+            title: '插件设置',
+            skin: 'admin-modal',
+            maxmin: true,
+            area: [window.innerWidth >= 800 ? '600px' : '95%', window.innerHeight >= 600 ? '75%' : '90%'],
+            shadeClose: true,
+            content: '/admin/plugin.php?_popup=1&name=' + encodeURIComponent(name),
+            id: 'plugin_settings_' + name
         });
     }
 
@@ -639,24 +671,20 @@ $(function(){
     $(document).off('.emPlugin');
 
     // 禁用按钮的 tips 提示
-    layui.use('layer', function(){
-        var layer = layui.layer;
-        $(document).on('mouseenter.emPlugin', '[data-tip]', function(){
-            layer.tips($(this).data('tip'), this, { tips: [1, '#555'], time: 0, closeBtn: true });
-        }).on('mouseleave.emPlugin', '[data-tip]', function(){
-            layer.closeAll('tips');
-        });
+    $(document).on('mouseenter.emPlugin', '[data-tip]', function(){
+        layer.tips($(this).data('tip'), this, { tips: [1, '#555'], time: 0, closeBtn: true });
+    }).on('mouseleave.emPlugin', '[data-tip]', function(){
+        layer.closeAll('tips');
+    });
 
-        // 插件图标点击放大：Viewer.js（全局已加载）
-        $(document).on('click.emPlugin', '.plugin-card__icon-wrap img', function(){
-            var src = $(this).attr('src');
-            if (!src) return;
-            var $tmp = $('<div style="display:none;"><img src="' + src + '"></div>').appendTo('body');
-            var viewer = new Viewer($tmp[0], {
-                navbar: false, title: false, toolbar: true,
-                hidden: function () { viewer.destroy(); $tmp.remove(); }
-            });
-            viewer.show();
+    // 插件图标点击放大：Viewer.js（全局已加载）
+    $(document).on('click.emPlugin', '.plugin-card__icon-wrap img', function(){
+        var src = $(this).attr('src');
+        if (!src) return;
+        var $tmp = $('<div style="display:none;"><img src="' + src + '"></div>').appendTo('body');
+        var viewer = new Viewer($tmp[0], {
+            navbar: false, title: false, toolbar: true,
+            hidden: function () { viewer.destroy(); $tmp.remove(); }
         });
     });
 
@@ -667,7 +695,9 @@ $(function(){
         var name = $(this).data('name');
         handleAction(action, name, {
             market_id: $(this).data('market-id'),
-            target_listed: $(this).data('target-listed')
+            target_listed: $(this).data('target-listed'),
+            file_path: $(this).data('file-path'),
+            version: $(this).data('version')
         });
     });
 

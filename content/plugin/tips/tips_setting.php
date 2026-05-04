@@ -61,15 +61,15 @@ function plugin_setting_view() {
                         if (res.data && res.data.csrf_token) {
                             $('#tipsForm input[name=csrf_token]').val(res.data.csrf_token);
                         }
-                        parent.layer.msg('配置已保存', {icon: 1});
+                        parent.layer.msg('配置已保存');
                         parent.layer.close(index);
                     } else {
-                        layui.layer.msg(res.msg || '保存失败', {icon: 2});
+                        layui.layer.msg(res.msg || '保存失败');
                         $btn.prop('disabled', false).html('<i class="layui-icon layui-icon-ok"></i> 保存配置');
                     }
                 },
                 error: function(){
-                    layui.layer.msg('网络异常', {icon: 2});
+                    layui.layer.msg('网络异常');
                     $btn.prop('disabled', false).html('<i class="layui-icon layui-icon-ok"></i> 保存配置');
                 }
             });

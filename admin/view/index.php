@@ -20,6 +20,7 @@ $csrfToken = Csrf::token();
     <link rel="stylesheet" href="/admin/static/css/admin-modal.css">
     <link rel="stylesheet" href="/admin/static/css/style.css">
     <script src="/content/static/lib/jquery.min.3.5.1.js"></script>
+    <script src="/content/static/lib/layui-v2.13.5/layui/layui.js"></script>
     <style>
     /* ================ 授权服务器线路切换（toolbar 全局）================ */
     .admin-line-switch { position: relative; }
@@ -348,7 +349,6 @@ $csrfToken = Csrf::token();
 
 
 <script src="/content/static/lib/jquery.pjax.js"></script>
-<script src="/content/static/lib/layui-v2.13.5/layui/layui.js"></script>
 <script src="/content/static/lib/cropper.min.js"></script>
 <script src="/content/static/lib/viewer.js/viewer.min.js"></script>
 <script src="/content/static/lib/echarts.min.js"></script>

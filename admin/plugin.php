@@ -296,6 +296,15 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
     }
 
     $scanned = $model->scanWithStatus($scope);
+    $latestVersions = [];
+    $names = array_keys($scanned);
+    if ($names !== []) {
+        try {
+            $latestVersions = LicenseClient::mainAppLatestVersions($names, 'plugin');
+        } catch (Throwable $e) {
+            $latestVersions = [];
+        }
+    }
 
     // 授权过滤:服务端注册过 ∩ 已购买 → 才保留;系统内置直通
     $licenseError = null;
@@ -305,10 +314,13 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
     foreach ($scanned as $name => $info) {
         // 主站插件列表排除"分站货架插件"(它们单独展示在 merchant 选项卡)
         if (isset($merchantCodeSet[$name])) continue;
+        $version = (string) ($info['version'] ?? '1.0.0');
+        $latest = $latestVersions[$name] ?? null;
+        $hasUpdate = (bool) ($latest && !empty($latest['version']) && (string) $latest['version'] > $version);
         $data[] = [
             'name'         => $name,
             'title'        => (string) ($info['title']       ?? $name),
-            'version'      => (string) ($info['version']     ?? '1.0.0'),
+            'version'      => $version,
             'author'       => (string) ($info['author']      ?? ''),
             'author_url'   => (string) ($info['author_url']  ?? ''),
             'description'  => (string) ($info['description'] ?? ''),
@@ -321,6 +333,9 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
             'is_enabled'   => !empty($info['is_enabled']),
             'id'           => (int) ($info['state_id'] ?? 0),
             'config'       => '{}', // 兼容字段:配置走 Storage,这里给空对象占位
+            'has_update'       => $hasUpdate,
+            'latest_version'   => $hasUpdate ? (string) ($latest['version'] ?? '') : '',
+            'latest_file_path' => $hasUpdate ? (string) ($latest['file_path'] ?? '') : '',
         ];
     }
 

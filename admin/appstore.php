@@ -184,6 +184,122 @@ if ((string) Input::get('_action', '') === 'list') {
     }
 }
 
+// 更新应用：下载远端 zip → 覆盖 content/plugin|template/{name}/
+if (Request::isPost() && (string) Input::post('_action', '') === 'update') {
+    try {
+        if (!Csrf::validate((string) Input::post('csrf_token', ''))) {
+            Response::error('请求已失效，请刷新页面后重试');
+        }
+        $name = trim((string) Input::post('name', ''));
+        $type = (string) Input::post('type', 'plugin');
+        $filePath = trim((string) Input::post('file_path', ''));
+        $version = trim((string) Input::post('version', ''));
+        if ($name === '' || !preg_match('/^[a-zA-Z0-9_\-]+$/', $name)) Response::error('非法应用名');
+        if (!in_array($type, ['plugin', 'template'], true)) Response::error('未知应用类型');
+        if ($filePath === '') Response::error('缺少下载地址');
+        $targetRoot = $type === 'template' ? EM_ROOT . '/content/template' : EM_ROOT . '/content/plugin';
+        $targetDir = $targetRoot . '/' . $name;
+        if (!is_dir($targetDir)) Response::error('应用尚未安装，无法更新');
+
+        $lines = LicenseClient::lines();
+        if (!$lines) Response::error('未配置授权服务器地址');
+        $baseHost = rtrim((string) $lines[0]['url'], '/');
+        $downloadUrl = '';
+        if (stripos($filePath, 'http://') === 0 || stripos($filePath, 'https://') === 0) {
+            if (strpos($filePath, $baseHost) !== 0) Response::error('下载地址非法（host 不匹配）');
+            $downloadUrl = $filePath;
+        } else {
+            $downloadUrl = $baseHost . '/' . ltrim($filePath, '/');
+        }
+
+        $tmpRoot = EM_ROOT . '/content/uploads/.appstore_tmp';
+        if (!is_dir($tmpRoot)) @mkdir($tmpRoot, 0755, true);
+        $tmpZip = $tmpRoot . '/zip_u_' . uniqid() . '.zip';
+        $fp = fopen($tmpZip, 'wb');
+        $ch = curl_init($downloadUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_FILE => $fp,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_TIMEOUT => 120,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_USERAGENT => 'emshop-' . EM_VERSION,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+        ]);
+        $ok = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+        fclose($fp);
+        if (!$ok || $httpCode !== 200 || filesize($tmpZip) < 16) {
+            @unlink($tmpZip);
+            Response::error('下载失败：' . ($curlErr !== '' ? $curlErr : 'HTTP ' . $httpCode));
+        }
+
+        if (!class_exists('ZipArchive')) {
+            @unlink($tmpZip);
+            Response::error('PHP ZipArchive 扩展未启用');
+        }
+        $zip = new ZipArchive();
+        if ($zip->open($tmpZip) !== true) {
+            @unlink($tmpZip);
+            Response::error('zip 打开失败');
+        }
+        $extractTmp = $tmpRoot . '/x_u_' . uniqid();
+        @mkdir($extractTmp, 0755, true);
+        if (!$zip->extractTo($extractTmp)) {
+            $zip->close();
+            @unlink($tmpZip);
+            Response::error('解压失败');
+        }
+        $zip->close();
+        @unlink($tmpZip);
+
+        $rmTree = static function (string $path) use (&$rmTree): bool {
+            if (!file_exists($path)) return true;
+            if (!is_dir($path)) return @unlink($path);
+            foreach (scandir($path) ?: [] as $item) {
+                if ($item === '.' || $item === '..') continue;
+                $rmTree($path . DIRECTORY_SEPARATOR . $item);
+            }
+            return @rmdir($path);
+        };
+        $copyTree = static function (string $from, string $to) use (&$copyTree): bool {
+            if (!is_dir($from)) return @copy($from, $to);
+            if (!is_dir($to) && !@mkdir($to, 0755, true)) return false;
+            foreach (scandir($from) ?: [] as $item) {
+                if ($item === '.' || $item === '..') continue;
+                if (!$copyTree($from . DIRECTORY_SEPARATOR . $item, $to . DIRECTORY_SEPARATOR . $item)) return false;
+            }
+            return true;
+        };
+
+        $children = array_values(array_filter(scandir($extractTmp) ?: [], static function ($item): bool { return $item !== '.' && $item !== '..'; }));
+        $srcRoot = $extractTmp;
+        if (count($children) === 1 && is_dir($extractTmp . '/' . $children[0])) $srcRoot = $extractTmp . '/' . $children[0];
+
+        if (!$rmTree($targetDir)) {
+            $rmTree($extractTmp);
+            Response::error('清理旧版本失败，请检查目录权限');
+        }
+        if (!@mkdir($targetDir, 0755, true)) {
+            $rmTree($extractTmp);
+            Response::error('创建目标目录失败，请检查目录权限');
+        }
+        if (!$copyTree($srcRoot, $targetDir)) {
+            $rmTree($extractTmp);
+            Response::error('写入新版本文件失败，请检查目录权限');
+        }
+        $rmTree($extractTmp);
+
+        if ($type === 'plugin' && !is_file($targetDir . '/' . $name . '.php')) Response::error('更新后插件主文件缺失：' . $name . '.php');
+        if ($type === 'template' && !is_file($targetDir . '/header.php')) Response::error('更新后模板 header.php 缺失');
+        Response::success('更新完成：' . $name . ($version !== '' ? (' v' . $version) : ''), ['csrf_token' => Csrf::refresh()]);
+    } catch (Throwable $e) {
+        Response::error('更新异常：' . $e->getMessage());
+    }
+}
+
 // 安装应用：下载远端 zip → 解压到 content/plugin|template/{name}/ → 注册到本地
 if (Request::isPost() && (string) Input::post('_action', '') === 'install') {
     try {
