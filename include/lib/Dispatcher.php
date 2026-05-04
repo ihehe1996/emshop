@@ -151,16 +151,7 @@ final class Dispatcher
             return;
         }
 
-        // 0.1 Swoole 存活检测：心跳文件 mtime 超过 15s 或文件不存在 → 服务挂了
-        //    原因：支付回调依赖 swoole 消费 em_delivery_queue 发货，swoole 不跑就会有
-        //    "用户付钱但永远收不到卡密"的致命链路。粗暴拦住整站比让用户盲付安全。
-        //    submit.php/return.php 等支付回调是独立入口不经 Dispatcher，不会被误拦。
-        $hbFile = EM_ROOT . '/swoole/swoole.heartbeat';
-        $mtime = @filemtime($hbFile);
-        if ($mtime === false || (time() - $mtime) > 15) {
-            $this->renderSwooleDownNotice();
-            return;
-        }
+        // 0.1 Swoole 存活检测已移除：即使 Swoole 未运行也允许前台访问。
 
         // 0.15 商户入口等级门控：host 命中了一个真实商户但商户等级不允许该入口方式（二级域名 /
         //      自定义顶级域名），显式渲染"店铺暂未开放"页，避免静默把主站内容露给访客。

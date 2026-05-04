@@ -12,7 +12,7 @@ final class InstallService
     /**
      * 执行安装。
      */
-    public function setup(): void
+    public function setup(array $options = []): void
     {
         $config = Database::config();
         $userTable = Database::prefix() . 'user';
@@ -569,8 +569,17 @@ final class InstallService
             'description' => '站点名称',
         ]);
 
+        $admin = isset($options['admin']) && is_array($options['admin']) ? $options['admin'] : [];
+        $adminUsername = isset($admin['username']) ? trim((string) $admin['username']) : 'admin';
+        $adminEmail = isset($admin['email']) ? trim((string) $admin['email']) : 'admin@example.com';
+        $adminPassword = isset($admin['password']) ? (string) $admin['password'] : '123456';
+
+        if ($adminUsername === '') $adminUsername = 'admin';
+        if ($adminEmail === '') $adminEmail = 'admin@example.com';
+        if ($adminPassword === '') $adminPassword = '123456';
+
         $hasher = new PasswordHash(8, true);
-        $hash = $hasher->HashPassword('123456');
+        $hash = $hasher->HashPassword($adminPassword);
 
         $sql = sprintf(
             'INSERT INTO `%s` (`username`, `email`, `password`, `nickname`, `avatar`, `role`, `status`)
@@ -587,8 +596,8 @@ final class InstallService
         );
 
         Database::execute($sql, [
-            'username' => 'admin',
-            'email' => '10220739@qq.com',
+            'username' => $adminUsername,
+            'email' => $adminEmail,
             'password' => $hash,
             'nickname' => '管理员',
             'avatar' => '',
