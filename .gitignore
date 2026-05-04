@@ -9,9 +9,6 @@
 .env.*
 !.env.example
 
-# 本地覆盖配置（如 include/config/local.php）
-**/config/local*.php
-
 # 安装锁
 /install.lock
 /install/install.lock
