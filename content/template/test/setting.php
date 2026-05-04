@@ -8,7 +8,7 @@ defined('EM_ROOT') || exit('access denied!');
  * 轮播图以表格形式展示，添加/编辑通过弹窗完成。
  */
 function template_setting_view() {
-    $storage = TemplateStorage::getInstance('test');
+    $storage = TemplateStorage::getInstance((string) ($_GET['name'] ?? active_theme_name('test')));
 
     // 商城轮播图
     $slidesMall = $storage->getValue('hero_slides_mall');
@@ -410,7 +410,7 @@ function template_setting() {
         Output::fail('请求已失效，请刷新页面后重试');
     }
 
-    $storage = TemplateStorage::getInstance('test');
+    $storage = TemplateStorage::getInstance((string) Input::postStrVar('name') ?: active_theme_name('test'));
 
     // 保存轮播图（商城 + 博客，分别存储）
     foreach (['mall', 'blog'] as $scene) {

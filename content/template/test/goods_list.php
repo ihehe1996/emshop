@@ -58,7 +58,9 @@ if (is_array($_announce) && !empty($_announce['html']) && in_array('goods_list',
         <a href="<?= url_goods_list() ?>"
            class="category-tab<?= $current_category === 0 ? ' active' : '' ?>"
            data-pjax>
-            <img class="category-tab-icon" src="/content/template/test/all.png" alt="">
+            <span class="category-tab-icon" aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;background:#eef2ff;color:#4e6ef2;font-size:14px;">
+                <i class="fa fa-th-large"></i>
+            </span>
             <span class="category-tab-name">全部</span>
             <span class="category-tab-count"><?= $allGoodsCount ?></span>
         </a>

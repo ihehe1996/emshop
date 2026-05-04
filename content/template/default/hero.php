@@ -3,7 +3,7 @@ defined('EM_ROOT') || exit('access denied!');
 
 // 从模板配置读取轮播图数据
 // 调用方可通过 $_hero_scene 指定场景：mall（默认）或 blog
-$_heroStorage = TemplateStorage::getInstance((string) ($_theme ?? active_theme_name('test')));
+$_heroStorage = TemplateStorage::getInstance('default');
 $_heroKey = 'hero_slides_' . ($_hero_scene ?? 'mall');
 // getValue 会自动 JSON 解码，返回值可能已经是数组
 $_slides = $_heroStorage->getValue($_heroKey);

@@ -31,7 +31,7 @@ $fullTitle      = $pageTitle !== '' ? ($pageTitle . ' - ' . $seoTitle) : $seoTit
 <link rel="stylesheet" href="/content/static/lib/font-awesome-4.7.0/css/font-awesome.min.css">
 <link rel="stylesheet" href="/content/static/lib/layui-v2.13.5/layui/css/layui.css">
 <link rel="stylesheet" href="/content/static/lib/viewer.js/viewer.min.css">
-<link rel="stylesheet" href="/content/template/test/style.css?v=<?= @filemtime(__DIR__ . '/style.css') ?>">
+<link rel="stylesheet" href="<?= htmlspecialchars(theme_asset_url('style.css', (string) ($_theme ?? 'test'))) ?>?v=<?= @filemtime(__DIR__ . '/style.css') ?>">
 <script src="/content/static/lib/jquery.min.3.5.1.js"></script>
 <script src="/content/static/lib/viewer.js/viewer.min.js"></script>
 <script src="/content/static/lib/jquery.pjax.js"></script>

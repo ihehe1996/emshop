@@ -328,13 +328,13 @@ defined('EM_ROOT') || exit('access denied!');
     <?php endif; ?>
 
     <!-- 游客查单组件 + 商品详情 JS -->
-    <script src="/content/template/test/guest_find.js"></script>
+    <script src="<?= htmlspecialchars(theme_asset_url('guest_find.js', (string) ($_theme ?? 'test'))) ?>"></script>
     <?php if (!empty($needs_address)): ?>
     <!-- 收货地址选择（立即购买时弹层用）：cascade 库 + 样式 -->
     <link rel="stylesheet" href="/content/static/lib/cityAreaSelect/dist/css/cityAreaSelect.css">
     <script src="/content/static/lib/cityAreaSelect/dist/js/cityAreaSelect.min.js"></script>
     <?php endif; ?>
-    <script src="/content/template/test/goods.js"></script>
+    <script src="<?= htmlspecialchars(theme_asset_url('goods.js', (string) ($_theme ?? 'test'))) ?>"></script>
     <script>
     // PJAX 导航时，jQuery 对外部 <script src> 走异步加载，而内联 <script> 会立即执行；
     // 会出现 GoodsDetail 还未定义就调用 init 的情况。用轮询等依赖就绪再启动。

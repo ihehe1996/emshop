@@ -368,3 +368,55 @@ function truncate(string $text, int $length = 100, string $suffix = '...'): stri
     }
     return mb_substr($text, 0, $length, 'UTF-8') . $suffix;
 }
+
+/**
+ * 检测当前请求终端类型（与 Dispatcher 保持一致）。
+ */
+function current_device_type(): string
+{
+    $device = trim((string) Input::get('device', ''));
+    if ($device === 'mobile' || $device === 'pc') {
+        return $device;
+    }
+
+    $agent = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+    foreach (['mobile', 'android', 'iphone', 'ipad', 'ipod', 'windows phone'] as $keyword) {
+        if (stripos($agent, $keyword) !== false) {
+            return 'mobile';
+        }
+    }
+
+    return 'pc';
+}
+
+/**
+ * 当前请求实际启用的主题名。
+ */
+function active_theme_name(string $fallback = 'default'): string
+{
+    static $theme = null;
+    if ($theme !== null) {
+        return $theme !== '' ? $theme : $fallback;
+    }
+
+    try {
+        $scope = MerchantContext::currentId() > 0
+            ? 'merchant_' . MerchantContext::currentId()
+            : 'main';
+        $theme = (string) ((new TemplateModel())->getActiveTheme(current_device_type(), $scope) ?? '');
+    } catch (Throwable $e) {
+        $theme = '';
+    }
+
+    return $theme !== '' ? $theme : $fallback;
+}
+
+/**
+ * 当前主题资源 URL。
+ */
+function theme_asset_url(string $path, ?string $theme = null): string
+{
+    $themeName = trim((string) ($theme ?? active_theme_name()));
+    $relative = ltrim($path, '/');
+    return '/content/template/' . rawurlencode($themeName) . '/' . $relative;
+}
