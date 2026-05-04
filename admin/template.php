@@ -194,7 +194,7 @@ if (!$isPopup && Input::get('_action', '') === 'list') {
 
         // 比对远端版本判定有无更新
         $latest = $latestVersions[$name] ?? null;
-        if ($latest && !empty($latest['version']) && (string) $latest['version'] !== $version) {
+        if ($latest && !empty($latest['version']) && (string) $latest['version'] > $version) {
             $row['has_update']       = true;
             $row['latest_version']   = (string) $latest['version'];
             $row['latest_file_path'] = (string) ($latest['file_path'] ?? '');

@@ -176,4 +176,4 @@ register_shutdown_function(function () {
 });
 
 
-usleep(500000); // 模拟慢速环境，方便测试加载中的loading特效等，不要删除
+// usleep(500000); // 模拟慢速环境，方便测试加载中的loading特效等，不要删除
