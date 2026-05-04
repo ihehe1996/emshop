@@ -71,7 +71,7 @@ final class InstallService
         ];
         foreach ($defaultConfigs as $configRow) Database::execute($siteConfigSql, $configRow);
 
-        // 用户表
+        // 用户表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -82,11 +82,6 @@ final class InstallService
                 `avatar` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'头像URL\',
                 `mobile` VARCHAR(20) NOT NULL DEFAULT \'\' COMMENT \'手机号码\',
                 `money` BIGINT NOT NULL DEFAULT 0 COMMENT \'账户余额（实际金额×1000000）\',
-                `commission_frozen` BIGINT NOT NULL DEFAULT 0 COMMENT \'冻结佣金 ×1000000（订单完成后、冷却期内不可提）\',
-                `commission_available` BIGINT NOT NULL DEFAULT 0 COMMENT \'可提现佣金 ×1000000\',
-                `invite_code` VARCHAR(16) DEFAULT NULL COMMENT \'推广邀请码（全站唯一）\',
-                `inviter_l1` BIGINT UNSIGNED DEFAULT NULL COMMENT \'直接上级用户ID（一级）\',
-                `inviter_l2` BIGINT UNSIGNED DEFAULT NULL COMMENT \'二级上级用户ID\',
                 `secret` VARCHAR(64) DEFAULT NULL COMMENT \'API密钥\',
                 `role` VARCHAR(20) NOT NULL DEFAULT \'user\' COMMENT \'角色：admin=管理员 user=普通用户\',
                 `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'状态：1=正常 0=禁用\',
@@ -95,6 +90,14 @@ final class InstallService
                 `remember_token` CHAR(64) DEFAULT NULL COMMENT \'记住我令牌\',
                 `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'注册时间\',
                 `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
+                `invite_code` VARCHAR(16) DEFAULT NULL COMMENT \'邀请码\',
+                `inviter_l1` BIGINT UNSIGNED DEFAULT NULL COMMENT \'直接上级用户ID\',
+                `inviter_l2` BIGINT UNSIGNED DEFAULT NULL COMMENT \'二级上级用户ID\',
+                `commission_frozen` BIGINT NOT NULL DEFAULT 0 COMMENT \'冻结佣金（×1000000）\',
+                `commission_available` BIGINT NOT NULL DEFAULT 0 COMMENT \'可提现佣金（×1000000）\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'所属商户 id；0=非商户主\',
+                `shop_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'店铺余额 ×1000000（仅商户主有值）\',
+                `level_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户等级 user_levels.id；0=未设置\',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uniq_username` (`username`),
                 UNIQUE KEY `uniq_email` (`email`, `role`),
@@ -292,68 +295,74 @@ final class InstallService
             $prefix . 'commission_withdraw'
         ));
 
-        // 订单主表
+        // 订单主表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `order_no` VARCHAR(32) NOT NULL,
-                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
-                `guest_token` VARCHAR(64) DEFAULT NULL,
-                `owner_id` INT UNSIGNED NOT NULL DEFAULT 0,
-                `goods_amount` BIGINT NOT NULL DEFAULT 0,
-                `discount_amount` BIGINT NOT NULL DEFAULT 0,
-                `pay_amount` BIGINT NOT NULL DEFAULT 0,
-                `payment_code` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `payment_name` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `payment_plugin` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `payment_plugin_name` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `payment_channel` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `status` VARCHAR(20) NOT NULL DEFAULT \'pending\',
-                `coupon_code` VARCHAR(32) DEFAULT NULL COMMENT \'使用的优惠券 code\',
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
+                `order_no` VARCHAR(32) NOT NULL COMMENT \'订单编号\',
+                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户ID；0=游客\',
+                `guest_token` VARCHAR(64) DEFAULT NULL COMMENT \'游客身份标识\',
+                `owner_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'归属者ID（分站隔离）\',
+                `goods_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'商品总金额（×1000000）\',
+                `discount_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'优惠总金额（×1000000）\',
+                `coupon_code` VARCHAR(32) DEFAULT NULL,
+                `pay_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'实付金额（×1000000）\',
+                `payment_code` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'支付方式code\',
+                `payment_name` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'支付方式名称\',
+                `payment_plugin` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'支付插件标识\',
+                `payment_plugin_name` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'支付插件中文名\',
+                `payment_channel` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'支付通道\',
+                `status` VARCHAR(20) NOT NULL DEFAULT \'pending\' COMMENT \'状态\',
+                `contact_info` TEXT,
+                `order_password` VARCHAR(255) DEFAULT NULL,
+                `pay_time` DATETIME DEFAULT NULL COMMENT \'支付时间\',
+                `delivery_time` DATETIME DEFAULT NULL COMMENT \'发货时间\',
+                `complete_time` DATETIME DEFAULT NULL COMMENT \'完成时间\',
+                `ip` VARCHAR(45) NOT NULL DEFAULT \'\' COMMENT \'下单IP\',
+                `source` VARCHAR(16) NOT NULL DEFAULT \'web\' COMMENT \'订单来源\',
+                `remark` TEXT COMMENT \'用户备注\',
+                `admin_remark` TEXT COMMENT \'管理员备注\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'创建时间\',
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
                 `inviter_l1` BIGINT UNSIGNED DEFAULT NULL COMMENT \'下单时一级上级（快照）\',
                 `inviter_l2` BIGINT UNSIGNED DEFAULT NULL COMMENT \'下单时二级上级（快照）\',
-                `contact_info` TEXT COMMENT \'下单联系信息：JSON（附加选项）或纯字符串（游客联系方式）\',
-                `shipping_address_snapshot` TEXT COMMENT \'收货地址快照 JSON（recipient/mobile/province/city/district/detail）；仅需地址的商品类型有值\',
-                `delivery_callback_url` VARCHAR(500) DEFAULT NULL COMMENT \'发货异步回调地址（同系统对接）\',
-                `order_password` VARCHAR(255) DEFAULT NULL COMMENT \'游客查单订单密码（明文存储）\',
-                `pay_time` DATETIME DEFAULT NULL,
-                `delivery_time` DATETIME DEFAULT NULL,
-                `complete_time` DATETIME DEFAULT NULL,
-                `ip` VARCHAR(45) NOT NULL DEFAULT \'\',
-                `source` VARCHAR(16) NOT NULL DEFAULT \'web\',
-                `remark` TEXT,
-                `admin_remark` TEXT,
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'下单时所在商户id；0=主站订单\',
                 `display_currency_code` VARCHAR(3) NOT NULL DEFAULT \'\' COMMENT \'下单时访客选择的展示货币代码；空=主货币\',
-                `display_rate` BIGINT NOT NULL DEFAULT 0 COMMENT \'下单时汇率快照 ×1000000，1 单位展示货币 = rate/1000000 主货币；0=按主货币展示\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `display_rate` BIGINT NOT NULL DEFAULT 0 COMMENT \'下单时汇率快照 ×1000000\',
+                `shipping_address_snapshot` TEXT COMMENT \'收货地址快照 JSON\',
+                `delivery_callback_url` VARCHAR(500) DEFAULT NULL COMMENT \'发货异步回调地址（同系统对接）\',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_order_no` (`order_no`),
                 KEY `idx_user` (`user_id`),
                 KEY `idx_guest_token` (`guest_token`),
                 KEY `idx_owner_status` (`owner_id`, `status`),
-                KEY `idx_created` (`created_at`)
+                KEY `idx_created` (`created_at`),
+                KEY `idx_coupon_code` (`coupon_code`),
+                KEY `idx_merchant_status` (`merchant_id`, `status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'订单主表\'',
             $prefix . 'order'
         ));
 
-        // 订单商品表
+        // 订单商品表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `order_id` BIGINT UNSIGNED NOT NULL,
-                `goods_id` INT UNSIGNED NOT NULL,
-                `spec_id` INT UNSIGNED NOT NULL DEFAULT 0,
-                `goods_title` VARCHAR(255) NOT NULL DEFAULT \'\',
-                `spec_name` VARCHAR(255) NOT NULL DEFAULT \'\',
-                `cover_image` VARCHAR(512) NOT NULL DEFAULT \'\',
-                `price` BIGINT NOT NULL DEFAULT 0,
-                `quantity` INT UNSIGNED NOT NULL DEFAULT 1,
-                `goods_type` VARCHAR(64) NOT NULL DEFAULT \'\',
-                `plugin_data` TEXT,
-                `delivery_content` TEXT,
-                `delivery_at` DATETIME DEFAULT NULL,
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
+                `order_id` BIGINT UNSIGNED NOT NULL COMMENT \'订单ID\',
+                `goods_id` INT UNSIGNED NOT NULL COMMENT \'商品ID\',
+                `spec_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'规格ID\',
+                `goods_title` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'商品标题（快照）\',
+                `spec_name` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'规格名称（快照）\',
+                `cover_image` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'封面图（快照）\',
+                `price` BIGINT NOT NULL DEFAULT 0 COMMENT \'单价（×1000000，快照）\',
+                `quantity` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT \'购买数量\',
+                `goods_type` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'商品类型（快照）\',
+                `plugin_data` TEXT COMMENT \'插件私有数据\',
+                `delivery_content` TEXT COMMENT \'发货内容\',
+                `delivery_at` DATETIME DEFAULT NULL COMMENT \'发货时间\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'创建时间\',
+                `goods_owner_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'商品 owner_id 快照；0=主站货\',
+                `cost_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'拿货价快照 ×1000000\',
+                `fee_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'自建手续费快照 ×1000000\',
                 PRIMARY KEY (`id`),
                 KEY `idx_order` (`order_id`),
                 KEY `idx_goods` (`goods_id`)
@@ -409,15 +418,16 @@ final class InstallService
             $prefix . 'delivery_queue'
         ));
 
-        // 翻译词条表
+        // 语言表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
                 `name` VARCHAR(50) NOT NULL COMMENT \'语言名称，如：简体中文\',
                 `code` VARCHAR(20) NOT NULL COMMENT \'浏览器语言码，如：zh-CN\',
-                `icon` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'语言图标/国旗URL\',
-                `is_default` CHAR(1) NOT NULL DEFAULT \'n\' COMMENT \'是否默认语言：y=是 n=否\',
+                `icon` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'语言图标/国旗图片URL\',
+                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序，越小越靠前\',
                 `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'是否启用：y=启用 n=禁用\',
+                `is_default` CHAR(1) NOT NULL DEFAULT \'n\' COMMENT \'是否默认语言：y=是 n=否\',
                 `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'创建时间\',
                 `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
                 PRIMARY KEY (`id`),
@@ -426,7 +436,7 @@ final class InstallService
             $prefix . 'language'
         ));
         Database::execute(sprintf(
-            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'y\', \'y\')',
+            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `icon`, `sort`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'\', 0, \'y\', \'y\')',
             $prefix . 'language'
         ), []);
         Database::statement(sprintf(
@@ -587,10 +597,449 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'博客标签表\'',
             $prefix . 'blog_tag'
         ));
-        $this->setupCoreSupportTables();
-        $this->setupGoodsModule();
+        // 应用市场表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `app_code` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'应用 slug = 物理目录名\',
+                `type` ENUM(\'plugin\', \'template\') NOT NULL COMMENT \'应用类型\',
+                `remote_app_id` INT UNSIGNED DEFAULT NULL COMMENT \'服务端 app_id\',
+                `title` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'应用名称\',
+                `version` VARCHAR(32) NOT NULL DEFAULT \'\' COMMENT \'版本号\',
+                `category` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'分类\',
+                `cover` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'封面/图标 URL\',
+                `description` TEXT COMMENT \'简介\',
+                `cost_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'主站最近一次采购成本(微分)\',
+                `retail_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'主站定的分站售价(微分)\',
+                `total_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'累计采购次数\',
+                `consumed_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'已售出次数\',
+                `is_listed` TINYINT NOT NULL DEFAULT 1 COMMENT \'是否对分站可见 1=上架 0=下架\',
+                `remote_payload` JSON DEFAULT NULL COMMENT \'服务端返回的完整应用元数据快照\',
+                `last_purchased_at` DATETIME DEFAULT NULL COMMENT \'主站最近一次采购时间\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_app_code_type` (`app_code`, `type`),
+                KEY `idx_listed` (`is_listed`),
+                KEY `idx_type` (`type`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店:主站为分站采购的上架清单\'',
+            $prefix . 'app_market'
+        ));
 
-        // 商户等级表
+        // 应用市场流水表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `market_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联 app_market.id\',
+                `app_code` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'冗余:方便单表查询\',
+                `type` ENUM(\'plugin\', \'template\') NOT NULL,
+                `purchase_qty` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'本次采购的配额数量\',
+                `cost_per_unit` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次单价(微分)\',
+                `total_cost` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次总价 = qty * cost_per_unit\',
+                `remote_order_no` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'服务端订单号\',
+                `remark` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `purchased_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_market` (`market_id`),
+                KEY `idx_purchased_at` (`purchased_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店:主站向服务端采购流水\'',
+            $prefix . 'app_market_log'
+        ));
+
+        // 应用购买记录表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'分站商户 id\',
+                `user_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'扣款的分站站长 user.id\',
+                `app_code` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'应用 slug\',
+                `type` ENUM(\'plugin\', \'template\') NOT NULL COMMENT \'应用类型\',
+                `market_id` INT UNSIGNED DEFAULT NULL COMMENT \'关联 app_market.id\',
+                `paid_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'成交价(微分);0=免费授权\',
+                `balance_log_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联 user_balance_log.id;0=未扣款\',
+                `purchased_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_merchant_app_type` (`merchant_id`, `app_code`, `type`),
+                KEY `idx_market` (`market_id`),
+                KEY `idx_user` (`user_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店:分站已购应用记录\'',
+            $prefix . 'app_purchase'
+        ));
+
+        // 应用订单表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `order_no` VARCHAR(40) NOT NULL DEFAULT \'\' COMMENT \'应用订单号（AO 前缀）\',
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'分站 ID\',
+                `user_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'购买用户 ID\',
+                `market_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联 app_market.id\',
+                `app_code` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'应用 slug\',
+                `type` ENUM(\'plugin\', \'template\') NOT NULL COMMENT \'应用类型\',
+                `app_title` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'应用标题快照\',
+                `amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'成交价（微分）\',
+                `pay_method` VARCHAR(20) NOT NULL DEFAULT \'balance\' COMMENT \'支付方式\',
+                `status` VARCHAR(20) NOT NULL DEFAULT \'paid\' COMMENT \'订单状态\',
+                `balance_log_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联 user_balance_log.id\',
+                `before_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款前余额（微分）\',
+                `after_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款后余额（微分）\',
+                `note` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `paid_at` DATETIME DEFAULT NULL,
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_order_no` (`order_no`),
+                KEY `idx_merchant` (`merchant_id`),
+                KEY `idx_user` (`user_id`),
+                KEY `idx_market` (`market_id`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店：分站应用购买订单\'',
+            $prefix . 'app_order'
+        ));
+
+        // 附件表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'上传者用户ID，null表示游客或系统\',
+                `file_name` VARCHAR(255) NOT NULL COMMENT \'原始文件名\',
+                `file_path` VARCHAR(500) NOT NULL COMMENT \'服务器存储相对路径\',
+                `file_url` VARCHAR(500) NOT NULL COMMENT \'访问URL\',
+                `file_size` INT UNSIGNED NOT NULL COMMENT \'文件大小（字节）\',
+                `file_ext` VARCHAR(20) NOT NULL COMMENT \'文件扩展名\',
+                `mime_type` VARCHAR(100) NOT NULL COMMENT \'MIME类型\',
+                `md5` CHAR(32) DEFAULT NULL COMMENT \'文件MD5（去重用）\',
+                `driver` VARCHAR(20) NOT NULL DEFAULT \'local\' COMMENT \'存储驱动\',
+                `context` VARCHAR(50) NOT NULL DEFAULT \'default\' COMMENT \'使用场景\',
+                `context_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'关联记录ID\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_context` (`context`, `context_id`),
+                KEY `idx_md5` (`md5`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'附件表\'',
+            $prefix . 'attachment'
+        ));
+
+        // 博客评论表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `blog_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'文章ID\',
+                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户ID\',
+                `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'父评论ID（0=顶级评论）\',
+                `reply_user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'被回复的用户ID\',
+                `content` TEXT NOT NULL COMMENT \'评论内容\',
+                `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'状态：0=待审核 1=已通过 2=已拒绝\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `deleted_at` DATETIME DEFAULT NULL COMMENT \'软删除时间\',
+                PRIMARY KEY (`id`),
+                KEY `idx_blog_id` (`blog_id`, `status`, `created_at`),
+                KEY `idx_parent_id` (`parent_id`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_status` (`status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'博客评论表\'',
+            $prefix . 'blog_comment'
+        ));
+
+        // 博客标签关联表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `blog_id` INT UNSIGNED NOT NULL COMMENT \'文章ID\',
+                `tag_id` INT UNSIGNED NOT NULL COMMENT \'标签ID\',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uniq_blog_tag` (`blog_id`, `tag_id`),
+                KEY `idx_tag_id` (`tag_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'文章标签关联表\'',
+            $prefix . 'blog_tag_relation'
+        ));
+
+        // 友情链接表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `name` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'链接名称\',
+                `url` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'链接地址\',
+                `image` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'图片地址\',
+                `enabled` ENUM(\'y\', \'n\') NOT NULL DEFAULT \'y\' COMMENT \'是否启用\',
+                `expire_time` DATETIME DEFAULT NULL COMMENT \'过期时间\',
+                `description` TEXT COMMENT \'描述\',
+                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序（越大越靠前）\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_enabled_sort` (`enabled`, `sort`),
+                KEY `idx_expire_time` (`expire_time`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'友情链接表\'',
+            $prefix . 'friend_link'
+        ));
+
+        // 迁移记录表
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `filename` VARCHAR(255) NOT NULL COMMENT \'迁移文件名\',
+                `batch` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'迁移批次\',
+                `applied_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'执行时间\',
+                `checksum` CHAR(64) NOT NULL DEFAULT \'\' COMMENT \'文件校验\',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_filename` (`filename`),
+                KEY `idx_batch` (`batch`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'数据库迁移追踪表\'',
+            $prefix . 'migrations'
+        ));
+
+        // 配置项表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0,
+                `type` VARCHAR(32) NOT NULL DEFAULT \'plugin\' COMMENT \'类型：plugin=插件，theme=模板\',
+                `title` VARCHAR(128) NOT NULL COMMENT \'插件或模板名称\',
+                `name` VARCHAR(128) NOT NULL COMMENT \'配置项名称\',
+                `content` LONGTEXT NOT NULL COMMENT \'配置内容\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_type_title_merchant_name` (`type`, `title`, `merchant_id`, `name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件/模板配置\'',
+            $prefix . 'options'
+        ));
+
+        // 系统日志表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'主键\',
+                `level` ENUM(\'info\', \'warning\', \'error\') NOT NULL DEFAULT \'info\' COMMENT \'日志级别\',
+                `type` ENUM(\'login\', \'logout\', \'admin_operation\', \'system\', \'api\') NOT NULL DEFAULT \'system\' COMMENT \'日志类型\',
+                `action` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'操作名称\',
+                `message` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'消息内容\',
+                `detail` TEXT COMMENT \'详细信息（JSON）\',
+                `user_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'操作用户ID\',
+                `username` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'操作用户名\',
+                `ip` VARCHAR(45) NOT NULL DEFAULT \'\' COMMENT \'IP地址\',
+                `user_agent` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'浏览器UA\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'创建时间\',
+                PRIMARY KEY (`id`),
+                KEY `idx_level` (`level`),
+                KEY `idx_type` (`type`),
+                KEY `idx_user_id` (`user_id`),
+                KEY `idx_created_at` (`created_at`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT=\'系统日志表\'',
+            $prefix . 'system_log'
+        ));
+
+        // 用户等级表（与线上一致）
+        Database::statement(sprintf(
+            'CREATE TABLE IF NOT EXISTS `%s` (
+                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
+                `name` VARCHAR(50) NOT NULL COMMENT \'等级名称\',
+                `level` INT UNSIGNED NOT NULL COMMENT \'等级数字\',
+                `discount` BIGINT NOT NULL COMMENT \'享受折扣（x折），存储时乘以1000000\',
+                `self_open_price` BIGINT NOT NULL COMMENT \'自助开通价格（分），0=不允许开通\',
+                `unlock_exp` BIGINT NOT NULL DEFAULT 0 COMMENT \'解锁所需经验值，0=不启用自动解锁\',
+                `remark` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'备注\',
+                `icon` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'等级图标URL\',
+                `bg` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'等级背景图URL\',
+                `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'是否启用：y=启用 n=禁用\',
+                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'创建时间\',
+                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
+                PRIMARY KEY (`id`),
+                KEY `idx_enabled_sort` (`enabled`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户等级表\'',
+            $prefix . 'user_levels'
+        ));
+        // 商品主表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `code` VARCHAR(32) NOT NULL COMMENT '商品唯一标识',
+            `owner_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '所属者ID',
+            `category_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '商品分类ID',
+            `category_source` ENUM('main', 'merchant') NOT NULL DEFAULT 'main' COMMENT '分类来源：main=主站分类表 / merchant=商户分类表',
+            `title` VARCHAR(255) NOT NULL COMMENT '商品标题',
+            `cover_images` TEXT COMMENT 'JSON数组，存储多张图片URL',
+            `intro` TEXT COMMENT '商品简介',
+            `content` LONGTEXT COMMENT '商品详情',
+            `configs` TEXT COMMENT 'JSON，扩展配置项',
+            `api_enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否开启API对接',
+            `jump_url` VARCHAR(255) DEFAULT NULL COMMENT '跳转链接',
+            `goods_type` VARCHAR(64) NOT NULL DEFAULT 'default' COMMENT '商品类型标识',
+            `unit` VARCHAR(32) NOT NULL DEFAULT '件' COMMENT '商品单位',
+            `is_on_sale` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否上架',
+            `is_recommended` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否推荐商品',
+            `is_top_home` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '首页置顶',
+            `is_top_category` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '分类置顶',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '排序',
+            `views_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '浏览量',
+            `plugin_data` TEXT COMMENT 'JSON，插件私有数据存储区',
+            `source_type` VARCHAR(32) NOT NULL DEFAULT 'self' COMMENT '商品来源',
+            `source_id` VARCHAR(128) DEFAULT NULL COMMENT '来源商品标识',
+            `source_version` INT NOT NULL DEFAULT 0 COMMENT '来源数据版本号',
+            `min_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最低价（×1000000）',
+            `max_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最高价（×1000000）',
+            `total_stock` INT NOT NULL DEFAULT 0 COMMENT '总库存',
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态',
+            `created_by` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '创建人ID',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            `deleted_at` DATETIME DEFAULT NULL COMMENT '软删除时间，NULL表示未删除',
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_code` (`code`),
+            KEY `idx_owner_status` (`owner_id`, `status`),
+            KEY `idx_category` (`category_id`),
+            KEY `idx_sale_sort` (`is_on_sale`, `sort`, `id`),
+            KEY `idx_source` (`source_type`, `source_id`),
+            KEY `idx_recommended` (`is_recommended`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品主表'");
+
+        // 商品规格表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `name` VARCHAR(255) NOT NULL COMMENT '规格名称',
+            `spec_no` VARCHAR(64) DEFAULT NULL COMMENT '规格编号',
+            `cover_image` VARCHAR(512) DEFAULT NULL COMMENT '规格专属封面图',
+            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价（×1000000）',
+            `cost_price` BIGINT DEFAULT NULL COMMENT '成本价（×1000000），NULL表示未设置',
+            `market_price` BIGINT DEFAULT NULL COMMENT '市场价（×1000000），NULL表示未设置',
+            `stock` INT NOT NULL DEFAULT -1 COMMENT '库存数量，-1表示无限',
+            `sold_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '已售数量',
+            `min_buy` INT UNSIGNED DEFAULT NULL COMMENT '最低购买数量，NULL表示不限制',
+            `max_buy` INT UNSIGNED DEFAULT NULL COMMENT '最大购买数量，NULL表示不限制',
+            `tags` TEXT COMMENT 'JSON数组，规格标签',
+            `configs` TEXT COMMENT 'JSON：规格级附加配置（目前仅 images）',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '排序',
+            `is_default` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否为默认选中的规格',
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods` (`goods_id`),
+            KEY `idx_goods_status` (`goods_id`, `status`),
+            KEY `idx_spec_no` (`spec_no`),
+            KEY `idx_default` (`goods_id`, `is_default`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品规格表'");
+
+        // 商品规格维度表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_dim` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `name` VARCHAR(64) NOT NULL COMMENT '维度名称',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '维度排序',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods` (`goods_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多维规格-维度表'");
+
+        // 商品规格值表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_value` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `dim_id` INT UNSIGNED NOT NULL COMMENT '所属维度ID',
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `name` VARCHAR(128) NOT NULL COMMENT '维度值',
+            `cover_image` VARCHAR(512) DEFAULT NULL COMMENT '维度值专属图片',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '排序',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_dim` (`dim_id`),
+            KEY `idx_goods` (`goods_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多维规格-维度值表'");
+
+        // 商品规格组合表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_combo` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `spec_id` INT UNSIGNED NOT NULL COMMENT 'SKU ID',
+            `combo_hash` VARCHAR(64) NOT NULL COMMENT '组合哈希值',
+            `combo_text` VARCHAR(512) NOT NULL COMMENT '组合文字描述',
+            `value_ids` TEXT NOT NULL COMMENT 'JSON数组，按维度顺序存储维度值ID',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '排序',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_goods_combo` (`goods_id`, `combo_hash`),
+            UNIQUE KEY `uk_spec` (`spec_id`),
+            KEY `idx_goods` (`goods_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='多维规格-SKU组合映射表'");
+
+        // 商品标签表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `name` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '标签名',
+            `slug` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'URL 别名',
+            `color` VARCHAR(16) NOT NULL DEFAULT '' COMMENT '颜色',
+            `sort` INT NOT NULL DEFAULT 0 COMMENT '排序',
+            `goods_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '商品数（冗余）',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_name` (`name`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品标签'");
+
+        // 商品标签关联表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag_relation` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL DEFAULT 0,
+            `tag_id` INT UNSIGNED NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_goods_tag` (`goods_id`, `tag_id`),
+            KEY `idx_tag_id` (`tag_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品-标签关联'");
+
+        // 商品会员等级价格表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_level` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `spec_id` INT UNSIGNED NOT NULL COMMENT '规格ID',
+            `level_id` INT UNSIGNED NOT NULL COMMENT '用户等级ID',
+            `price` BIGINT NOT NULL COMMENT '该等级在该规格的价格',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_spec_level` (`spec_id`, `level_id`),
+            KEY `idx_spec` (`spec_id`),
+            KEY `idx_level` (`level_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户等级价格表'");
+
+        // 商品指定用户价格表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_user` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `spec_id` INT UNSIGNED NOT NULL COMMENT '规格ID',
+            `user_id` INT UNSIGNED NOT NULL COMMENT '用户ID',
+            `price` BIGINT NOT NULL COMMENT '该用户在该规格的价格',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uk_spec_user` (`spec_id`, `user_id`),
+            KEY `idx_spec` (`spec_id`),
+            KEY `idx_user` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户专属价格表'");
+
+        // 虚拟商品卡密表（与线上一致）
+        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_virtual_card` (
+            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
+            `spec_id` INT UNSIGNED DEFAULT NULL COMMENT '所属规格ID（可选，关联 em_goods_spec.id）',
+            `card_no` TEXT NOT NULL COMMENT '卡号/卡密内容',
+            `card_pwd` TEXT COMMENT '卡密密码（可选，部分卡密格式需要）',
+            `price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购价格（可选，用于成本核算）',
+            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态：1=可用，0=已售出，2=已作废',
+            `order_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单ID',
+            `order_goods_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单商品记录ID',
+            `sold_at` DATETIME DEFAULT NULL COMMENT '售出时间',
+            `remark` VARCHAR(255) DEFAULT NULL COMMENT '备注（如批次号、采购渠道等）',
+            `sell_priority` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '销售优先级',
+            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_goods` (`goods_id`),
+            KEY `idx_goods_status` (`goods_id`, `status`),
+            KEY `idx_spec` (`spec_id`),
+            KEY `idx_status` (`status`),
+            KEY `idx_order` (`order_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='虚拟商品（卡密）库存表'");
+        // 商户等级表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -598,9 +1047,12 @@ final class InstallService
                 `price` BIGINT NOT NULL DEFAULT 0 COMMENT \'自助开通价 ×1000000；0=不允许自助开通\',
                 `self_goods_fee_rate` INT NOT NULL DEFAULT 0 COMMENT \'自建商品手续费率（万分位，500=5%%）\',
                 `withdraw_fee_rate` INT NOT NULL DEFAULT 0 COMMENT \'提现手续费率（万分位）\',
+                `sub_merchant_rebate_rate` INT NOT NULL DEFAULT 0 COMMENT \'作为上级时的子商户返佣比例（万分位）\',
+                `allow_url_dir` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'允许 /s/{slug}/ 访问\',
                 `allow_subdomain` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许二级域名\',
                 `allow_custom_domain` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许自定义顶级域名\',
                 `allow_self_goods` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许上架自建商品\',
+                `allow_sub_merchant` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'允许发展子商户\',
                 `sort` INT NOT NULL DEFAULT 100,
                 `is_enabled` TINYINT(1) NOT NULL DEFAULT 1,
                 `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -619,15 +1071,18 @@ final class InstallService
                 'price' => 0,
                 'self_goods_fee_rate' => 500,
                 'withdraw_fee_rate' => 0,
+                'sub_merchant_rebate_rate' => 0,
+                'allow_url_dir' => 1,
                 'allow_subdomain' => 0,
                 'allow_custom_domain' => 0,
                 'allow_self_goods' => 1,
+                'allow_sub_merchant' => 0,
                 'sort' => 100,
                 'is_enabled' => 1,
             ]);
         }
 
-        // 商户主表
+        // 商户主表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -638,18 +1093,23 @@ final class InstallService
                 `logo` VARCHAR(500) NOT NULL DEFAULT \'\',
                 `slogan` VARCHAR(255) NOT NULL DEFAULT \'\',
                 `description` TEXT,
+                `announcement` LONGTEXT COMMENT \'商户独立店铺公告（富文本 HTML）\',
+                `announcement_positions` VARCHAR(64) NOT NULL DEFAULT \'home\' COMMENT \'公告显示位置（逗号分隔：home/goods_list）\',
                 `icp` VARCHAR(100) NOT NULL DEFAULT \'\',
                 `subdomain` VARCHAR(64) DEFAULT NULL COMMENT \'二级域名前缀\',
                 `custom_domain` VARCHAR(200) DEFAULT NULL COMMENT \'自定义域名\',
                 `domain_verified` TINYINT(1) NOT NULL DEFAULT 0,
                 `theme` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'模板名（v1 不生效）\',
-                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%%）；无商品级覆盖时采用\',
                 `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=正常 0=禁用\',
                 `opened_at` DATETIME DEFAULT NULL,
                 `opened_via` VARCHAR(16) NOT NULL DEFAULT \'admin\' COMMENT \'admin=后台手动 self=自助\',
                 `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 `deleted_at` DATETIME DEFAULT NULL,
+                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%%）\',
+                `enabled_plugins` TEXT NOT NULL,
+                `active_template_pc` VARCHAR(64) NOT NULL DEFAULT \'\',
+                `active_template_mobile` VARCHAR(64) NOT NULL DEFAULT \'\',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk_user_id` (`user_id`),
                 UNIQUE KEY `uk_subdomain` (`subdomain`),
@@ -803,23 +1263,25 @@ final class InstallService
             $prefix . 'merchant_navi_hidden'
         ));
 
-        // 货币表
+        // 货币表（与线上一致）
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `code` VARCHAR(3) NOT NULL COMMENT \'ISO 4217 三字母代码\',
-                `name` VARCHAR(30) NOT NULL COMMENT \'货币中文名\',
+                `code` VARCHAR(3) NOT NULL COMMENT \'货币代码（3位大写字母，如 CNY）\',
+                `name` VARCHAR(30) NOT NULL COMMENT \'货币名称\',
                 `symbol` VARCHAR(10) NOT NULL DEFAULT \'\' COMMENT \'货币符号\',
-                `rate` BIGINT NOT NULL DEFAULT 0 COMMENT \'×1000000，含义：1 单位该货币 = rate/1000000 主货币\',
-                `is_primary` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=主货币（一旦设定不可再改）\',
-                `is_frontend_default` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=前台默认：访客首次访问且未选过币种时展示该币；全站唯一\',
-                `enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=启用\',
-                `sort_order` INT NOT NULL DEFAULT 0,
-                `created_at` INT UNSIGNED NOT NULL DEFAULT 0,
-                `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                `rate` BIGINT NOT NULL DEFAULT 0 COMMENT \'兑主货币汇率\',
+                `is_primary` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'是否为主货币（1=是，0=否）\',
+                `is_frontend_default` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'1=前台默认；全站唯一\',
+                `enabled` TINYINT(1) NOT NULL DEFAULT 1,
+                `sort_order` INT NOT NULL DEFAULT 0 COMMENT \'排序权重（越小越靠前）\',
+                `created_at` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'创建时间戳\',
+                `updated_at` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'更新时间戳\',
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_code` (`code`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'货币表（多币种：主货币 + 展示货币）\'',
+                UNIQUE KEY `uk_code` (`code`),
+                KEY `idx_is_primary` (`is_primary`),
+                KEY `idx_sort_order` (`sort_order`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'货币配置表\'',
             $prefix . 'currency'
         ));
         $hasCurrency = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'currency'));
@@ -860,466 +1322,5 @@ final class InstallService
             $prefix . 'user_address'
         ));
 
-        // 插件安装记录表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `name` VARCHAR(64) NOT NULL COMMENT \'插件目录名/标识\',
-                `scope` VARCHAR(64) NOT NULL DEFAULT \'main\' COMMENT \'作用域：main=主站 / merchant_{id}=商户独立安装\',
-                `title` VARCHAR(128) NOT NULL COMMENT \'插件显示名称\',
-                `version` VARCHAR(32) NOT NULL DEFAULT \'1.0.0\' COMMENT \'插件版本\',
-                `author` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'插件作者\',
-                `author_url` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'作者主页\',
-                `description` TEXT NOT NULL COMMENT \'插件描述\',
-                `category` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'插件分类（如：支付插件 / 商品插件 / 系统扩展）\',
-                `icon` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'插件图标\',
-                `preview` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'预览图\',
-                `main_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'主入口文件\',
-                `setting_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'设置页文件\',
-                `show_file` VARCHAR(128) NOT NULL DEFAULT \'\' COMMENT \'前台展示文件\',
-                `is_enabled` TINYINT(1) NOT NULL DEFAULT 0 COMMENT \'是否已启用\',
-                `installed_at` DATETIME DEFAULT NULL COMMENT \'安装时间\',
-                `updated_at` DATETIME DEFAULT NULL COMMENT \'更新时间\',
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_name_scope` (`name`, `scope`),
-                KEY `idx_scope_enabled` (`scope`, `is_enabled`),
-                KEY `idx_category` (`category`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件安装记录\'',
-            $prefix . 'plugin'
-        ));
-    }
-    private function setupCoreSupportTables(): void
-    {
-        $prefix = Database::prefix();
-
-        // 应用市场表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `remote_app_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'授权端应用ID\',
-                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码（插件名/模板名）\',
-                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
-                `title` VARCHAR(150) NOT NULL DEFAULT \'\' COMMENT \'应用标题\',
-                `version` VARCHAR(50) NOT NULL DEFAULT \'\' COMMENT \'版本号\',
-                `category` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'分类\',
-                `cover` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'封面图\',
-                `description` TEXT COMMENT \'应用描述\',
-                `cost_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'最近采购单价 ×1000000\',
-                `retail_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'分站售价 ×1000000\',
-                `total_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'累计采购配额\',
-                `consumed_quota` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'已售配额\',
-                `is_listed` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=上架 0=下架\',
-                `remote_payload` MEDIUMTEXT COMMENT \'授权端返回原始数据 JSON\',
-                `last_purchased_at` DATETIME DEFAULT NULL COMMENT \'最后采购时间\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_app_code_type` (`app_code`, `type`),
-                KEY `idx_type_listed` (`type`, `is_listed`),
-                KEY `idx_updated_at` (`updated_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店上架清单\'',
-            $prefix . 'app_market'
-        ));
-
-        // 应用市场流水表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `market_id` INT UNSIGNED NOT NULL COMMENT \'app_market.id\',
-                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
-                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
-                `purchase_qty` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT \'本次采购配额数量\',
-                `cost_per_unit` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次采购单价 ×1000000\',
-                `total_cost` BIGINT NOT NULL DEFAULT 0 COMMENT \'本次采购总价 ×1000000\',
-                `remote_order_no` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'授权端订单号\',
-                `remark` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_market_id` (`market_id`),
-                KEY `idx_app_code_type` (`app_code`, `type`),
-                KEY `idx_created_at` (`created_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用商店采购流水\'',
-            $prefix . 'app_market_log'
-        ));
-
-        // 应用购买记录表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `merchant_id` INT UNSIGNED NOT NULL COMMENT \'购买方商户ID\',
-                `user_id` BIGINT UNSIGNED NOT NULL COMMENT \'购买用户ID\',
-                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
-                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
-                `market_id` INT UNSIGNED DEFAULT NULL COMMENT \'来源 app_market.id\',
-                `paid_amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'实付金额 ×1000000\',
-                `balance_log_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户余额流水ID\',
-                `purchased_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'购买时间\',
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_merchant_app_type` (`merchant_id`, `app_code`, `type`),
-                KEY `idx_market_id` (`market_id`),
-                KEY `idx_user_id` (`user_id`),
-                KEY `idx_type` (`type`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户已购应用记录\'',
-            $prefix . 'app_purchase'
-        ));
-
-        // 应用订单表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `order_no` VARCHAR(32) NOT NULL COMMENT \'应用订单号\',
-                `merchant_id` INT UNSIGNED NOT NULL COMMENT \'商户ID\',
-                `user_id` BIGINT UNSIGNED NOT NULL COMMENT \'购买用户ID\',
-                `market_id` INT UNSIGNED NOT NULL COMMENT \'app_market.id\',
-                `app_code` VARCHAR(64) NOT NULL COMMENT \'应用编码\',
-                `type` VARCHAR(20) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template\',
-                `app_title` VARCHAR(150) NOT NULL DEFAULT \'\' COMMENT \'应用标题快照\',
-                `amount` BIGINT NOT NULL DEFAULT 0 COMMENT \'订单金额 ×1000000\',
-                `pay_method` VARCHAR(20) NOT NULL DEFAULT \'balance\' COMMENT \'支付方式\',
-                `status` VARCHAR(20) NOT NULL DEFAULT \'paid\' COMMENT \'订单状态\',
-                `balance_log_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'关联余额流水ID\',
-                `before_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款前余额 ×1000000\',
-                `after_balance` BIGINT NOT NULL DEFAULT 0 COMMENT \'扣款后余额 ×1000000\',
-                `note` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
-                `paid_at` DATETIME DEFAULT NULL COMMENT \'支付时间\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_order_no` (`order_no`),
-                KEY `idx_merchant_time` (`merchant_id`, `created_at`),
-                KEY `idx_user_time` (`user_id`, `created_at`),
-                KEY `idx_market_id` (`market_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'应用订单\'',
-            $prefix . 'app_order'
-        ));
-
-        // 附件表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'上传用户ID\',
-                `file_name` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'原始文件名\',
-                `file_path` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'相对路径\',
-                `file_url` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'访问URL\',
-                `file_size` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'文件大小（字节）\',
-                `file_ext` VARCHAR(32) NOT NULL DEFAULT \'\' COMMENT \'扩展名\',
-                `mime_type` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'MIME 类型\',
-                `md5` CHAR(32) DEFAULT NULL COMMENT \'文件MD5（用于去重）\',
-                `driver` VARCHAR(32) NOT NULL DEFAULT \'local\' COMMENT \'存储驱动\',
-                `context` VARCHAR(64) NOT NULL DEFAULT \'default\' COMMENT \'业务场景\',
-                `context_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'场景关联ID\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_user_context` (`user_id`, `context`),
-                KEY `idx_context` (`context`, `context_id`),
-                KEY `idx_md5` (`md5`),
-                KEY `idx_created_at` (`created_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'附件库\'',
-            $prefix . 'attachment'
-        ));
-
-        // 博客评论表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `blog_id` INT UNSIGNED NOT NULL COMMENT \'文章ID\',
-                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'评论用户ID\',
-                `parent_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'父评论ID，0=顶级评论\',
-                `reply_user_id` BIGINT UNSIGNED DEFAULT NULL COMMENT \'被回复用户ID\',
-                `content` TEXT NOT NULL COMMENT \'评论内容\',
-                `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'0=待审 1=通过 2=拒绝\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                `deleted_at` DATETIME DEFAULT NULL COMMENT \'软删除时间\',
-                PRIMARY KEY (`id`),
-                KEY `idx_blog_parent_status` (`blog_id`, `parent_id`, `status`),
-                KEY `idx_parent_status` (`parent_id`, `status`),
-                KEY `idx_user_id` (`user_id`),
-                KEY `idx_deleted_at` (`deleted_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'博客评论\'',
-            $prefix . 'blog_comment'
-        ));
-
-        // 博客标签关联表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `blog_id` INT UNSIGNED NOT NULL COMMENT \'文章ID\',
-                `tag_id` INT UNSIGNED NOT NULL COMMENT \'标签ID\',
-                PRIMARY KEY (`blog_id`, `tag_id`),
-                KEY `idx_tag_id` (`tag_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'博客文章-标签关联\'',
-            $prefix . 'blog_tag_relation'
-        ));
-
-        // 友情链接表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `name` VARCHAR(100) NOT NULL COMMENT \'链接名称\',
-                `url` VARCHAR(500) NOT NULL COMMENT \'链接地址\',
-                `image` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'Logo 图片\',
-                `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'y=启用 n=禁用\',
-                `expire_time` DATETIME DEFAULT NULL COMMENT \'过期时间\',
-                `description` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'描述\',
-                `sort` INT NOT NULL DEFAULT 0 COMMENT \'排序\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_enabled_expire` (`enabled`, `expire_time`),
-                KEY `idx_sort` (`sort`, `id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'友情链接\'',
-            $prefix . 'friend_link'
-        ));
-
-        // 迁移记录表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `filename` VARCHAR(255) NOT NULL COMMENT \'迁移文件名\',
-                `batch` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'迁移批次\',
-                `applied_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'执行时间\',
-                `checksum` CHAR(64) NOT NULL DEFAULT \'\' COMMENT \'文件校验\',
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_filename` (`filename`),
-                KEY `idx_batch` (`batch`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'数据库迁移追踪表\'',
-            $prefix . 'migrations'
-        ));
-
-        // 配置项表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `type` VARCHAR(32) NOT NULL DEFAULT \'plugin\' COMMENT \'plugin/template 等\',
-                `title` VARCHAR(120) NOT NULL DEFAULT \'\' COMMENT \'插件名/模板名\',
-                `merchant_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'作用域商户ID，0=主站\',
-                `name` VARCHAR(120) NOT NULL COMMENT \'配置键\',
-                `content` MEDIUMTEXT COMMENT \'配置值\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_scope_name` (`type`, `title`, `merchant_id`, `name`),
-                KEY `idx_type_title` (`type`, `title`),
-                KEY `idx_merchant` (`merchant_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件/模板配置存储\'',
-            $prefix . 'options'
-        ));
-
-        // 系统日志表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `level` VARCHAR(16) NOT NULL DEFAULT \'info\' COMMENT \'info/warning/error\',
-                `type` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'业务类型\',
-                `action` VARCHAR(100) NOT NULL DEFAULT \'\' COMMENT \'动作\',
-                `message` VARCHAR(500) NOT NULL DEFAULT \'\' COMMENT \'日志摘要\',
-                `detail` TEXT COMMENT \'详细信息（JSON）\',
-                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'操作用户ID\',
-                `username` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'操作用户名\',
-                `ip` VARCHAR(45) NOT NULL DEFAULT \'\' COMMENT \'请求IP\',
-                `user_agent` VARCHAR(512) NOT NULL DEFAULT \'\' COMMENT \'客户端UA\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                KEY `idx_level` (`level`),
-                KEY `idx_type` (`type`),
-                KEY `idx_user_id` (`user_id`),
-                KEY `idx_created_at` (`created_at`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'系统日志\'',
-            $prefix . 'system_log'
-        ));
-
-        // 用户等级表
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-                `name` VARCHAR(50) NOT NULL COMMENT \'等级名称\',
-                `level` INT UNSIGNED NOT NULL COMMENT \'等级数值\',
-                `discount` BIGINT NOT NULL DEFAULT 10000000 COMMENT \'折扣（展示值×1000000）\',
-                `self_open_price` BIGINT NOT NULL DEFAULT 0 COMMENT \'自助开通价（展示值×1000000）\',
-                `unlock_exp` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'解锁经验\',
-                `remark` VARCHAR(255) NOT NULL DEFAULT \'\' COMMENT \'备注\',
-                `enabled` CHAR(1) NOT NULL DEFAULT \'y\' COMMENT \'y=启用 n=禁用\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY (`id`),
-                UNIQUE KEY `uk_name` (`name`),
-                UNIQUE KEY `uk_level` (`level`),
-                KEY `idx_enabled` (`enabled`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户等级\'',
-            $prefix . 'user_levels'
-        ));
-    }
-    private function setupGoodsModule(): void
-    {
-        $prefix = Database::prefix();
-
-        // 商品主表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `owner_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0=主站，>0=商户自建（owner user_id）',
-            `category_id` BIGINT UNSIGNED NOT NULL DEFAULT 0,
-            `category_source` VARCHAR(16) NOT NULL DEFAULT 'main' COMMENT 'main/merchant',
-            `title` VARCHAR(255) NOT NULL DEFAULT '',
-            `code` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '商品唯一编码',
-            `intro` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '简介',
-            `cover_images` TEXT COMMENT 'JSON 数组',
-            `min_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最低价 ×1000000（缓存）',
-            `max_price` BIGINT NOT NULL DEFAULT 0 COMMENT '最高价 ×1000000（缓存）',
-            `total_stock` INT NOT NULL DEFAULT 0 COMMENT '总库存缓存',
-            `views_count` INT UNSIGNED NOT NULL DEFAULT 0,
-            `is_on_sale` TINYINT(1) NOT NULL DEFAULT 1,
-            `is_recommended` TINYINT(1) NOT NULL DEFAULT 0,
-            `is_top_category` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '分类置顶',
-            `api_enabled` TINYINT(1) DEFAULT NULL COMMENT 'NULL/1=允许API下单 0=禁止',
-            `jump_url` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '外链（可选）',
-            `goods_type` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '商品类型（插件注册）',
-            `plugin_data` MEDIUMTEXT COMMENT '插件数据 JSON',
-            `configs` MEDIUMTEXT COMMENT '配置 JSON',
-            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=正常 0=禁用',
-            `sort` INT NOT NULL DEFAULT 100,
-            `deleted_at` DATETIME DEFAULT NULL,
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_code` (`code`),
-            KEY `idx_owner_sale` (`owner_id`, `is_on_sale`, `deleted_at`),
-            KEY `idx_category` (`category_id`),
-            KEY `idx_goods_type` (`goods_type`),
-            KEY `idx_deleted` (`deleted_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品表'");
-
-        // 商品规格表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `goods_id` INT UNSIGNED NOT NULL,
-            `title` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '规格名（单规格可为空）',
-            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
-            `cost_price` BIGINT NOT NULL DEFAULT 0 COMMENT '成本价 ×1000000（可选）',
-            `market_price` BIGINT NOT NULL DEFAULT 0 COMMENT '划线价 ×1000000（可选）',
-            `stock` INT NOT NULL DEFAULT 0,
-            `sold_count` INT UNSIGNED NOT NULL DEFAULT 0,
-            `spec_no` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '规格编号',
-            `tags` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '标签（逗号分隔）',
-            `min_buy` INT UNSIGNED NOT NULL DEFAULT 1,
-            `max_buy` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '0=不限',
-            `is_default` TINYINT(1) NOT NULL DEFAULT 0,
-            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1=启用 0=禁用',
-            `sort` INT NOT NULL DEFAULT 0,
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            KEY `idx_goods` (`goods_id`, `status`),
-            KEY `idx_default` (`goods_id`, `is_default`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品规格'");
-
-        // 商品规格维度表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_dim` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `goods_id` INT UNSIGNED NOT NULL,
-            `name` VARCHAR(50) NOT NULL DEFAULT '',
-            `sort` INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (`id`),
-            KEY `idx_goods_sort` (`goods_id`, `sort`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格维度'");
-
-        // 商品规格值表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_value` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `dim_id` INT UNSIGNED NOT NULL,
-            `goods_id` INT UNSIGNED NOT NULL,
-            `name` VARCHAR(50) NOT NULL DEFAULT '',
-            `cover_image` VARCHAR(512) NOT NULL DEFAULT '',
-            `sort` INT NOT NULL DEFAULT 0,
-            PRIMARY KEY (`id`),
-            KEY `idx_dim_sort` (`dim_id`, `sort`),
-            KEY `idx_goods` (`goods_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格维度值'");
-
-        // 商品规格组合表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_spec_combo` (
-            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `goods_id` INT UNSIGNED NOT NULL,
-            `spec_id` INT UNSIGNED NOT NULL,
-            `combo_hash` CHAR(32) NOT NULL DEFAULT '' COMMENT 'value_ids 的 md5',
-            `combo_text` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '展示文本（如 红/64G）',
-            `value_ids` TEXT COMMENT 'JSON 数组（维度值 id 列表）',
-            `stock` INT NOT NULL DEFAULT 0 COMMENT '冗余库存（可选）',
-            `sort` INT NOT NULL DEFAULT 0,
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_goods_hash` (`goods_id`, `combo_hash`),
-            KEY `idx_goods_sort` (`goods_id`, `sort`),
-            KEY `idx_spec` (`spec_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='SKU 组合映射'");
-
-        // 商品标签表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `name` VARCHAR(50) NOT NULL DEFAULT '',
-            `color` VARCHAR(20) NOT NULL DEFAULT '',
-            `sort` INT NOT NULL DEFAULT 0,
-            `goods_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '冗余计数',
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_name` (`name`),
-            KEY `idx_sort` (`sort`, `id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品标签'");
-
-        // 商品标签关联表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_tag_relation` (
-            `goods_id` INT UNSIGNED NOT NULL,
-            `tag_id` INT UNSIGNED NOT NULL,
-            PRIMARY KEY (`goods_id`, `tag_id`),
-            KEY `idx_tag` (`tag_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='商品标签关联'");
-
-        // 商品会员等级价格表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_level` (
-            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `spec_id` INT UNSIGNED NOT NULL,
-            `level_id` INT UNSIGNED NOT NULL,
-            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_spec_level` (`spec_id`, `level_id`),
-            KEY `idx_level` (`level_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格会员等级价'");
-
-        // 商品指定用户价格表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_price_user` (
-            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `spec_id` INT UNSIGNED NOT NULL,
-            `user_id` BIGINT UNSIGNED NOT NULL,
-            `price` BIGINT NOT NULL DEFAULT 0 COMMENT '售价 ×1000000',
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uk_spec_user` (`spec_id`, `user_id`),
-            KEY `idx_user` (`user_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='规格指定用户价'");
-
-        // 虚拟商品卡密表
-        Database::statement("CREATE TABLE IF NOT EXISTS `{$prefix}goods_virtual_card` (
-            `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `goods_id` INT UNSIGNED NOT NULL COMMENT '所属商品ID',
-            `spec_id` INT UNSIGNED DEFAULT NULL COMMENT '所属规格ID（可选，关联 goods_spec.id）',
-            `card_no` TEXT NOT NULL COMMENT '卡号/卡密内容',
-            `card_pwd` TEXT DEFAULT NULL COMMENT '卡密密码（可选）',
-            `price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购价格（可选）',
-            `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态：1=可用，0=已售出，2=已作废',
-            `order_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单ID',
-            `order_goods_id` INT UNSIGNED DEFAULT NULL COMMENT '关联订单商品记录ID',
-            `sold_at` DATETIME DEFAULT NULL COMMENT '售出时间',
-            `remark` VARCHAR(255) DEFAULT NULL COMMENT '备注',
-            `sell_priority` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '销售优先级（值越大越优先）',
-            `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (`id`),
-            KEY `idx_goods` (`goods_id`),
-            KEY `idx_goods_status` (`goods_id`, `status`),
-            KEY `idx_spec` (`spec_id`),
-            KEY `idx_status` (`status`),
-            KEY `idx_order` (`order_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='虚拟商品（卡密）库存表'");
     }
 }
