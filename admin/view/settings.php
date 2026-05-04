@@ -512,50 +512,6 @@ function formRadio(string $name, array $options, string $selected = ''): string 
                                 <div class="layui-form-mid layui-word-aux">开启后注册需验证邮箱才能登录</div>
                             </div>
                         </div>
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">默认用户组</label>
-                            <div class="layui-input-block">
-                                <select class="layui-input" name="user_default_group">
-                                    <?php
-                                    $groups = [
-                                        'member'   => '普通会员',
-                                        'vip'      => 'VIP 会员',
-                                        'editor'   => '编辑',
-                                        'observer' => '观察者',
-                                    ];
-                                    $currentGroup = $cfg['user_default_group'] ?? 'member';
-                                    foreach ($groups as $val => $label) {
-                                        $sel = $currentGroup === $val ? ' selected' : '';
-                                        echo '<option value="' . $esc($val) . '"' . $sel . '>' . $esc($label) . '</option>';
-                                    }
-                                    ?>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="admin-settings__block">
-                        <div class="admin-settings__block-title"><i class="fa fa-id-card-o"></i>资料规范</div>
-
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">强制上传头像</label>
-                            <div class="layui-input-block">
-                                <?php echo formSwitch('user_avatar_required', $cfg['user_avatar_required'] ?? '0'); ?>
-                                <div class="layui-form-mid layui-word-aux">开启后用户必须上传头像</div>
-                            </div>
-                        </div>
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">强制填写昵称</label>
-                            <div class="layui-input-block">
-                                <?php echo formSwitch('user_nickname_required', $cfg['user_nickname_required'] ?? '1'); ?>
-                            </div>
-                        </div>
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">密码最小长度</label>
-                            <div class="layui-input-block">
-                                <?php echo formInput('user_min_password_length', $cfg['user_min_password_length'] ?? '6', '', 3); ?>
-                            </div>
-                        </div>
                     </div>
 
                     <div class="admin-settings__block">

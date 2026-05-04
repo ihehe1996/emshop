@@ -87,6 +87,7 @@ button, input, textarea, select { font-family: inherit; font-size: inherit; }
     padding: 14px 18px;
     background: #fff;
     word-break: break-word;
+    line-height: 200%;
 }
 /* 仅保留：避免富文本首末元素的 margin 撑破容器内边距 —— 这属于容器布局，不是内容样式 */
 .site-announcement__body > *:first-child { margin-top: 0; }

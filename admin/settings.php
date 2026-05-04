@@ -144,9 +144,7 @@ if (Request::isPost()) {
             // 用户设置
             case 'user':
                 $fields = [
-                    'user_register', 'user_verify_email', 'user_default_group',
-                    'user_avatar_required', 'user_nickname_required',
-                    'user_min_password_length', 'user_avatar_max_size',
+                    'user_register', 'user_verify_email',
                     'user_credit_name', 'user_credit_initial',
                 ];
                 foreach ($fields as $field) {

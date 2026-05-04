@@ -24,6 +24,52 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'系统配置表\'',
             $prefix . 'config'
         ));
+        $siteConfigSql = sprintf('INSERT INTO `%s` (`config_name`, `config_value`, `description`) VALUES (:config_name, :config_value, :description) ON DUPLICATE KEY UPDATE `config_value` = VALUES(`config_value`), `description` = VALUES(`description`)', $prefix . 'config');
+        $defaultConfigs = [
+            ['config_name' => 'sitename', 'config_value' => 'EMSHOP', 'description' => '站点名称'],
+            ['config_name' => 'site_enabled', 'config_value' => '1', 'description' => '站点开启'],
+            ['config_name' => 'site_logo_type', 'config_value' => 'text', 'description' => 'Logo 显示方式'],
+            ['config_name' => 'homepage_mode', 'config_value' => 'mall', 'description' => '首页入口'],
+            ['config_name' => 'site_timezone', 'config_value' => 'Asia/Shanghai', 'description' => '服务器时区'],
+            ['config_name' => 'swoole_api_url', 'config_value' => 'http://127.0.0.1:9601', 'description' => 'Swoole API 地址'],
+            ['config_name' => 'url_format', 'config_value' => 'default', 'description' => '链接格式'],
+            ['config_name' => 'user_register', 'config_value' => '1', 'description' => '开放注册'],
+            ['config_name' => 'shop_balance_enabled', 'config_value' => '1', 'description' => '余额购买'],
+            ['config_name' => 'shop_guest_balance_enabled', 'config_value' => '1', 'description' => '游客余额购买'],
+            ['config_name' => 'shop_min_recharge', 'config_value' => '10000000', 'description' => '单次最低充值'],
+            ['config_name' => 'shop_max_recharge', 'config_value' => '500000000', 'description' => '单次最高充值'],
+            ['config_name' => 'shop_withdraw_min', 'config_value' => '10000000', 'description' => '最低提现额'],
+            ['config_name' => 'shop_withdraw_max', 'config_value' => '2000000000', 'description' => '最高提现额'],
+            ['config_name' => 'shop_order_expire_minutes', 'config_value' => '10', 'description' => '订单超时时间（分钟）'],
+            ['config_name' => 'shop_enable_coupon', 'config_value' => '1', 'description' => '启用优惠券'],
+            ['config_name' => 'shop_announcement', 'config_value' => '<p><span style="color: rgb(207, 19, 34);">这里是系统自带的默认公告。如需修改，请前往后台管理面板 - 基础设置 - 商城设置页面处更改</span></p><p><span style="color: rgb(56, 158, 13);">注意本系统遵循</span><span style="color: rgb(56, 158, 13); background-color: rgb(255, 255, 255); font-size: 13px;">GPLv3开源协议发布，使用者造成的一切法律后果与作者无关</span></p>', 'description' => '商城公告内容'],
+            ['config_name' => 'shop_announcement_positions', 'config_value' => 'home,goods_list', 'description' => '商城公告显示位置'],
+            ['config_name' => 'guest_find_contact_enabled', 'config_value' => '0', 'description' => '联系方式查单开关'],
+            ['config_name' => 'guest_find_contact_type', 'config_value' => 'any', 'description' => '联系方式查单类型'],
+            ['config_name' => 'guest_find_contact_checkout_placeholder', 'config_value' => '请输入您的联系方式', 'description' => '联系方式下单页占位提示'],
+            ['config_name' => 'guest_find_contact_lookup_placeholder', 'config_value' => '请输入您下单时填写的联系方式', 'description' => '联系方式查单页占位提示'],
+            ['config_name' => 'guest_find_password_enabled', 'config_value' => '1', 'description' => '订单密码查单开关'],
+            ['config_name' => 'guest_find_password_checkout_placeholder', 'config_value' => '请设置您的订单密码', 'description' => '订单密码下单页占位提示'],
+            ['config_name' => 'guest_find_password_lookup_placeholder', 'config_value' => '请输入您的订单密码', 'description' => '订单密码查单页占位提示'],
+            ['config_name' => 'shop_enable_rebate', 'config_value' => '0', 'description' => '推广返佣总开关'],
+            ['config_name' => 'rebate_level1_rate', 'config_value' => '1000', 'description' => '一级佣金比例（万分位）'],
+            ['config_name' => 'rebate_level2_rate', 'config_value' => '300', 'description' => '二级佣金比例（万分位）'],
+            ['config_name' => 'rebate_calculate_mode', 'config_value' => 'amount', 'description' => '推广返佣计算方式'],
+            ['config_name' => 'rebate_freeze_days', 'config_value' => '3', 'description' => '推广返佣冷却天数'],
+            ['config_name' => 'blog_article_per_page', 'config_value' => '10', 'description' => '博客每页文章数'],
+            ['config_name' => 'blog_comment_need_verify', 'config_value' => '1', 'description' => '博客评论需审核'],
+            ['config_name' => 'blog_show_author', 'config_value' => '1', 'description' => '博客显示作者'],
+            ['config_name' => 'blog_show_views', 'config_value' => '1', 'description' => '博客显示阅读量'],
+            ['config_name' => 'blog_rss_enabled', 'config_value' => '0', 'description' => '博客 RSS 开关'],
+            ['config_name' => 'mail_port', 'config_value' => '465', 'description' => '邮箱端口'],
+            ['config_name' => 'substation_enabled', 'config_value' => '1', 'description' => '启用商户'],
+            ['config_name' => 'merchant_enable_self_open', 'config_value' => '1', 'description' => '允许自动开通商户'],
+            ['config_name' => 'merchant_default_theme', 'config_value' => 'default', 'description' => '分站默认模板'],
+            ['config_name' => 'active_template_pc', 'config_value' => 'default', 'description' => '主站 PC 启用模板'],
+            ['config_name' => 'active_template_mobile', 'config_value' => 'default', 'description' => '主站手机启用模板'],
+            ['config_name' => 'enabled_plugins', 'config_value' => 'tips,virtual_card', 'description' => '主站默认启用插件'],
+        ];
+        foreach ($defaultConfigs as $configRow) Database::execute($siteConfigSql, $configRow);
 
         // 用户表
         Database::statement(sprintf(
@@ -59,6 +105,35 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'用户表\'',
             $prefix . 'user'
         ));
+        $admin = isset($options['admin']) && is_array($options['admin']) ? $options['admin'] : [];
+        $adminUsername = trim((string) ($admin['username'] ?? ''));
+        $adminEmail = trim((string) ($admin['email'] ?? ''));
+        $adminPassword = (string) ($admin['password'] ?? '');
+        if ($adminUsername === '' || $adminEmail === '' || $adminPassword === '') throw new InvalidArgumentException('管理员账号信息不完整');
+        $hasher = new PasswordHash(8, true);
+        $hash = $hasher->HashPassword($adminPassword);
+        $sql = sprintf(
+            'INSERT INTO `%s` (`username`, `email`, `password`, `nickname`, `avatar`, `role`, `status`)
+             VALUES (:username, :email, :password, :nickname, :avatar, :role, :status)
+             ON DUPLICATE KEY UPDATE
+                `email` = VALUES(`email`),
+                `password` = VALUES(`password`),
+                `nickname` = VALUES(`nickname`),
+                `avatar` = VALUES(`avatar`),
+                `role` = VALUES(`role`),
+                `status` = VALUES(`status`),
+                `updated_at` = CURRENT_TIMESTAMP',
+            $prefix . 'user'
+        );
+        Database::execute($sql, [
+            'username' => $adminUsername,
+            'email' => $adminEmail,
+            'password' => $hash,
+            'nickname' => '管理员',
+            'avatar' => '',
+            'role' => 'admin',
+            'status' => 1,
+        ]);
 
         // 优惠券定义表
         Database::statement(sprintf(
@@ -350,6 +425,10 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'语言表\'',
             $prefix . 'language'
         ));
+        Database::execute(sprintf(
+            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'y\', \'y\')',
+            $prefix . 'language'
+        ), []);
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -396,6 +475,7 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商品分类表\'',
             $prefix . 'goods_category'
         ));
+        Database::insert('goods_category', ['parent_id' => 0, 'name' => '演示分类', 'slug' => 'demo-category', 'description' => '默认演示商品分类', 'sort' => 100, 'status' => 1]);
         Database::statement(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
@@ -445,6 +525,20 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'导航表\'',
             $prefix . 'navi'
         ));
+        $defaultNavi = [
+            ['name' => '首页', 'type' => 'system', 'link' => '?',             'sort' => 1, 'is_system' => 1],
+            ['name' => '商城', 'type' => 'system', 'link' => '?c=goods_list', 'sort' => 2, 'is_system' => 1],
+            ['name' => '博客', 'type' => 'system', 'link' => '?c=blog_list',  'sort' => 3, 'is_system' => 1],
+        ];
+        foreach ($defaultNavi as $row) {
+            $exists = Database::fetchOne(
+                'SELECT `id` FROM `' . $prefix . 'navi' . '` WHERE `name` = ? AND `is_system` = 1 LIMIT 1',
+                [$row['name']]
+            );
+            if ($exists === null) {
+                Database::insert('navi', $row);
+            }
+        }
 
         // 文章表
         Database::statement(sprintf(
@@ -494,20 +588,6 @@ final class InstallService
             $prefix . 'blog_tag'
         ));
         $this->setupCoreSupportTables();
-        $defaultNavi = [
-            ['name' => '首页', 'type' => 'system', 'link' => '?',             'sort' => 1, 'is_system' => 1],
-            ['name' => '商城', 'type' => 'system', 'link' => '?c=goods_list', 'sort' => 2, 'is_system' => 1],
-            ['name' => '博客', 'type' => 'system', 'link' => '?c=blog_list',  'sort' => 3, 'is_system' => 1],
-        ];
-        foreach ($defaultNavi as $row) {
-            $exists = Database::fetchOne(
-                'SELECT `id` FROM `' . $prefix . 'navi' . '` WHERE `name` = ? AND `is_system` = 1 LIMIT 1',
-                [$row['name']]
-            );
-            if ($exists === null) {
-                Database::insert('navi', $row);
-            }
-        }
         $this->setupGoodsModule();
 
         // 商户等级表
@@ -532,6 +612,20 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'商户等级\'',
             $prefix . 'merchant_level'
         ));
+        $hasLevel = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'merchant_level'));
+        if ($hasLevel === null) {
+            Database::insert('merchant_level', [
+                'name' => '普通商户',
+                'price' => 0,
+                'self_goods_fee_rate' => 500,
+                'withdraw_fee_rate' => 0,
+                'allow_subdomain' => 0,
+                'allow_custom_domain' => 0,
+                'allow_self_goods' => 1,
+                'sort' => 100,
+                'is_enabled' => 1,
+            ]);
+        }
 
         // 商户主表
         Database::statement(sprintf(
@@ -728,6 +822,22 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'货币表（多币种：主货币 + 展示货币）\'',
             $prefix . 'currency'
         ));
+        $hasCurrency = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'currency'));
+        if ($hasCurrency === null) {
+            $now = time();
+            Database::insert('currency', [
+                'code' => 'CNY',
+                'name' => '人民币',
+                'symbol' => '¥',
+                'rate' => 1000000,
+                'is_primary' => 1,
+                'is_frontend_default' => 1,
+                'enabled' => 1,
+                'sort_order' => 0,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
 
         // 用户地址表
         Database::statement(sprintf(
@@ -777,84 +887,6 @@ final class InstallService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'插件安装记录\'',
             $prefix . 'plugin'
         ));
-        $hasLevel = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'merchant_level'));
-        if ($hasLevel === null) {
-            Database::insert('merchant_level', [
-                'name' => '普通商户',
-                'price' => 0,
-                'self_goods_fee_rate' => 500,
-                'withdraw_fee_rate' => 0,
-                'allow_subdomain' => 0,
-                'allow_custom_domain' => 0,
-                'allow_self_goods' => 1,
-                'sort' => 100,
-                'is_enabled' => 1,
-            ]);
-        }
-        $hasCurrency = Database::fetchOne(sprintf('SELECT `id` FROM `%s` LIMIT 1', $prefix . 'currency'));
-        if ($hasCurrency === null) {
-            $now = time();
-            Database::insert('currency', [
-                'code' => 'CNY',
-                'name' => '人民币',
-                'symbol' => '¥',
-                'rate' => 1000000,
-                'is_primary' => 1,
-                'is_frontend_default' => 1,
-                'enabled' => 1,
-                'sort_order' => 0,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-        }
-        Database::execute(sprintf(
-            'INSERT IGNORE INTO `%s` (`id`, `name`, `code`, `is_default`, `enabled`) VALUES (1, \'简体中文\', \'zh-cn\', \'y\', \'y\')',
-            $prefix . 'language'
-        ), []);
-        $siteConfigSql = sprintf(
-            'INSERT INTO `%s` (`config_name`, `config_value`, `description`)
-             VALUES (:config_name, :config_value, :description)
-             ON DUPLICATE KEY UPDATE
-                `config_value` = VALUES(`config_value`),
-                `description` = VALUES(`description`)',
-            $prefix . 'config'
-        );
-        Database::execute($siteConfigSql, [
-            'config_name' => 'sitename',
-            'config_value' => 'EMSHOP',
-            'description' => '站点名称',
-        ]);
-        $admin = isset($options['admin']) && is_array($options['admin']) ? $options['admin'] : [];
-        $adminUsername = isset($admin['username']) ? trim((string) $admin['username']) : 'admin';
-        $adminEmail = isset($admin['email']) ? trim((string) $admin['email']) : 'admin@example.com';
-        $adminPassword = isset($admin['password']) ? (string) $admin['password'] : '123456';
-        if ($adminUsername === '') $adminUsername = 'admin';
-        if ($adminEmail === '') $adminEmail = 'admin@example.com';
-        if ($adminPassword === '') $adminPassword = '123456';
-        $hasher = new PasswordHash(8, true);
-        $hash = $hasher->HashPassword($adminPassword);
-        $sql = sprintf(
-            'INSERT INTO `%s` (`username`, `email`, `password`, `nickname`, `avatar`, `role`, `status`)
-             VALUES (:username, :email, :password, :nickname, :avatar, :role, :status)
-             ON DUPLICATE KEY UPDATE
-                `email` = VALUES(`email`),
-                `password` = VALUES(`password`),
-                `nickname` = VALUES(`nickname`),
-                `avatar` = VALUES(`avatar`),
-                `role` = VALUES(`role`),
-                `status` = VALUES(`status`),
-                `updated_at` = CURRENT_TIMESTAMP',
-            $prefix . 'user'
-        );
-        Database::execute($sql, [
-            'username' => $adminUsername,
-            'email' => $adminEmail,
-            'password' => $hash,
-            'nickname' => '管理员',
-            'avatar' => '',
-            'role' => 'admin',
-            'status' => 1,
-        ]);
     }
     private function setupCoreSupportTables(): void
     {
