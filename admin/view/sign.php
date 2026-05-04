@@ -41,13 +41,6 @@ if (!defined('EM_ROOT')) {
                 </div>
                 <div class="sign-options">
                     <input type="checkbox" name="remember" value="1" title="记住登录" lay-skin="primary">
-                    <?php
-                    // 安全要点：只从 URL 的 ?s= 读，不从 Config::get('admin_entry_key') 读，
-                    // 避免未通过入口守卫的场景也能从 HTML 里拿到 key
-                    $urlS = (string) Input::get('s', '');
-                    $forgetUrl = '/admin/forget.php' . ($urlS !== '' ? '?s=' . urlencode($urlS) : '');
-                    ?>
-                    <a href="<?php echo htmlspecialchars($forgetUrl, ENT_QUOTES, 'UTF-8'); ?>" class="sign-link">忘记密码</a>
                 </div>
                 <button type="submit" class="layui-btn layui-btn-fluid sign-submit">立即登录</button>
             </form>

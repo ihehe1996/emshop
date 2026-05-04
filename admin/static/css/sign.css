@@ -106,46 +106,6 @@ body {
     font-size: 14px;
 }
 
-/* 验证码输入框 + 发送按钮组合：输入框占剩余空间，按钮贴在右侧 */
-.sign-code-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.sign-code-row .layui-input {
-    flex: 1;
-    min-width: 0;
-}
-
-.sign-code-btn {
-    flex: 0 0 auto;
-    height: 48px;
-    padding: 0 18px;
-    border: 1px solid #c7d2fe;
-    background: #eef2ff;
-    color: #4338ca;
-    font-size: 14px;
-    font-weight: 600;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-    white-space: nowrap;
-}
-
-.sign-code-btn:hover:not(.is-disabled):not(:disabled) {
-    background: #e0e7ff;
-    border-color: #a5b4fc;
-}
-
-.sign-code-btn.is-disabled,
-.sign-code-btn:disabled {
-    background: #f3f4f6;
-    color: #9ca3af;
-    border-color: #e5e7eb;
-    cursor: not-allowed;
-}
-
 .sign-link {
     color: #4f46e5;
 }

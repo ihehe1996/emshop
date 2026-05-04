@@ -48,7 +48,7 @@ function adminSignUrl(): string
 }
 
 /**
- * 安全入口守卫：用于 sign.php / forget.php 等未登录也能访问的后台入口页。
+ * 安全入口守卫：用于 sign.php 等未登录也能访问的后台入口页。
  *
  * 行为：
  *   - 未配置 admin_entry_key 时：放行

@@ -43,27 +43,6 @@ final class UserModel
     }
 
     /**
-     * 按邮箱查找启用状态的管理员。
-     * 忘记密码流程专用：只能通过邮箱找回，不允许用账号/手机号，
-     * 避免把验证码发给别人的邮箱（管理员的 email 字段是重置凭证）。
-     *
-     * @return array<string, mixed>|null
-     */
-    public function findAdminByEmail(string $email): ?array
-    {
-        $sql = sprintf(
-            'SELECT * FROM `%s` WHERE `status` = :status AND `role` = :role AND `email` = :email LIMIT 1',
-            $this->table
-        );
-
-        return Database::fetchOne($sql, [
-            'status' => 1,
-            'role' => 'admin',
-            'email' => $email,
-        ]);
-    }
-
-    /**
      * 通过记住登录 token 查找管理员。
      *
      * @return array<string, mixed>|null
