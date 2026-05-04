@@ -247,8 +247,8 @@ function epay_build_trade_params(array $conf, array $order): array
         'pid'          => $conf['pid'],
         'type'         => $conf['type'],
         'out_trade_no' => $orderNo,
-        'notify_url'   => $site . '/submit.php',
-        'return_url'   => $site . '/return.php',
+        'notify_url'   => $site . '/notify',
+        'return_url'   => $site . '/return',
         'name'         => epay_build_subject($orderNo),
         'money'        => $money,
         'sitename'     => Config::get('sitename', 'EMSHOP'),
@@ -561,5 +561,5 @@ addAction('payment_return_epay', function (array $data): void {
         Response::redirect('/user/wallet.php');
     }
 
-    Response::redirect(payment_return_redirect_url($orderNo));
+    Response::redirect(PaymentCallbackController::buildReturnRedirectUrl($orderNo));
 });

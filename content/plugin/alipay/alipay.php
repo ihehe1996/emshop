@@ -279,13 +279,13 @@ function alipay_build_request_params(array $cfg, string $method, array $bizConte
         'timestamp'   => date('Y-m-d H:i:s'),
         'version'     => '1.0',
         // 官方支付宝在部分场景会忽略 query 参数，回调 URL 使用纯路径更稳妥。
-        // 插件识别由 submit.php 按 out_trade_no 反查 payment_plugin 完成。
-        'notify_url'  => $site . '/submit.php',
+        // 插件识别由 /notify 按 out_trade_no 反查 payment_plugin 完成。
+        'notify_url'  => $site . '/notify',
         'biz_content' => json_encode($bizContent, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ];
 
     if ($withReturnUrl) {
-        $params['return_url'] = $site . '/return.php';
+        $params['return_url'] = $site . '/return';
     }
 
     $sign = alipay_sign($params, $cfg['app_private_key']);
@@ -570,7 +570,7 @@ addFilter('payment_create', function (array $ctx): array {
     throw new RuntimeException('支付宝创建支付失败，请检查配置后重试');
 });
 
-// 异步回调：/submit.php（核心按 out_trade_no 自动识别 alipay）
+// 异步回调：/notify（核心按 out_trade_no 自动识别 alipay）
 addAction('payment_notify_alipay', function (array $data): void {
     $cfg = alipay_get_config();
     if (!alipay_has_basic_config($cfg)) {
@@ -690,12 +690,12 @@ addAction('payment_notify_alipay', function (array $data): void {
     exit;
 });
 
-// 同步回跳：/return.php（核心按 out_trade_no 自动识别 alipay）
+// 同步回跳：/return（核心按 out_trade_no 自动识别 alipay）
 addAction('payment_return_alipay', function (array $data): void {
     $orderNo = (string) ($data['out_trade_no'] ?? '');
     if ($orderNo !== '' && strncmp($orderNo, 'R', 1) === 0) {
         Response::redirect('/user/wallet.php');
     }
 
-    Response::redirect(payment_return_redirect_url($orderNo));
+    Response::redirect(PaymentCallbackController::buildReturnRedirectUrl($orderNo));
 });

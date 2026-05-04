@@ -102,7 +102,7 @@ class PaymentService
     }
 
     /**
-     * 主站 scope 下分发支付异步通知（submit.php 用）。
+     * 主站 scope 下分发支付异步通知（/notify 用）。
      *
      * 插件回调走的是访问发起方的同域（商户站发起 → 回调打商户子域），但插件内部的存储 / 凭证
      * 都在主站 scope，必须切 scope 才能让 sig 校验、订单更新等逻辑读到正确凭证。
@@ -118,7 +118,7 @@ class PaymentService
     }
 
     /**
-     * 主站 scope 下分发支付同步跳回（return.php 用）。同 dispatchNotify。
+     * 主站 scope 下分发支付同步跳回（/return 用）。同 dispatchNotify。
      *
      * @param array<string, mixed> $data 合并 GET+POST 后的回调入参
      */

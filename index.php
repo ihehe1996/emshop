@@ -19,6 +19,17 @@
 // 加载系统初始化文件（必须先加载，以获取 Config 等基础类）
 require_once __DIR__ . '/init.php';
 
+// 支付回调直连入口：由 /notify 和 /return 命中，不走前台 Dispatcher/模板渲染。
+$requestPath = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+if ($requestPath === '/notify') {
+    PaymentCallbackController::handleNotify();
+    exit;
+}
+if ($requestPath === '/return') {
+    PaymentCallbackController::handleReturn();
+    exit;
+}
+
 // 设置首页入口模式：优先读后台配置 homepage_mode，无配置时默认 mall
 define('HOMEPAGE_MODE', Config::get('homepage_mode', 'mall'));
 
