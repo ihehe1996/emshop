@@ -54,7 +54,7 @@ layui.use(['layer', 'form'], function () {
         var $icon = $btn.find('i');
         var to = $.trim($('#smtpTestTo').val() || '');
         if (to === '') {
-            // layui.msg 不设置 icon
+            // layer.msg 不设置 icon
             layer.msg('请填写接收邮箱');
             $('#smtpTestTo').focus();
             return;

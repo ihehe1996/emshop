@@ -457,15 +457,15 @@ var GoodsDetail = (function () {
                 return;
             }
             var code = ($('#detailCouponInput').val() || '').trim();
-            if (!code) { layui.msg('请输入优惠券码'); return; }
+            if (!code) { layer.msg('请输入优惠券码'); return; }
             applyDetailCoupon(code);
         });
 
         $(document).on('click.goodsDetail', '#detailCouponChooseBtn', function () {
             $.get('?c=coupon&a=mine', function (res) {
-                if (res.code !== 200) { layui.msg(res.msg || '获取失败'); return; }
+                if (res.code !== 200) { layer.msg(res.msg || '获取失败'); return; }
                 var list = (res.data && res.data.coupons) || [];
-                if (!list.length) { layui.msg('您暂无可用优惠券'); return; }
+                if (!list.length) { layer.msg('您暂无可用优惠券'); return; }
                 var html = '<div class="detail-coupon-picker">';
                 // 券面额 / 门槛按访客币种展示（主货币值 × rate）
                 var _cur = (window.EMSHOP_CURRENCY || { symbol: '¥', rate: 1 });
@@ -505,9 +505,9 @@ var GoodsDetail = (function () {
 
         // applyDetailCoupon 赋值给模块顶层符号，renderCurrentPrice 里 revalidateCouponIfNeeded 能调到
         applyDetailCoupon = function (code) {
-            if (!currentSpec && specs.length > 1) { layui.msg('请先选择规格再应用券'); return; }
+            if (!currentSpec && specs.length > 1) { layer.msg('请先选择规格再应用券'); return; }
             var sp = currentSpec || specs[0];
-            if (!sp) { layui.msg('商品无规格'); return; }
+            if (!sp) { layer.msg('商品无规格'); return; }
             var qty = parseInt($('#qtyInput').val()) || 1;
             // 服务端 coupon check 用当前商品总额做门槛校验（单价 × 数量；满减由服务端/下单时独立处理）
             var goodsAmount = (sp.price * qty).toFixed(2);
@@ -528,9 +528,9 @@ var GoodsDetail = (function () {
                         $('#detailCouponApplyBtn').text('使用')
                             .removeClass('detail-coupon-btn--ghost').addClass('detail-coupon-btn--primary');
                         $('#detailCouponApplied').hide();
-                        layui.msg(res.msg || '当前金额不满足券使用门槛，已取消使用');
+                        layer.msg(res.msg || '当前金额不满足券使用门槛，已取消使用');
                     } else {
-                        layui.msg(res.msg || '优惠券不可用');
+                        layer.msg(res.msg || '优惠券不可用');
                     }
                     return;
                 }
@@ -545,8 +545,8 @@ var GoodsDetail = (function () {
                     .find('.detail-coupon-applied-name').text(res.data.coupon.title).end()
                     .find('.detail-coupon-applied-saved').text('已优惠 ' + _cur.symbol + (d * _cur.rate).toFixed(2)).end()
                     .show();
-                if (!isRevalidate) layui.msg('优惠券已应用');
-            }, 'json').fail(function () { layui.msg('网络异常'); });
+                if (!isRevalidate) layer.msg('优惠券已应用');
+            }, 'json').fail(function () { layer.msg('网络异常'); });
         };
 
         // 立即购买 —— 前端只收集数据不校验，后端统一返回错误信息
@@ -586,7 +586,7 @@ var GoodsDetail = (function () {
                     var orderDetailUrl = '/user/order_detail.php?order_no=' + encodeURIComponent(res.data.order_no || '');
                     var guestFindUrl = '/user/find_order.php';
                     if (res.data.paid) {
-                        layui.msg('支付成功');
+                        layer.msg('支付成功');
                         location.href = opts.isGuest ? guestFindUrl : orderDetailUrl;
                     } else if (res.data.pay_url) {
                         location.href = res.data.pay_url;
@@ -594,11 +594,11 @@ var GoodsDetail = (function () {
                         location.href = opts.isGuest ? guestFindUrl : orderDetailUrl;
                     }
                 } else {
-                    layui.msg(res.msg || '下单失败');
+                    layer.msg(res.msg || '下单失败');
                 }
             }, 'json').fail(function () {
                 $btn.removeClass('is-loading').prop('disabled', false).html(origHtml);
-                layui.msg('网络异常');
+                layer.msg('网络异常');
             });
         }
 
@@ -698,7 +698,7 @@ var GoodsDetail = (function () {
                     var postData = $.extend({}, basePostData);
                     if (!isGuest) {
                         var $picked = layero.find('input[name="addr_pick"]:checked');
-                        if (!$picked.length) { layui.msg('请选择收货地址'); return; }
+                        if (!$picked.length) { layer.msg('请选择收货地址'); return; }
                         postData.address_id = parseInt($picked.val());
                         // 缓存选中项，后端报错再弹层时保持之前的选择
                         lastPickedAddressId = postData.address_id;
@@ -712,9 +712,9 @@ var GoodsDetail = (function () {
                             detail:    (layero.find('#detailAddrDetail').val()    || '').trim()
                         };
                         if (!g.recipient || !g.mobile || !g.province || !g.city || !g.district || !g.detail) {
-                            layui.msg('请填写完整的收货地址'); return;
+                            layer.msg('请填写完整的收货地址'); return;
                         }
-                        if (!/^1\d{10}$/.test(g.mobile)) { layui.msg('请输入正确的手机号'); return; }
+                        if (!/^1\d{10}$/.test(g.mobile)) { layer.msg('请输入正确的手机号'); return; }
                         postData['guest_address[recipient]'] = g.recipient;
                         postData['guest_address[mobile]']    = g.mobile;
                         postData['guest_address[province]']  = g.province;

@@ -55,7 +55,7 @@ var GuestFind = (function () {
     function renderResults(orders, options) {
         options = options || {};
         if (!orders || orders.length === 0) {
-            layui.msg('未找到订单');
+            layer.msg('未找到订单');
             return;
         }
 
@@ -147,12 +147,12 @@ var GuestFind = (function () {
             } else {
                 // onError：让页面有机会在错误时刷新 captcha 等 UI 状态
                 if (opts.onError) opts.onError(res, mode);
-                layui.msg(res.msg || '查询失败');
+                layer.msg(res.msg || '查询失败');
             }
         }, 'json').fail(function () {
             $btn.prop('disabled', false).html(origHtml);
             if (opts.onError) opts.onError({code: 0, msg: '网络错误'}, mode);
-            layui.msg('网络错误');
+            layer.msg('网络错误');
         });
     }
 

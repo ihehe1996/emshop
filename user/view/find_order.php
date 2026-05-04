@@ -174,7 +174,7 @@ $showOrderNoTab = ($contactOn || $passwordOn);
             if (mode === 'credentials' || mode === 'orderno') {
                 var captcha = readCaptcha();
                 if (!captcha) {
-                    layui.msg('请填写验证码');
+                    layer.msg('请填写验证码');
                     return false;
                 }
                 data.captcha = captcha;

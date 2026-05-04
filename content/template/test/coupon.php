@@ -92,7 +92,7 @@ $typeLabel = [
             var txt = String(code);
             if (navigator.clipboard && navigator.clipboard.writeText) {
                 navigator.clipboard.writeText(txt).then(
-                    function () { layui.msg('已复制：' + txt); },
+                    function () { layer.msg('已复制：' + txt); },
                     function () { fallbackCopy(txt); }
                 );
             } else {
@@ -101,13 +101,13 @@ $typeLabel = [
         });
         function fallbackCopy(txt) {
             var $i = $('<input style="position:fixed;top:-100px;">').val(txt).appendTo('body').select();
-            try { document.execCommand('copy'); layui.msg('已复制：' + txt); }
-            catch (e) { layui.msg('复制失败，请手动选择'); }
+            try { document.execCommand('copy'); layer.msg('已复制：' + txt); }
+            catch (e) { layer.msg('复制失败，请手动选择'); }
             $i.remove();
         }
 
         $(document).on('click.emCoupon', '.js-coupon-tip', function () {
-            layui.msg('登录后可领取');
+            layer.msg('登录后可领取');
         });
 
         // 登录用户领取
@@ -118,15 +118,15 @@ $typeLabel = [
             $btn.prop('disabled', true).text('领取中...');
             $.post('?c=coupon&a=receive', { coupon_id: couponId }, function (res) {
                 if (res.code === 200) {
-                    layui.msg('领取成功');
+                    layer.msg('领取成功');
                     $btn.removeClass('js-coupon-receive').addClass('is-disabled').prop('disabled', true).text('已领取');
                 } else {
                     $btn.prop('disabled', false).text('领取');
-                    layui.msg(res.msg || '领取失败');
+                    layer.msg(res.msg || '领取失败');
                 }
             }, 'json').fail(function () {
                 $btn.prop('disabled', false).text('领取');
-                layui.msg('网络异常');
+                layer.msg('网络异常');
             });
         });
     })();
