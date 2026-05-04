@@ -53,6 +53,15 @@ function installer_is_installed(): bool
     return is_file(EM_INSTALL_LOCK);
 }
 
+function installer_config_writable(): bool
+{
+    $configPath = EM_ROOT . '/config.php';
+    if (is_file($configPath)) {
+        return is_writable($configPath);
+    }
+    return is_writable(EM_ROOT);
+}
+
 /**
  * 生成/读取安装向导 CSRF token。
  */
@@ -368,6 +377,7 @@ function installer_render(array $messages, array $defaults): void
     $cacheDir = EM_ROOT . '/content/cache';
     $cacheDirWritable = is_dir($cacheDir) && is_writable($cacheDir);
     $rootWritable = is_writable(EM_ROOT);
+    $configWritable = installer_config_writable();
 
     $d = function (string $key, $fallback = '') use ($defaults) {
         return isset($defaults[$key]) ? (string) $defaults[$key] : (string) $fallback;
@@ -607,6 +617,7 @@ function installer_render(array $messages, array $defaults): void
                 <div class="checkRow"><b>mysqli 扩展</b><span class="tag <?php echo $hasMysqli ? 'ok' : 'warn'; ?>"><?php echo $hasMysqli ? '已启用' : '未启用'; ?></span></div>
                 <div class="checkRow"><b>pdo_mysql 扩展</b><span class="tag <?php echo $hasPdo ? 'ok' : 'warn'; ?>"><?php echo $hasPdo ? '已启用' : '未启用'; ?></span></div>
                 <div class="checkRow"><b>根目录可写</b><span class="tag <?php echo $rootWritable ? 'ok' : 'bad'; ?>"><?php echo $rootWritable ? '可写' : '不可写'; ?></span></div>
+                <div class="checkRow"><b>`config.php` 可写</b><span class="tag <?php echo $configWritable ? 'ok' : 'bad'; ?>"><?php echo $configWritable ? '可写' : '不可写'; ?></span></div>
                 <div class="checkRow"><b>`content/cache/`</b><span class="tag <?php echo $cacheDirWritable ? 'ok' : 'bad'; ?>"><?php echo $cacheDirWritable ? '可写' : '不可写'; ?></span></div>
                 <div class="checkRow"><b>`install/` 可写</b><span class="tag <?php echo $lockDirWritable ? 'ok' : 'bad'; ?>"><?php echo $lockDirWritable ? '可写' : '不可写'; ?></span></div>
             </div>
@@ -930,6 +941,9 @@ if (!is_writable(EM_ROOT)) {
 }
 
 $configPath = EM_ROOT . '/config.php';
+if (!installer_config_writable()) {
+    $messages[] = ['type' => 'bad', 'text' => '`config.php` 不可写：无法写入数据库配置，请先修复文件权限'];
+}
 
 if ($messages !== []) {
     installer_fail_response($action, $messages, ['db' => $dbClean, 'admin' => $adminClean]);
