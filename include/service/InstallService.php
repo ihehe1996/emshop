@@ -549,7 +549,7 @@ final class InstallService
                 `custom_domain` VARCHAR(200) DEFAULT NULL COMMENT \'自定义域名\',
                 `domain_verified` TINYINT(1) NOT NULL DEFAULT 0,
                 `theme` VARCHAR(64) NOT NULL DEFAULT \'\' COMMENT \'模板名（v1 不生效）\',
-                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%）；无商品级覆盖时采用\',
+                `default_markup_rate` INT NOT NULL DEFAULT 1000 COMMENT \'默认加价率（万分位；1000=10%%）；无商品级覆盖时采用\',
                 `status` TINYINT(1) NOT NULL DEFAULT 1 COMMENT \'1=正常 0=禁用\',
                 `opened_at` DATETIME DEFAULT NULL,
                 `opened_via` VARCHAR(16) NOT NULL DEFAULT \'admin\' COMMENT \'admin=后台手动 self=自助\',
