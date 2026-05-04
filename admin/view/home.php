@@ -1851,7 +1851,9 @@ $(function () {
             url: '/admin/swoole.php',
             type: 'POST',
             dataType: 'json',
-            timeout: 5000,
+            // 后端会按候选地址顺序探测 Swoole API（单地址约 3s 超时），
+            // 这里需要给更充足的等待时间，避免前端先超时报“请求失败”。
+            timeout: 15000,
             data: { _action: 'status', csrf_token: window.adminCsrfToken || '' }
         }).done(function (res) {
             if (res && res.data && res.data.csrf_token) {

@@ -95,12 +95,6 @@ class LoginController extends BaseController
             [$ip, (int) $user['id']]
         );
 
-        // 合并游客购物车到用户购物车（按 guest_token，与订单体系保持一致）
-        $guestToken = GuestToken::get();
-        if ($guestToken !== '') {
-            (new CartModel())->mergeGuestToUser($guestToken, (int) $user['id']);
-        }
-
         // 刷新 CSRF token
         Csrf::refresh();
 

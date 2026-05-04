@@ -351,19 +351,6 @@ function url_coupon(): string
 }
 
 /**
- * 购物车 URL。
- */
-function url_cart(): string
-{
-    switch (url_format()) {
-        case 'file': return '/cart.html';
-        case 'dir1':
-        case 'dir2': return '/cart/';
-        default:     return '/?c=cart';
-    }
-}
-
-/**
  * 格式化价格。
  */
 function format_price(float $price): string

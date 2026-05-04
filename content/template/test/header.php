@@ -37,9 +37,8 @@ $fullTitle      = $pageTitle !== '' ? ($pageTitle . ' - ' . $seoTitle) : $seoTit
 <script src="/content/static/lib/jquery.pjax.js"></script>
 <script src="/content/static/lib/layui-v2.13.5/layui/layui.js"></script>
 <script>
-// 给 JS 注入按当前 url_format 生成好的入口 URL，避免 JS 里硬编码 ?c=cart 等路径
+// 给 JS 注入按当前 url_format 生成好的入口 URL
 window.EMSHOP_URLS = {
-    cart:       <?= json_encode(url_cart()) ?>,
     coupon:     <?= json_encode(url_coupon()) ?>,
     goodsList:  <?= json_encode(url_goods_list()) ?>,
     blogList:   <?= json_encode(url_blog_list()) ?>,
@@ -82,10 +81,6 @@ window.EMSHOP_CURRENCY = {
         <button type="button" class="header-action-btn" id="searchToggle" title="搜索">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </button>
-        <a href="<?= url_cart() ?>" data-pjax class="header-action-btn header-cart-btn" title="购物车">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
-            <span class="cart-badge" id="cartBadge" style="display:none;">0</span>
-        </a>
         <a href="/user/find_order.php" class="header-action-btn header-action-btn--text" title="查询订单">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             <span>查询订单</span>

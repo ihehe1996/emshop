@@ -6,7 +6,7 @@ declare(strict_types=1);
  * 游客身份标识。
  *
  * 通过永久 Cookie 为每个浏览器分配全局唯一 ID，
- * 用于关联游客订单、购物车等数据。
+ * 用于关联游客订单等数据。
  */
 class GuestToken
 {

@@ -95,23 +95,6 @@ function updateNavActive(url) {
 }
 
 // ============================================================
-// 购物车角标
-// ============================================================
-function updateCartBadge(count) {
-    var $badge = $('#cartBadge');
-    count = parseInt(count) || 0;
-    if (count > 0) {
-        $badge.text(count > 99 ? '99+' : count).show();
-    } else {
-        $badge.hide();
-    }
-}
-// 初始加载购物车数量
-$.get('?c=cart&a=count', function (res) {
-    if (res.code === 200 && res.data) updateCartBadge(res.data.cart_count);
-}, 'json');
-
-// ============================================================
 // PJAX 初始化
 // ============================================================
 (function () {

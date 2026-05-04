@@ -69,26 +69,6 @@ final class InstallService
             $userTable
         ));
 
-        // 购物车表
-        // 游客身份统一用 em_guest_token Cookie（与订单 guest_token 一致），不再用 session_id
-        $cartTable = Database::prefix() . 'cart';
-        Database::statement(sprintf(
-            'CREATE TABLE IF NOT EXISTS `%s` (
-                `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT \'自增主键\',
-                `user_id` BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'用户ID（0=游客）\',
-                `guest_token` VARCHAR(64) DEFAULT NULL COMMENT \'游客令牌（与订单表保持一致）\',
-                `goods_id` INT UNSIGNED NOT NULL COMMENT \'商品ID\',
-                `spec_id` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT \'规格ID\',
-                `quantity` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT \'数量\',
-                `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT \'添加时间\',
-                `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT \'更新时间\',
-                PRIMARY KEY (`id`),
-                KEY `idx_user` (`user_id`),
-                KEY `idx_guest_token` (`guest_token`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT=\'购物车\'',
-            $cartTable
-        ));
-
         // 优惠券定义表
         // 金额字段统一 BIGINT ×1000000；
         // value 字段含义因 type 而异：fixed_amount 存金额；percent 存百分比(0-100，如 85 表示 8.5 折)

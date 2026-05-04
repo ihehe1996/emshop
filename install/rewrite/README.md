@@ -54,6 +54,4 @@ location / {
 | 博客首页 | `?c=blog_index` | `/blog.html` | `/blog/` | `/blog/` |
 | 搜索 | `?c=search&q=x` | `/search-x.html` | `/search/x` | `/search/x` |
 | 优惠券 | `?c=coupon` | `/coupon.html` | `/coupon/` | `/coupon/` |
-| 购物车 | `?c=cart` | `/cart.html` | `/cart/` | `/cart/` |
-
 > ⚠️ slug 约束：slug 末段不能是纯数字（否则会被解析为页码），slug 也不能取 `list` 本身（保留字）。
