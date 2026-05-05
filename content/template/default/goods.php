@@ -31,9 +31,24 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="detail-layout">
             <!-- 图片区 -->
             <div class="detail-gallery" id="goodsGallery">
-                <?php $images = !empty($goods['images']) ? $goods['images'] : [$goods['image'] ?? '']; ?>
+                <?php
+                $rawImages = !empty($goods['images']) ? (array) $goods['images'] : [(string) ($goods['image'] ?? '')];
+                $images = array_values(array_filter($rawImages, static function ($u) {
+                    if ($u === null) {
+                        return false;
+                    }
+                    if (is_string($u)) {
+                        return trim($u) !== '';
+                    }
+                    return !empty($u);
+                }));
+                ?>
                 <div class="detail-img">
-                    <img id="mainImage" src="<?= htmlspecialchars($images[0] ?? '') ?>" alt="<?= htmlspecialchars($goods['name']) ?>" style="cursor:zoom-in;">
+                    <?php if (!empty($images)): ?>
+                    <img id="mainImage" src="<?= htmlspecialchars($images[0]) ?>" alt="<?= htmlspecialchars($goods['name']) ?>" style="cursor:zoom-in;">
+                    <?php else: ?>
+                    <div class="goods-no-image" role="img" aria-label="暂无商品图片"></div>
+                    <?php endif; ?>
                 </div>
                 <?php if (count($images) > 1): ?>
                 <div class="detail-thumbs">

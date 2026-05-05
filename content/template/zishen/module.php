@@ -2,7 +2,7 @@
 defined('EM_ROOT') || exit('access denied!');
 
 /**
- * 测试模板 - 模块逻辑
+ * 子神模板 - 模块逻辑（与 default 导航注入一致）
  *
  * 在模板渲染前执行，用于生成导航等模板变量。
  * 通过 $this（View 实例）注入变量到模板。

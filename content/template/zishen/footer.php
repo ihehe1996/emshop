@@ -1,29 +1,35 @@
 <?php
 /**
- * 测试模板 - 通用底部
+ * 子神模板 - 通用底部（PJAX / 搜索 / 菜单脚本与 default 一致）
  */
 ?>
 </div><!-- #main -->
 
-<!-- 底部：极简版权 + ICP 备案 + 第三方统计代码注入 -->
-<footer class="site-footer">
-<div class="wrapper">
-    <div class="site-footer__copy">
-        <span>&copy; <?= date('Y') ?> <?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
-        <span>Powered by <?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
+<footer class="site-footer zs-footer">
+    <div class="zs-footer__wave" aria-hidden="true"></div>
+    <div class="wrapper zs-footer__inner">
+        <div class="zs-footer__brand">
+            <span class="zs-footer__sigil" aria-hidden="true">✦</span>
+            <div class="zs-footer__titles">
+                <span class="zs-footer__name"><?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
+                <span class="zs-footer__sub">子神主题 · 二次元商城皮肤</span>
+            </div>
+        </div>
+        <nav class="zs-footer__links" aria-label="底部导航">
+            <?= $nav_footer_html ?? '' ?>
+        </nav>
+        <div class="site-footer__copy zs-footer__copy">
+            <span>&copy; <?= date('Y') ?> <?= htmlspecialchars($site_name ?? 'EMSHOP') ?></span>
+        </div>
+        <?php if (!empty($site_icp)): ?>
+        <div class="site-footer__icp zs-footer__icp">
+            <?php $_icpHref = 'https://beian.miit.gov.cn/'; ?>
+            <a href="<?= htmlspecialchars($_icpHref) ?>" target="_blank" rel="nofollow noopener">
+                <?= htmlspecialchars($site_icp) ?>
+            </a>
+        </div>
+        <?php endif; ?>
     </div>
-    <?php if (!empty($site_icp)): ?>
-    <div class="site-footer__icp">
-        <?php
-        // 中国大陆备案号惯例：跳工信部公示页（不强制，让用户能自助核验）
-        $_icpHref = 'https://beian.miit.gov.cn/';
-        ?>
-        <a href="<?= htmlspecialchars($_icpHref) ?>" target="_blank" rel="nofollow noopener">
-            <?= htmlspecialchars($site_icp) ?>
-        </a>
-    </div>
-    <?php endif; ?>
-</div>
 </footer>
 
 <?php

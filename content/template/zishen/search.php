@@ -46,7 +46,11 @@ if (!in_array($search_type, ['all', 'goods', 'article'])) {
         <?php foreach ($results as $item): ?>
         <a <?= goods_card_href_attrs($item) ?> class="card goods-card">
             <div class="card-img">
-                <img src="<?= htmlspecialchars($item['image'] ?? '') ?>" alt="<?= htmlspecialchars($item['name']) ?>">
+                <?php if (trim((string) ($item['image'] ?? '')) !== ''): ?>
+                <img src="<?= htmlspecialchars($item['image']) ?>" alt="<?= htmlspecialchars($item['name']) ?>">
+                <?php else: ?>
+                <div class="goods-no-image" aria-hidden="true"></div>
+                <?php endif; ?>
                 <?php if (($item['delivery_type'] ?? '') === 'auto'): ?>
                 <span class="goods-badge goods-badge--auto">自动发货</span>
                 <?php elseif (($item['delivery_type'] ?? '') === 'manual'): ?>

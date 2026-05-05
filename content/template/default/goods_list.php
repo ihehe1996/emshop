@@ -122,7 +122,11 @@ if (is_array($_announce) && !empty($_announce['html']) && in_array('goods_list',
         <?php foreach ($goods_list as $g): ?>
         <a <?= goods_card_href_attrs($g) ?> class="card goods-card">
             <div class="card-img">
-                <img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>">
+                <?php if (trim((string) ($g['image'] ?? '')) !== ''): ?>
+                <img src="<?= htmlspecialchars($g['image']) ?>" alt="<?= htmlspecialchars($g['name']) ?>">
+                <?php else: ?>
+                <div class="goods-no-image" aria-hidden="true"></div>
+                <?php endif; ?>
                 <?php if (($g['delivery_type'] ?? '') === 'auto'): ?>
                 <span class="goods-badge goods-badge--auto">自动发货</span>
                 <?php elseif (($g['delivery_type'] ?? '') === 'manual'): ?>

@@ -774,6 +774,7 @@ var GoodsDetail = (function () {
     function initViewer() {
         var viewerEl = document.getElementById('viewerImages');
         if (!viewerEl || typeof Viewer === 'undefined') return;
+        if (!viewerEl.querySelector('img')) return;
         var viewer = new Viewer(viewerEl, {
             navbar: true,
             title: false,

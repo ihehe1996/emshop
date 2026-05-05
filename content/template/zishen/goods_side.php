@@ -56,7 +56,13 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="sidebar-goods-list">
             <?php foreach (array_slice($recent_goods, 0, 5) as $g): ?>
             <a <?= goods_card_href_attrs($g) ?> class="sidebar-goods-item">
-                <div class="sidebar-goods-img"><img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>"></div>
+                <div class="sidebar-goods-img">
+                    <?php if (trim((string) ($g['image'] ?? '')) !== ''): ?>
+                    <img src="<?= htmlspecialchars($g['image']) ?>" alt="<?= htmlspecialchars($g['name']) ?>">
+                    <?php else: ?>
+                    <div class="goods-no-image" aria-hidden="true"></div>
+                    <?php endif; ?>
+                </div>
                 <div class="sidebar-goods-info">
                     <div class="sidebar-goods-name"><?= htmlspecialchars($g['name']) ?></div>
                     <div class="sidebar-goods-price">
@@ -79,7 +85,13 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="sidebar-goods-list">
             <?php foreach (array_slice($hot_goods, 0, 5) as $g): ?>
             <a <?= goods_card_href_attrs($g) ?> class="sidebar-goods-item">
-                <div class="sidebar-goods-img"><img src="<?= htmlspecialchars($g['image'] ?? '') ?>" alt="<?= htmlspecialchars($g['name']) ?>"></div>
+                <div class="sidebar-goods-img">
+                    <?php if (trim((string) ($g['image'] ?? '')) !== ''): ?>
+                    <img src="<?= htmlspecialchars($g['image']) ?>" alt="<?= htmlspecialchars($g['name']) ?>">
+                    <?php else: ?>
+                    <div class="goods-no-image" aria-hidden="true"></div>
+                    <?php endif; ?>
+                </div>
                 <div class="sidebar-goods-info">
                     <div class="sidebar-goods-name"><?= htmlspecialchars($g['name']) ?></div>
                     <div class="sidebar-goods-price">

@@ -31,9 +31,24 @@ defined('EM_ROOT') || exit('access denied!');
         <div class="detail-layout">
             <!-- 图片区 -->
             <div class="detail-gallery" id="goodsGallery">
-                <?php $images = !empty($goods['images']) ? $goods['images'] : [$goods['image'] ?? '']; ?>
+                <?php
+                $rawImages = !empty($goods['images']) ? (array) $goods['images'] : [(string) ($goods['image'] ?? '')];
+                $images = array_values(array_filter($rawImages, static function ($u) {
+                    if ($u === null) {
+                        return false;
+                    }
+                    if (is_string($u)) {
+                        return trim($u) !== '';
+                    }
+                    return !empty($u);
+                }));
+                ?>
                 <div class="detail-img">
-                    <img id="mainImage" src="<?= htmlspecialchars($images[0] ?? '') ?>" alt="<?= htmlspecialchars($goods['name']) ?>" style="cursor:zoom-in;">
+                    <?php if (!empty($images)): ?>
+                    <img id="mainImage" src="<?= htmlspecialchars($images[0]) ?>" alt="<?= htmlspecialchars($goods['name']) ?>" style="cursor:zoom-in;">
+                    <?php else: ?>
+                    <div class="goods-no-image" role="img" aria-label="暂无商品图片"></div>
+                    <?php endif; ?>
                 </div>
                 <?php if (count($images) > 1): ?>
                 <div class="detail-thumbs">
@@ -328,13 +343,13 @@ defined('EM_ROOT') || exit('access denied!');
     <?php endif; ?>
 
     <!-- 游客查单组件 + 商品详情 JS -->
-    <script src="<?= htmlspecialchars(theme_asset_url('guest_find.js', (string) ($_theme ?? 'test'))) ?>"></script>
+    <script src="<?= htmlspecialchars(theme_asset_url('guest_find.js', (string) ($_theme ?? 'default'))) ?>"></script>
     <?php if (!empty($needs_address)): ?>
     <!-- 收货地址选择（立即购买时弹层用）：cascade 库 + 样式 -->
     <link rel="stylesheet" href="/content/static/lib/cityAreaSelect/dist/css/cityAreaSelect.css">
     <script src="/content/static/lib/cityAreaSelect/dist/js/cityAreaSelect.min.js"></script>
     <?php endif; ?>
-    <script src="<?= htmlspecialchars(theme_asset_url('goods.js', (string) ($_theme ?? 'test'))) ?>"></script>
+    <script src="<?= htmlspecialchars(theme_asset_url('goods.js', (string) ($_theme ?? 'default'))) ?>"></script>
     <script>
     // PJAX 导航时，jQuery 对外部 <script src> 走异步加载，而内联 <script> 会立即执行；
     // 会出现 GoodsDetail 还未定义就调用 init 的情况。用轮询等依赖就绪再启动。
